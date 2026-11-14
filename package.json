@@ -1,0 +1,10 @@
+{
+  "name": "vng-prod",
+  "version": "0.1.0",
+  "description": "Vanguard Production (vng-prod) — Gestión de producción, inventario, compras, ventas y tesorería",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

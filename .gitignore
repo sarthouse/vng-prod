@@ -1,0 +1,14 @@
+node_modules/
+db/*.sqlite
+db/*.sqlite-wal
+db/*.sqlite-shm
+db/afip_xml/
+*.crt
+*.key
+*.csr
+*.pem
+uploads/
+data/
+logs/
+utils/
+.env

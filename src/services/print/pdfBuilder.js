@@ -1,0 +1,273 @@
+// Generador PDF 1.4 puro en Node.js (cero dependencias externas) con WinAnsiEncoding para español.
+
+const MM_TO_PT = 72 / 25.4;
+
+export const PAGE_SIZES_MM = {
+  A4: { w: 210, h: 297, margin: 10 },
+  A5: { w: 148, h: 210, margin: 7 },
+  ticket80: { w: 80, h: 210, margin: 3 },
+  ticket58: { w: 58, h: 210, margin: 2.5 },
+};
+
+export function fmtDateAr(val) {
+  const s = String(val || '').trim();
+  if (!s) return '';
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return s;
+}
+
+export function fmtNumAr(n, dec = 3) {
+  const v = Number(n || 0);
+  if (Number.isInteger(v)) return v.toLocaleString('es-AR');
+  return v.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: dec });
+}
+
+// Mapeo básico Unicode -> WinAnsi (CP1252) para caracteres fuera de Latin-1
+const WIN_ANSI_EXTRA = {
+  0x20ac: 0x80, // €
+  0x201a: 0x82,
+  0x0192: 0x83,
+  0x201e: 0x84,
+  0x2026: 0x85, // …
+  0x2020: 0x86,
+  0x2021: 0x87,
+  0x02c6: 0x88,
+  0x2030: 0x89,
+  0x0160: 0x8a,
+  0x2039: 0x8b,
+  0x0152: 0x8c,
+  0x017d: 0x8e,
+  0x2018: 0x91,
+  0x2019: 0x92,
+  0x201c: 0x93,
+  0x201d: 0x94,
+  0x2022: 0x95, // •
+  0x2013: 0x96, // –
+  0x2014: 0x97, // —
+  0x02dc: 0x98,
+  0x2122: 0x99,
+  0x0161: 0x9a,
+  0x203a: 0x9b,
+  0x0153: 0x9c,
+  0x017e: 0x9e,
+  0x0178: 0x9f,
+};
+
+function encodePdfLiteral(str) {
+  const s = String(str ?? '');
+  let out = '(';
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    let byte = 0x3f; // '?'
+    if (code >= 0x20 && code <= 0xff) {
+      byte = code;
+    } else if (WIN_ANSI_EXTRA[code] !== undefined) {
+      byte = WIN_ANSI_EXTRA[code];
+    } else if (code === 0x09 || code === 0x0a || code === 0x0d) {
+      byte = 0x20;
+    }
+    if (byte === 0x28 || byte === 0x29 || byte === 0x5c) {
+      out += '\\' + String.fromCharCode(byte);
+    } else if (byte < 0x20 || byte > 0x7e) {
+      out += '\\' + byte.toString(8).padStart(3, '0');
+    } else {
+      out += String.fromCharCode(byte);
+    }
+  }
+  out += ')';
+  return out;
+}
+
+// Estimación precisa de ancho de texto en Helvetica (en pt)
+function estimateTextWidthPt(str, sizePt, bold = false) {
+  const s = String(str ?? '');
+  const factor = bold ? 1.06 : 1.0;
+  let units = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if ('ilIj.,:;\'!| '.includes(ch)) units += 0.28;
+    else if ('frt()-[]/\\'.includes(ch)) units += 0.35;
+    else if ('mwMW@%'.includes(ch)) units += 0.86;
+    else if (ch >= 'A' && ch <= 'Z') units += 0.68;
+    else if (ch >= '0' && ch <= '9') units += 0.56;
+    else units += 0.53;
+  }
+  return units * sizePt * factor;
+}
+
+export function wrapTextMm(str, maxWidthMm, sizePt, bold = false) {
+  const maxPt = maxWidthMm * MM_TO_PT;
+  const paragraphs = String(str ?? '').split(/\r?\n/);
+  const lines = [];
+  for (const p of paragraphs) {
+    const words = p.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lines.push('');
+      continue;
+    }
+    let cur = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const cand = cur + ' ' + words[i];
+      if (estimateTextWidthPt(cand, sizePt, bold) <= maxPt) {
+        cur = cand;
+      } else {
+        lines.push(cur);
+        cur = words[i];
+      }
+    }
+    lines.push(cur);
+  }
+  return lines;
+}
+
+export class PdfDocument {
+  constructor() {
+    this.pages = [];
+    this.current = null;
+  }
+
+  addPage(widthMm = 210, heightMm = 297) {
+    const page = {
+      wMm: widthMm,
+      hMm: heightMm,
+      wPt: widthMm * MM_TO_PT,
+      hPt: heightMm * MM_TO_PT,
+      ops: [],
+    };
+    this.pages.push(page);
+    this.current = page;
+    return page;
+  }
+
+  _yPt(yMm) {
+    return this.current.hPt - yMm * MM_TO_PT;
+  }
+
+  _rgb(hex = '#0F1F2A') {
+    const h = hex.replace('#', '');
+    if (h.length !== 6) return '0 0 0';
+    const r = (parseInt(h.slice(0, 2), 16) / 255).toFixed(3);
+    const g = (parseInt(h.slice(2, 4), 16) / 255).toFixed(3);
+    const b = (parseInt(h.slice(4, 6), 16) / 255).toFixed(3);
+    return `${r} ${g} ${b}`;
+  }
+
+  rect(xMm, yMm, wMm, hMm, { stroke = null, fill = null, lineWidth = 0.6 } = {}) {
+    const x = (xMm * MM_TO_PT).toFixed(2);
+    const hPt = hMm * MM_TO_PT;
+    const y = (this._yPt(yMm) - hPt).toFixed(2);
+    const w = (wMm * MM_TO_PT).toFixed(2);
+    const h = hPt.toFixed(2);
+    const ops = this.current.ops;
+    ops.push('q');
+    if (fill) ops.push(`${this._rgb(fill)} rg`);
+    if (stroke) {
+      ops.push(`${lineWidth.toFixed(2)} w`);
+      ops.push(`${this._rgb(stroke)} RG`);
+    }
+    ops.push(`${x} ${y} ${w} ${h} re`);
+    if (fill && stroke) ops.push('B');
+    else if (fill) ops.push('f');
+    else ops.push('S');
+    ops.push('Q');
+  }
+
+  line(x1Mm, y1Mm, x2Mm, y2Mm, { color = '#0F1F2A', lineWidth = 0.6, dashed = false } = {}) {
+    const ops = this.current.ops;
+    ops.push('q');
+    ops.push(`${lineWidth.toFixed(2)} w`);
+    ops.push(`${this._rgb(color)} RG`);
+    if (dashed) ops.push('[3 2] 0 d');
+    ops.push(`${(x1Mm * MM_TO_PT).toFixed(2)} ${this._yPt(y1Mm).toFixed(2)} m`);
+    ops.push(`${(x2Mm * MM_TO_PT).toFixed(2)} ${this._yPt(y2Mm).toFixed(2)} l S`);
+    ops.push('Q');
+  }
+
+  text(str, xMm, yMm, { size = 9, bold = false, color = '#0F1F2A', align = 'left' } = {}) {
+    const s = String(str ?? '');
+    if (!s) return;
+    const font = bold ? '/F2' : '/F1';
+    let xPt = xMm * MM_TO_PT;
+    if (align === 'right' || align === 'center') {
+      const wPt = estimateTextWidthPt(s, size, bold);
+      if (align === 'right') xPt -= wPt;
+      else xPt -= wPt / 2;
+    }
+    const yPt = this._yPt(yMm) - size * 0.82;
+    const ops = this.current.ops;
+    ops.push('q');
+    ops.push(`${this._rgb(color)} rg`);
+    ops.push(`BT ${font} ${size.toFixed(1)} Tf ${xPt.toFixed(2)} ${yPt.toFixed(2)} Td ${encodePdfLiteral(s)} Tj ET`);
+    ops.push('Q');
+  }
+
+  textBlock(str, xMm, yMm, maxWidthMm, { size = 8.5, bold = false, color = '#0F1F2A', lineHeight = 1.32, align = 'left' } = {}) {
+    const lines = wrapTextMm(str, maxWidthMm, size, bold);
+    const stepMm = (size * lineHeight) / MM_TO_PT;
+    let curY = yMm;
+    for (const ln of lines) {
+      if (ln) {
+        const xPos = align === 'center' ? xMm + maxWidthMm / 2 : align === 'right' ? xMm + maxWidthMm : xMm;
+        this.text(ln, xPos, curY, { size, bold, color, align });
+      }
+      curY += stepMm;
+    }
+    return curY;
+  }
+
+  toBuffer() {
+    // Objetos:
+    // 1: Catalog, 2: Pages, 3: Font F1 (Helvetica), 4: Font F2 (Helvetica-Bold)
+    // Por cada página: PageObj, ContentObj
+    const objects = [];
+    const pageIds = [];
+    let nextId = 5;
+
+    for (const p of this.pages) {
+      const pageId = nextId++;
+      const contentId = nextId++;
+      pageIds.push({ pageId, contentId, page: p });
+    }
+
+    objects.push({ id: 1, body: `<< /Type /Catalog /Pages 2 0 R >>` });
+    objects.push({ id: 2, body: `<< /Type /Pages /Kids [${pageIds.map(x => `${x.pageId} 0 R`).join(' ')}] /Count ${pageIds.length} >>` });
+    objects.push({ id: 3, body: `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>` });
+    objects.push({ id: 4, body: `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>` });
+
+    for (const item of pageIds) {
+      const stream = item.page.ops.join('\n');
+      const streamBuf = Buffer.from(stream, 'latin1');
+      objects.push({
+        id: item.pageId,
+        body: `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${item.page.wPt.toFixed(2)} ${item.page.hPt.toFixed(2)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${item.contentId} 0 R >>`,
+      });
+      objects.push({
+        id: item.contentId,
+        body: `<< /Length ${streamBuf.length} >>\nstream\n${stream}\nendstream`,
+      });
+    }
+
+    objects.sort((a, b) => a.id - b.id);
+    const chunks = [Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', 'latin1')];
+    const offsets = [0];
+    let pos = chunks[0].length;
+
+    for (const obj of objects) {
+      offsets[obj.id] = pos;
+      const str = `${obj.id} 0 obj\n${obj.body}\nendobj\n`;
+      const buf = Buffer.from(str, 'latin1');
+      chunks.push(buf);
+      pos += buf.length;
+    }
+
+    const xrefOffset = pos;
+    let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (let i = 1; i <= objects.length; i++) {
+      xref += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+    chunks.push(Buffer.from(xref, 'latin1'));
+    return Buffer.concat(chunks);
+  }
+}

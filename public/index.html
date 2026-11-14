@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vanguard Production</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <button type="button" id="btn-toggle-sidebar" class="drawer-toggle" aria-label="Alternar menú">☰</button>
+        <div class="brand-icon" style="padding:0;background:transparent;border:none">
+          <img src="/favicon.svg" alt="VNG" width="40" height="40" style="display:block;border-radius:9px" />
+        </div>
+        <div>
+          <h1>Vanguard Production</h1>
+          <p class="subtitle">Gestión de Producción · v0.1.0</p>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi-card">
+          <span class="kpi-label">Órdenes Activas</span>
+          <strong class="kpi-value" id="kpi-ordenes">0</strong>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Saldo Disponible</span>
+          <strong class="kpi-value" id="kpi-saldo">$0</strong>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Pares Pendientes</span>
+          <strong class="kpi-value accent" id="kpi-pendientes">0</strong>
+        </div>
+        <div class="kpi-card" id="topbar-user-box" style="display:none;flex-direction:row;align-items:center;gap:10px">
+          <div style="text-align:right">
+            <span class="kpi-label" id="topbar-user-group" style="display:block"></span>
+            <strong class="kpi-value" id="topbar-user-name" style="font-size:13px"></strong>
+          </div>
+          <button type="button" class="btn secondary" id="btn-logout" style="padding:5px 10px;font-size:12px">Salir</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="app-shell" id="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <nav class="sidebar-nav" id="main-nav">
+        <a class="tab" href="/" data-link style="margin-bottom:4px;">Dashboard</a>
+
+        <details class="nav-group" data-group="produccion">
+          <summary class="nav-group-title">Producción</summary>
+          <div class="nav-group-items">
+            <a class="tab" href="/recetas" data-link data-perm="produccion.ver">Recetas</a>
+            <a class="tab" href="/ordenes" data-link data-perm="produccion.ver">Órdenes</a>
+            <a class="tab" href="/entregas" data-link data-perm="produccion.ver">Entregas</a>
+            <a class="tab" href="/pendientes" data-link data-perm="produccion.ver">Pendientes</a>
+            <a class="tab" href="/produccion/etapas" data-link data-perm="produccion.ver">Etapas de Receta</a>
+          </div>
+        </details>
+
+        <details class="nav-group" data-group="inventario">
+          <summary class="nav-group-title">Inventario</summary>
+          <div class="nav-group-items">
+            <a class="tab" href="/productos" data-link data-perm="inventario.ver">Productos</a>
+            <a class="tab" href="/inventario" data-link data-perm="inventario.ver">Stock y Movimientos</a>
+            <a class="tab" href="/traslados" data-link data-perm="inventario.ver">Operaciones y Remitos</a>
+            <a class="tab" href="/inventario/categorias" data-link data-perm="inventario.ver">Categorías</a>
+            <a class="tab" href="/inventario/variantes" data-link data-perm="inventario.ver">Atributos y Variantes</a>
+            <a class="tab" href="/inventario/unidades" data-link data-perm="inventario.ver">Unidades de Medida</a>
+            <a class="tab" href="/inventario/ubicaciones" data-link data-perm="inventario.ver">Ubicaciones de Stock</a>
+          </div>
+        </details>
+
+        <details class="nav-group" data-group="comercial">
+          <summary class="nav-group-title">Comercial</summary>
+          <div class="nav-group-items">
+            <a class="tab" href="/ventas" data-link data-perm="comercial.ver">Ventas</a>
+            <a class="tab" href="/compras" data-link data-perm="comercial.ver">Compras</a>
+            <a class="tab" href="/cronograma" data-link data-perm="comercial.ver">Cronograma de Compras</a>
+            <a class="tab" href="/contactos" data-link data-perm="comercial.ver">Contactos</a>
+            <a class="tab" href="/condiciones-comerciales" data-link data-perm="comercial.ver">Listas y Condiciones</a>
+          </div>
+        </details>
+
+        <details class="nav-group" data-group="finanzas">
+          <summary class="nav-group-title">Tesorería y Contabilidad</summary>
+          <div class="nav-group-items">
+            <a class="tab" href="/tesoreria" data-link data-perm="tesoreria.ver">Cuentas y Flujos</a>
+            <a class="tab" href="/tesoreria/conciliacion" data-link data-perm="tesoreria.ver">Conciliación Bancaria</a>
+            <a class="tab" href="/contabilidad" data-link data-perm="contabilidad.ver">Libro Diario</a>
+            <a class="tab" href="/contabilidad/mayor" data-link data-perm="contabilidad.ver">Libro Mayor</a>
+            <a class="tab" href="/contabilidad/balance" data-link data-perm="contabilidad.ver">Balance y Resultados</a>
+            <a class="tab" href="/contabilidad/plan-cuentas" data-link data-perm="contabilidad.ver">Plan de Cuentas</a>
+            <a class="tab" href="/contabilidad/impuestos" data-link data-perm="contabilidad.ver">Impuestos</a>
+            <a class="tab" href="/contabilidad/libros-fiscales" data-link data-perm="contabilidad.ver">Libros IVA y Fiscales</a>
+            <a class="tab" href="/contabilidad/posicion-iva" data-link data-perm="contabilidad.ver">Posición Mensual IVA</a>
+            <a class="tab" href="/contabilidad/cierres" data-link data-perm="contabilidad.ver">Cierre y Multimoneda</a>
+          </div>
+        </details>
+
+        <details class="nav-group" data-group="sistema">
+          <summary class="nav-group-title">Sistema</summary>
+          <div class="nav-group-items">
+            <a class="tab" href="/configuracion" data-link>Configuración</a>
+            <a class="tab" href="/databases" data-link>Bases de Datos</a>
+          </div>
+        </details>
+      </nav>
+    </aside>
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+    <main class="container main-content" id="app-view"></main>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

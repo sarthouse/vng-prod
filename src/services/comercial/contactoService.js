@@ -17,6 +17,8 @@ function normalizeContactoPayload(b, fallback = {}) {
     tipo_documento: b.tipo_documento !== undefined ? (b.tipo_documento || 'CUIT') : (fallback.tipo_documento || 'CUIT'),
     cuit: b.cuit !== undefined ? (b.cuit || '').trim() : (fallback.cuit || ''),
     condicion_iva: b.condicion_iva !== undefined ? (b.condicion_iva || 'Consumidor Final') : (fallback.condicion_iva || 'Consumidor Final'),
+    iibb_numero: b.iibb_numero !== undefined ? (b.iibb_numero || '').trim() : (fallback.iibb_numero || ''),
+    regimen_iibb: b.regimen_iibb !== undefined ? (b.regimen_iibb || '').trim() : (fallback.regimen_iibb || ''),
     direccion: b.direccion !== undefined ? (b.direccion || '').trim() : (fallback.direccion || ''),
     direccion_fiscal: b.direccion_fiscal !== undefined ? (b.direccion_fiscal || '').trim() : (fallback.direccion_fiscal || ''),
     localidad: b.localidad !== undefined ? (b.localidad || '').trim() : (fallback.localidad || ''),
@@ -37,6 +39,9 @@ function normalizeContactoPayload(b, fallback = {}) {
     termino_pago_compra_id: b.termino_pago_compra_id !== undefined ? (b.termino_pago_compra_id ? Number(b.termino_pago_compra_id) : null) : (fallback.termino_pago_compra_id ?? null),
     metodo_pago_id: b.metodo_pago_id !== undefined ? (b.metodo_pago_id ? Number(b.metodo_pago_id) : null) : (fallback.metodo_pago_id ?? null),
     lista_precio_id: b.lista_precio_id !== undefined ? (b.lista_precio_id ? Number(b.lista_precio_id) : null) : (fallback.lista_precio_id ?? null),
+    limite_credito: b.limite_credito !== undefined ? Math.max(0, Number(b.limite_credito) || 0) : (fallback.limite_credito ?? 0),
+    exento_retenciones: b.exento_retenciones !== undefined ? (b.exento_retenciones ? 1 : 0) : (fallback.exento_retenciones ?? 0),
+    exento_retenciones_vto: b.exento_retenciones_vto !== undefined ? (b.exento_retenciones_vto || '').trim() : (fallback.exento_retenciones_vto || ''),
     observaciones: b.observaciones !== undefined ? (b.observaciones || '').trim() : (fallback.observaciones || ''),
     activo: b.activo !== undefined ? (b.activo ? 1 : 0) : (fallback.activo ?? 1),
   };

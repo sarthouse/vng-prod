@@ -284,6 +284,8 @@ export function createPlantilla(b) {
       se_vende: seVende,
       cuenta_venta_id: b.cuenta_venta_id ? Number(b.cuenta_venta_id) : null,
       cuenta_compra_id: b.cuenta_compra_id ? Number(b.cuenta_compra_id) : null,
+      moneda: (b.moneda || 'ARS').toUpperCase(),
+      peso_kg: Math.max(0, Number(b.peso_kg) || 0),
       atributos_json: JSON.stringify(atributos),
     });
 
@@ -342,6 +344,8 @@ export function updatePlantilla(id, b) {
     se_vende: b.se_vende !== undefined ? (b.se_vende ? 1 : 0) : existing.se_vende,
     cuenta_venta_id: b.cuenta_venta_id !== undefined ? (b.cuenta_venta_id ? Number(b.cuenta_venta_id) : null) : (existing.cuenta_venta_id || null),
     cuenta_compra_id: b.cuenta_compra_id !== undefined ? (b.cuenta_compra_id ? Number(b.cuenta_compra_id) : null) : (existing.cuenta_compra_id || null),
+    moneda: b.moneda !== undefined ? String(b.moneda || 'ARS').toUpperCase() : (existing.moneda || 'ARS'),
+    peso_kg: b.peso_kg !== undefined ? Math.max(0, Number(b.peso_kg) || 0) : (existing.peso_kg || 0),
     atributos_json: b.atributos !== undefined ? JSON.stringify(b.atributos) : existing.atributos_json,
   };
 
@@ -437,6 +441,7 @@ export function updateProducto(id, b, meta = {}) {
   const nextPrecio = b.precio !== undefined ? Number(b.precio) : (existing.precio ?? 0);
   productoRepo.update(id, {
     sku: b.sku !== undefined ? String(b.sku).trim() : existing.sku,
+    codigo_barras: b.codigo_barras !== undefined ? String(b.codigo_barras).trim() : (existing.codigo_barras || ''),
     costo: nextCosto,
     precio: nextPrecio,
     minimo_compra: b.minimo_compra !== undefined ? Number(b.minimo_compra) : existing.minimo_compra,

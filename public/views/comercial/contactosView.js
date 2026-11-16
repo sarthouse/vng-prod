@@ -274,6 +274,25 @@ export async function renderContactoFormView({ id } = {}) {
               ${(listasPrecios || []).map(l => `<option value="${l.id}" ${Number(c.lista_precio_id) === Number(l.id) ? 'selected' : ''}>${esc(l.nombre)}</option>`).join('')}
             </select>
           </label>
+          <label><span>N.º Inscripción IIBB</span><input type="text" name="iibb_numero" value="${esc(c.iibb_numero || '')}" placeholder="Ej: 901-123456-7" /></label>
+          <label>
+            <span>Régimen IIBB</span>
+            <select name="regimen_iibb">
+              <option value="">-- Sin especificar --</option>
+              ${[
+                ['local', 'Contribuyente Local'],
+                ['convenio_multilateral', 'Convenio Multilateral'],
+                ['simplificado', 'Régimen Simplificado'],
+                ['exento', 'Exento'],
+              ].map(([val, lbl]) => `<option value="${val}" ${c.regimen_iibb === val ? 'selected' : ''}>${lbl}</option>`).join('')}
+            </select>
+          </label>
+          <label><span>Límite de Crédito</span><input type="number" step="0.01" min="0" name="limite_credito" value="${Number(c.limite_credito || 0)}" /></label>
+          <label><span>Vto. Certificado No Retención</span><input type="date" name="exento_retenciones_vto" value="${esc(c.exento_retenciones_vto || '')}" /></label>
+          <label class="checkbox-inline" style="align-self:end;padding-bottom:6px;">
+            <input type="checkbox" name="exento_retenciones" ${c.exento_retenciones ? 'checked' : ''} />
+            <span>Exento de Retenciones</span>
+          </label>
           <label class="full"><span>Observaciones</span><input type="text" name="observaciones" value="${esc(c.observaciones || '')}" /></label>
         </div>
         <div class="modal-footer">
@@ -486,6 +505,11 @@ export async function renderContactoFormView({ id } = {}) {
       termino_pago_compra_id: fd.get('termino_pago_compra_id') ? Number(fd.get('termino_pago_compra_id')) : null,
       metodo_pago_id: fd.get('metodo_pago_id') ? Number(fd.get('metodo_pago_id')) : null,
       lista_precio_id: fd.get('lista_precio_id') ? Number(fd.get('lista_precio_id')) : null,
+      iibb_numero: fd.get('iibb_numero') || '',
+      regimen_iibb: fd.get('regimen_iibb') || '',
+      limite_credito: Math.max(0, Number(fd.get('limite_credito')) || 0),
+      exento_retenciones: fd.get('exento_retenciones') === 'on',
+      exento_retenciones_vto: fd.get('exento_retenciones_vto') || '',
       observaciones: fd.get('observaciones'),
       es_proveedor: fd.get('es_proveedor') === 'on',
       es_taller: fd.get('es_taller') === 'on',

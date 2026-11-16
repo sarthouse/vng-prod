@@ -159,6 +159,17 @@ export async function renderPlantillaFormView({ id } = {}) {
               ${cuentasEgreso.map(c => `<option value="${c.id}" ${Number(pt.cuenta_compra_id) === Number(c.id) ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('')}
             </select>
           </label>
+          <label class="form-field">
+            <span>Moneda Referencia</span>
+            <select name="moneda">
+              <option value="ARS" ${(pt.moneda || 'ARS') === 'ARS' ? 'selected' : ''}>ARS — Peso Argentino</option>
+              <option value="USD" ${pt.moneda === 'USD' ? 'selected' : ''}>USD — Dólar</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span>Peso Unitario (kg)</span>
+            <input type="number" step="0.001" min="0" name="peso_kg" value="${Number(pt.peso_kg || 0)}" />
+          </label>
           <div class="full" style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding:4px 0;">
             <label class="checkbox-inline" style="margin:0;white-space:nowrap;">
               <input type="checkbox" name="se_fabrica" id="pt-se-fabrica" ${pt.se_fabrica ? 'checked' : ''} />
@@ -226,6 +237,7 @@ export async function renderPlantillaFormView({ id } = {}) {
                 <tr>
                   <th>Variante</th>
                   <th>SKU</th>
+                  <th>Cód. Barras</th>
                   <th class="num">Costo</th>
                   <th class="num">Precio Venta</th>
                   <th class="num">Mín. Compra</th>
@@ -238,7 +250,8 @@ export async function renderPlantillaFormView({ id } = {}) {
                 ${variantes.map(v => `
                   <tr data-prod-row="${v.id}">
                     <td><strong>${esc(v.nombre)}</strong></td>
-                    <td><input type="text" class="pv-sku" value="${esc(v.sku || '')}" style="width:130px;" /></td>
+                    <td><input type="text" class="pv-sku" value="${esc(v.sku || '')}" style="width:120px;" /></td>
+                    <td><input type="text" class="pv-barcode" value="${esc(v.codigo_barras || '')}" placeholder="EAN / UPC" style="width:130px;" /></td>
                     <td class="num"><input type="number" step="0.01" min="0" class="pv-costo" value="${Number(v.costo || 0)}" style="width:105px;text-align:right;" /></td>
                     <td class="num"><input type="number" step="0.01" min="0" class="pv-precio" value="${Number(v.precio || 0)}" style="width:105px;text-align:right;" /></td>
                     <td class="num"><input type="number" step="0.01" min="0" class="pv-min" value="${Number(v.minimo_compra || 0)}" style="width:90px;text-align:right;" /></td>
@@ -579,6 +592,8 @@ export async function renderPlantillaFormView({ id } = {}) {
         se_vende: fd.get('se_vende') === 'on' ? 1 : 0,
         cuenta_venta_id: fd.get('cuenta_venta_id') ? Number(fd.get('cuenta_venta_id')) : null,
         cuenta_compra_id: fd.get('cuenta_compra_id') ? Number(fd.get('cuenta_compra_id')) : null,
+        moneda: fd.get('moneda') || 'ARS',
+        peso_kg: Math.max(0, Number(fd.get('peso_kg')) || 0),
         atributos,
       };
       if (!isEdit) {
@@ -610,6 +625,7 @@ export async function renderPlantillaFormView({ id } = {}) {
             method: 'PUT',
             body: JSON.stringify({
               sku: row.querySelector('.pv-sku').value.trim(),
+              codigo_barras: row.querySelector('.pv-barcode')?.value.trim() || '',
               costo: Number(row.querySelector('.pv-costo').value) || 0,
               precio: Number(row.querySelector('.pv-precio').value) || 0,
               minimo_compra: Number(row.querySelector('.pv-min').value) || 0,

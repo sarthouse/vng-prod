@@ -9,6 +9,18 @@ export async function handleInventarioRoutes(req, res, pathname, user) {
     json(res, 200, invSvc.getInventarioResumen());
     return true;
   }
+  if (pathname === '/api/inventario/flujo-matriz' && req.method === 'GET') {
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    json(res, 200, invSvc.getFlujoStockMatriz({
+      granularidad: qs.get('granularidad') || 'semana',
+      hist_periodos: qs.get('hist') || 4,
+      proy_periodos: qs.get('proy') || 6,
+      producto_id: qs.get('producto_id') || null,
+      categoria: qs.get('categoria') || null,
+      rol: qs.get('rol') || null,
+    }));
+    return true;
+  }
   if (pathname === '/api/ubicaciones' && req.method === 'GET') {
     json(res, 200, invSvc.listUbicaciones());
     return true;
@@ -139,10 +151,21 @@ export async function handleInventarioRoutes(req, res, pathname, user) {
     }));
     return true;
   }
+  const plantHistMatch = pathname.match(/^\/api\/plantillas\/(\d+)\/historial-precios$/);
+  if (plantHistMatch && req.method === 'GET') {
+    json(res, 200, prodCatSvc.listHistorialPrecios({ plantilla_id: Number(plantHistMatch[1]) }));
+    return true;
+  }
+
   const prodItemMatch = pathname.match(/^\/api\/productos\/(\d+)$/);
   if (prodItemMatch && req.method === 'PUT') {
-    if (!prodCatSvc.updateProducto(Number(prodItemMatch[1]), await parseBody(req))) json(res, 404, { error: 'Producto no encontrado' });
+    if (!prodCatSvc.updateProducto(Number(prodItemMatch[1]), await parseBody(req), { origen: 'manual', user })) json(res, 404, { error: 'Producto no encontrado' });
     else json(res, 200, { ok: true });
+    return true;
+  }
+  const prodHistMatch = pathname.match(/^\/api\/productos\/(\d+)\/historial-precios$/);
+  if (prodHistMatch && req.method === 'GET') {
+    json(res, 200, prodCatSvc.listHistorialPrecios({ producto_id: Number(prodHistMatch[1]) }));
     return true;
   }
 
@@ -241,8 +264,10 @@ export async function handleInventarioRoutes(req, res, pathname, user) {
   const opConfMatch = pathname.match(/^\/api\/operaciones-stock\/(\d+)\/confirmar$/);
   if (opConfMatch && req.method === 'POST') {
     try {
-      if (!opStockSvc.confirmarOperacionStock(Number(opConfMatch[1]), user)) json(res, 404, { error: 'Operación no encontrada' });
-      else json(res, 200, { ok: true });
+      const body = await parseBody(req).catch(() => ({}));
+      const resConf = opStockSvc.confirmarOperacionStock(Number(opConfMatch[1]), body, user);
+      if (!resConf) json(res, 404, { error: 'Operación no encontrada' });
+      else json(res, 200, typeof resConf === 'object' ? resConf : { ok: true });
     } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }

@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, fmtNum, badgeForTipo, exportRowsToCSV } from '../../lib/format.js';
-import { renderDataTable, renderKpiStrip } from '../../lib/viewEngine.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { renderDataTable, renderKpiStrip } from '../../lib/engine/index.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderPlantillasView() {
   const root = document.getElementById('app-view');
@@ -36,12 +36,12 @@ export async function renderPlantillasView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Plantillas y Productos</h1>
+          <h1>Productos</h1>
           <p class="muted">Catálogo unificado de modelos fabricables, insumos, consumibles y servicios con sus variantes.</p>
         </div>
         <div class="actions">
           <button type="button" id="btn-export-productos" class="btn">Exportar CSV</button>
-          <a href="/plantillas/nueva" data-link class="btn btn-primary">+ Nueva Plantilla</a>
+          <a href="/plantillas/nueva" data-link class="btn btn-primary">+ Nuevo Producto</a>
         </div>
       </div>
 
@@ -63,7 +63,10 @@ export async function renderPlantillasView() {
           </select>
           <select id="filter-pt-cat">
             <option value="">Todas las categorías</option>
-            ${(config.categorias || []).map(c => `<option value="${esc(c.nombre)}" ${filterCat === c.nombre ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
+            ${(config.categorias || []).map(c => {
+              const lbl = c.display_name || (c.padre_nombre ? `${c.padre_nombre} / ${c.nombre}` : c.nombre);
+              return `<option value="${esc(lbl)}" ${filterCat === lbl ? 'selected' : ''}>${esc(lbl)}</option>`;
+            }).join('')}
           </select>
           <input type="search" id="search-pt" placeholder="Buscar por nombre, código o proveedor..." value="${esc(search)}" style="min-width:240px;flex:1;" />
         </div>
@@ -165,11 +168,14 @@ export async function renderPlantillasView() {
     root.querySelector('#btn-export-productos').addEventListener('click', () => {
       if (!filtered.length) { toast('No hay productos para exportar', true); return; }
       exportRowsToCSV(
-        ['Código', 'Nombre', 'Tipo', 'Categoría', 'Fabrica', 'Compra', 'Vende', 'Costo', 'Precio Venta', 'UdM', 'Proveedor'],
+        ['codigo', 'nombre', 'descripcion', 'tipo', 'categoria', 'se_fabrica', 'se_compra', 'se_vende', 'requiere_lote', 'costo', 'precio', 'alicuota_iva', 'alicuota_iva_compra', 'udm', 'stock', 'stock_minimo', 'minimo_compra', 'proveedor'],
         filtered.map(p => [
-          p.codigo || '', p.nombre, p.tipo, p.categoria || '',
-          p.se_fabrica ? 'Sí' : 'No', p.se_compra ? 'Sí' : 'No', p.se_vende ? 'Sí' : 'No',
-          Number(p.costo_min || 0), Number(p.precio_min || 0), p.udm || '', p.proveedor_nombre || '',
+          p.codigo || '', p.nombre, p.descripcion || '', p.tipo, p.categoria || '',
+          p.se_fabrica ? 1 : 0, p.se_compra ? 1 : 0, p.se_vende ? 1 : 0, p.requiere_lote ? 1 : 0,
+          Number(p.costo_min || 0), Number(p.precio_min || 0),
+          Number(p.alicuota_iva ?? 21), Number(p.alicuota_iva_compra ?? p.alicuota_iva ?? 21),
+          p.udm || '', Number(p.stock_total || 0), Number(p.stock_minimo || 0), Number(p.minimo_compra || 0),
+          p.proveedor_nombre || '',
         ]),
         `productos_${new Date().toISOString().slice(0, 10)}.csv`
       );
@@ -180,7 +186,16 @@ export async function renderPlantillasView() {
     });
     root.querySelector('#filter-pt-tipo').addEventListener('change', e => { filterTipo = e.target.value; draw(); });
     root.querySelector('#filter-pt-cat').addEventListener('change', e => { filterCat = e.target.value; draw(); });
-    root.querySelector('#search-pt').addEventListener('input', e => { search = e.target.value; draw(); });
+    root.querySelector('#search-pt').addEventListener('input', e => {
+      search = e.target.value;
+      const pos = e.target.selectionStart ?? search.length;
+      draw();
+      const sInput = root.querySelector('#search-pt');
+      if (sInput) {
+        sInput.focus();
+        try { sInput.setSelectionRange(pos, pos); } catch { /* ignore */ }
+      }
+    });
 
     renderKpiStrip(root.querySelector('#pt-kpis'), [
       { label: 'Total Plantillas', value: String(plantillas.length) },

@@ -3,14 +3,14 @@ import { esc, fmtNum, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { printRemito } from '../../lib/remitoPrint.js';
 import { mountCombobox, quickCreateProducto, quickCreateProveedor } from '../../lib/autocomplete.js';
-import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/viewEngine.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { renderKpiStrip, renderFilterBar, renderDataTable, mountDetailView } from '../../lib/engine/index.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 
 const TIPO_LABELS = {
   recepcion: 'Recepción',
   entrega: 'Entrega',
-  remito_taller: 'Remito Taller',
+  remito_taller: 'Traslado',
   traslado: 'Traslado',
   ajuste: 'Ajuste',
 };
@@ -18,7 +18,7 @@ const TIPO_LABELS = {
 const TIPO_BADGE_CLASS = {
   recepcion: 'badge-confirmado',
   entrega: 'badge-primary',
-  remito_taller: 'badge-muted',
+  remito_taller: 'badge-confirmado',
   traslado: 'badge-confirmado',
   ajuste: 'badge-parcial',
 };
@@ -33,14 +33,15 @@ async function imprimirOperacionById(id, empresa) {
   const tipoDocMap = {
     entrega: 'REMITO DE ENTREGA',
     recepcion: 'REMITO DE RECEPCIÓN',
-    remito_taller: 'REMITO DE TRASLADO A TALLER',
+    remito_taller: 'REMITO DE TRASLADO',
     ajuste: 'COMPROBANTE DE AJUSTE',
-    traslado: 'REMITO DE TRASLADO INTERNO',
+    traslado: 'REMITO DE TRASLADO',
   };
   const labelMap = {
-    entrega: 'Cliente / Destinatario',
+    entrega: 'Cliente',
     recepcion: 'Proveedor',
-    remito_taller: 'Taller / Destinatario',
+    remito_taller: 'Destinatario',
+    traslado: 'Destinatario',
   };
   const notasInternas = [
     ...(Array.isArray(op.notas_internas) ? op.notas_internas : []),
@@ -94,7 +95,13 @@ export async function renderOperacionesStockView() {
   const getFiltered = () => {
     const q = search.trim().toLowerCase();
     return operaciones.filter(o => {
-      if (filterTipo && o.tipo !== filterTipo) return false;
+      if (filterTipo) {
+        if (filterTipo === 'traslado') {
+          if (o.tipo !== 'traslado' && o.tipo !== 'remito_taller') return false;
+        } else if (o.tipo !== filterTipo) {
+          return false;
+        }
+      }
       if (filterEstado && o.estado !== filterEstado) return false;
       if (filterContacto && String(o.contacto_id || '') !== String(filterContacto)) return false;
       if (filterDesde && (o.fecha || '') < filterDesde) return false;
@@ -118,8 +125,8 @@ export async function renderOperacionesStockView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Operaciones de Stock y Remitos</h1>
-        <p class="muted">Recepciones, entregas, remitos a taller, traslados entre ubicaciones y ajustes de inventario.</p>
+        <h1>Operaciones de Stock</h1>
+        <p class="muted">Recepciones, entregas, traslados y ajustes de inventario.</p>
       </div>
       <div class="actions">
         <a href="/operaciones-stock/nueva" data-link class="btn btn-primary">+ Nueva Operación</a>
@@ -136,14 +143,16 @@ export async function renderOperacionesStockView() {
 
   const borradores = operaciones.filter(o => o.estado === 'Borrador').length;
   const confirmados = operaciones.filter(o => o.estado === 'Confirmado').length;
-  const remitosTaller = operaciones.filter(o => o.tipo === 'remito_taller').length;
-  const entregasRecep = operaciones.filter(o => o.tipo === 'entrega' || o.tipo === 'recepcion').length;
+  const trasladosCount = operaciones.filter(o => o.tipo === 'traslado' || o.tipo === 'remito_taller').length;
+  const entregasCount = operaciones.filter(o => o.tipo === 'entrega').length;
+  const recepcionesCount = operaciones.filter(o => o.tipo === 'recepcion').length;
   renderKpiStrip(root.querySelector('#op-kpis'), [
-    { label: 'Total Documentos', value: String(operaciones.length) },
+    { label: 'Total Operaciones', value: String(operaciones.length) },
     { label: 'Borradores', value: String(borradores), tone: borradores > 0 ? 'warn' : 'default' },
-    { label: 'Confirmados', value: String(confirmados), tone: 'success' },
-    { label: 'Remitos a Taller', value: String(remitosTaller) },
-    { label: 'Entregas / Recepciones', value: String(entregasRecep) },
+    { label: 'Confirmadas', value: String(confirmados), tone: 'success' },
+    { label: 'Entregas', value: String(entregasCount) },
+    { label: 'Recepciones', value: String(recepcionesCount) },
+    { label: 'Traslados', value: String(trasladosCount) },
   ]);
 
   const drawTable = () => {
@@ -243,7 +252,7 @@ export async function renderOperacionesStockView() {
             const label = `${o.referencia_tipo} #${o.referencia_id}`;
             if (o.referencia_tipo === 'venta') return `<a href="/ventas/${o.referencia_id}" data-link class="link-primary">${esc(label)}</a>`;
             if (o.referencia_tipo === 'orden') return `<a href="/ordenes/${o.referencia_id}" data-link class="link-primary">${esc(label)}</a>`;
-            if (o.referencia_tipo === 'compra') return `<a href="/compras" data-link class="link-primary">${esc(label)}</a>`;
+            if (o.referencia_tipo === 'compra') return `<a href="/compras/${o.referencia_id}" data-link class="link-primary">${esc(label)}</a>`;
             return `<span class="muted">${esc(label)}</span>`;
           },
         },
@@ -303,11 +312,10 @@ export async function renderOperacionesStockView() {
         value: filterTipo,
         options: [
           { value: '', label: 'Todos los tipos' },
-          { value: 'recepcion', label: 'Recepciones' },
-          { value: 'entrega', label: 'Entregas' },
-          { value: 'remito_taller', label: 'Remitos Taller' },
-          { value: 'traslado', label: 'Traslados' },
-          { value: 'ajuste', label: 'Ajustes' },
+          { value: 'recepcion', label: 'Recepción' },
+          { value: 'entrega', label: 'Entrega' },
+          { value: 'traslado', label: 'Traslado' },
+          { value: 'ajuste', label: 'Ajuste' },
         ],
       },
       {
@@ -362,7 +370,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
   const virtAjuste = ubicaciones.find(u => u.codigo === 'VIRT-AJUSTE') || ubicaciones.find(u => u.tipo === 'virtual');
 
   const formState = {
-    tipo: mode === 'remito' ? 'remito_taller' : 'traslado',
+    tipo: 'traslado',
     fecha: new Date().toISOString().slice(0, 10),
     origen_id: depCentral?.id ? String(depCentral.id) : '',
     destino_id: tallerExt?.id ? String(tallerExt.id) : '',
@@ -379,7 +387,6 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
 
   const getOriginIdForLotes = () => {
     if (formState.tipo === 'traslado') return Number(formState.origen_id) || null;
-    if (formState.tipo === 'remito_taller') return depCentral?.id ? Number(depCentral.id) : null;
     if (formState.tipo === 'entrega') return prodTerm?.id ? Number(prodTerm.id) : null;
     if (formState.tipo === 'ajuste') return formState.ajuste_dir === '-1' ? (Number(formState.ubicacion_id) || null) : null;
     return null;
@@ -388,13 +395,14 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
   const draw = () => {
     document.querySelectorAll('.combo-menu').forEach(m => m.remove());
     const t = formState.tipo;
-    const usaContacto = t === 'remito_taller' || t === 'entrega' || t === 'recepcion';
-    const contactoLabel = t === 'remito_taller' ? 'Taller / Destinatario *' : t === 'entrega' ? 'Cliente / Destinatario *' : 'Proveedor *';
+    const usaContacto = t === 'traslado' || t === 'entrega' || t === 'recepcion';
+    const contactoReq = t === 'entrega' || t === 'recepcion';
+    const contactoLabel = t === 'traslado' ? 'Destinatario' : t === 'entrega' ? 'Cliente *' : 'Proveedor *';
 
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/traslados" data-link class="muted" style="font-size:0.85rem;">← Volver a Operaciones y Remitos</a></div>
+          <div style="margin-bottom:6px;"><a href="/operaciones-stock" data-link class="muted" style="font-size:0.85rem;">← Volver a Operaciones</a></div>
           <h1>Nueva Operación de Stock</h1>
         </div>
       </div>
@@ -405,11 +413,10 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
           <label>
             <span>Tipo *</span>
             <select id="op-tipo" name="tipo">
-              <option value="traslado" ${t === 'traslado' ? 'selected' : ''}>Traslado entre Ubicaciones</option>
-              <option value="remito_taller" ${t === 'remito_taller' ? 'selected' : ''}>Remito / Entrega a Taller</option>
-              <option value="entrega" ${t === 'entrega' ? 'selected' : ''}>Entrega a Cliente</option>
-              <option value="recepcion" ${t === 'recepcion' ? 'selected' : ''}>Recepción de Proveedor</option>
-              <option value="ajuste" ${t === 'ajuste' ? 'selected' : ''}>Ajuste de Inventario</option>
+              <option value="traslado" ${t === 'traslado' ? 'selected' : ''}>Traslado</option>
+              <option value="entrega" ${t === 'entrega' ? 'selected' : ''}>Entrega</option>
+              <option value="recepcion" ${t === 'recepcion' ? 'selected' : ''}>Recepción</option>
+              <option value="ajuste" ${t === 'ajuste' ? 'selected' : ''}>Ajuste</option>
             </select>
           </label>
           <label><span>Fecha *</span><input type="date" id="op-fecha" name="fecha" required value="${esc(formState.fecha)}" /></label>
@@ -429,8 +436,8 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
             <label>
               <span>Dirección *</span>
               <select id="op-ajuste-dir" name="ajuste_dir">
-                <option value="1" ${formState.ajuste_dir === '1' ? 'selected' : ''}>+ Ingreso / Conteo positivo</option>
-                <option value="-1" ${formState.ajuste_dir === '-1' ? 'selected' : ''}>- Egreso / Merma</option>
+                <option value="1" ${formState.ajuste_dir === '1' ? 'selected' : ''}>+ Ingreso</option>
+                <option value="-1" ${formState.ajuste_dir === '-1' ? 'selected' : ''}>- Egreso</option>
               </select>
             </label>
             <label>
@@ -446,26 +453,26 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
             </label>
           ` : ''}
 
-          ${t === 'remito_taller' ? `
+          ${t === 'traslado' ? `
             <label>
               <span>Punto de Venta</span>
               <select name="punto_venta" id="op-rem-pv">${renderPuntoVentaOptions(puntosVenta, nextRemitoSeq?.punto_venta)}</select>
             </label>
-            <label><span>Número Remito</span><input type="text" id="op-numero" name="numero" value="${esc(formState.numero || '')}" placeholder="Automático" /></label>
+            <label><span>Número</span><input type="text" id="op-numero" name="numero" value="${esc(formState.numero || '')}" placeholder="Automático" /></label>
           ` : ''}
 
-          <label><span>Motivo</span><input type="text" id="op-motivo" name="motivo" value="${esc(formState.motivo)}" placeholder="Ej: Conteo físico / Reposición taller" /></label>
+          <label><span>Motivo</span><input type="text" id="op-motivo" name="motivo" value="${esc(formState.motivo)}" placeholder="Ej: Conteo físico / Envío a taller" /></label>
           <label><span>Observaciones</span><input type="text" id="op-obs" name="observaciones" value="${esc(formState.observaciones)}" placeholder="Opcional" /></label>
           <label>
-            <span>Envío / Transporte</span>
+            <span>Transporte</span>
             <input type="text" id="op-envio" name="envio" list="op-envio-list" value="${esc(formState.envio)}" placeholder="Ej: Andreani, Correo Argentino, Retiro en local..." />
             <datalist id="op-envio-list">
               <option value="Retiro en Local"></option>
-              <option value="Moto / Flete Propio"></option>
+              <option value="Flete Propio"></option>
               <option value="Andreani"></option>
               <option value="Correo Argentino"></option>
               <option value="OCA"></option>
-              <option value="Transporte / Expreso"></option>
+              <option value="Expreso"></option>
             </datalist>
           </label>
           <label><span>Código de Seguimiento</span><input type="text" id="op-seg" name="codigo_seguimiento" value="${esc(formState.codigo_seguimiento)}" placeholder="Ej: AR123456789" /></label>
@@ -477,7 +484,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
             </div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>Producto</th><th>Lote / Quant</th><th class="num">Cantidad</th><th>Unidad</th><th></th></tr></thead>
+                <thead><tr><th>Producto</th><th>Lote</th><th class="num">Cantidad</th><th>Unidad</th><th></th></tr></thead>
                 <tbody>
                   ${lineas.map((l, idx) => `
                     <tr>
@@ -494,7 +501,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
           </div>
 
           <div class="full modal-footer">
-            <a href="/traslados" data-link class="btn">Cancelar</a>
+            <a href="/operaciones-stock" data-link class="btn">Cancelar</a>
             <button type="button" id="btn-op-draft" class="btn">Guardar Borrador</button>
             <button type="submit" class="btn btn-primary">Confirmar Operación</button>
           </div>
@@ -560,13 +567,13 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
 
     if (usaContacto) {
       const sortedContacts = contactos.slice().sort((a, b) => {
-        if (t === 'remito_taller') return Number(Boolean(b.es_taller)) - Number(Boolean(a.es_taller));
+        if (t === 'traslado') return Number(Boolean(b.es_taller)) - Number(Boolean(a.es_taller));
         if (t === 'entrega') return Number(Boolean(b.es_cliente)) - Number(Boolean(a.es_cliente));
         return Number(Boolean(b.es_proveedor)) - Number(Boolean(a.es_proveedor));
       });
       mountCombobox(root.querySelector('#op-contacto-combo'), {
         name: 'contacto_id',
-        required: true,
+        required: contactoReq,
         value: formState.contacto_id,
         placeholder: 'Buscar o crear contacto...',
         items: sortedContacts.map(c => ({
@@ -577,7 +584,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
         })),
         onSelect: (it) => { formState.contacto_id = it ? String(it.value) : ''; },
         onCreate: async (q) => {
-          const created = await quickCreateProveedor(q, { es_taller: t === 'remito_taller' });
+          const created = await quickCreateProveedor(q, { es_taller: t === 'traslado' });
           if (created) {
             contactos.push(created.raw);
             formState.contacto_id = created.value;
@@ -587,16 +594,13 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
       });
     }
 
-    if (t === 'remito_taller') {
+    if (t === 'traslado') {
       bindPuntoVentaSeq(root.querySelector('#op-rem-pv'), root.querySelector('#op-numero'), 'remito', api);
     }
 
     root.querySelector('#op-tipo').addEventListener('change', (e) => {
       syncFormMeta();
       formState.tipo = e.target.value;
-      if (formState.tipo === 'remito_taller' && !formState.numero) {
-        formState.numero = nextRemitoSeq?.numero || '';
-      }
       draw();
     });
     root.querySelector('#op-ajuste-dir')?.addEventListener('change', (e) => {
@@ -682,7 +686,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
 
     const submitOp = async (estado) => {
       syncFormMeta();
-      if (usaContacto && !Number(formState.contacto_id)) {
+      if (contactoReq && !Number(formState.contacto_id)) {
         toast('Seleccioná o creá un contacto destinatario', true);
         return;
       }
@@ -699,6 +703,8 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
       if (formState.tipo === 'traslado') {
         body.ubicacion_origen_id = Number(formState.origen_id);
         body.ubicacion_destino_id = Number(formState.destino_id);
+        if (Number(formState.contacto_id)) body.contacto_id = Number(formState.contacto_id);
+        if (formState.numero) body.numero = formState.numero;
       } else if (formState.tipo === 'ajuste') {
         if (!virtAjuste?.id) { toast('Falta ubicación virtual VIRT-AJUSTE', true); return; }
         const ubId = Number(formState.ubicacion_id);
@@ -706,9 +712,6 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
         body.ubicacion_destino_id = formState.ajuste_dir === '1' ? ubId : virtAjuste.id;
       } else {
         body.contacto_id = Number(formState.contacto_id);
-        if (formState.tipo === 'remito_taller' && formState.numero) {
-          body.numero = formState.numero;
-        }
       }
       try {
         const res = await api('/api/operaciones-stock', {
@@ -716,7 +719,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
           body: JSON.stringify(body),
         });
         toast(estado === 'Confirmado' ? 'Operación confirmada y stock actualizado' : 'Borrador guardado');
-        navigate(res?.id ? `/operaciones-stock/${res.id}` : '/traslados');
+        navigate(res?.id ? `/operaciones-stock/${res.id}` : '/operaciones-stock');
       } catch (err) { toast(err.message, true); }
     };
 
@@ -746,37 +749,23 @@ export async function renderOperacionStockDetalleView({ id }) {
   if (op.referencia_tipo === 'venta' && op.referencia_id) refLink = `/ventas/${op.referencia_id}`;
   else if (op.referencia_tipo === 'orden' && op.referencia_id) refLink = `/ordenes/${op.referencia_id}`;
 
-  root.innerHTML = `
-    <div class="page-header">
-      <div>
-        <div style="margin-bottom:6px;"><a href="/traslados" data-link class="muted" style="font-size:0.85rem;">← Volver a Operaciones y Remitos</a></div>
-        <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <span>${esc(op.numero || '#' + op.id)}</span>
-          ${renderTipoBadge(op.tipo)}
-          ${badgeForEstado(op.estado)}
-        </h1>
-      </div>
-      <div class="actions">
-        <button type="button" id="btn-opd-print" class="btn">Imprimir / Remito</button>
-        ${op.estado === 'Borrador' ? `<button type="button" id="btn-opd-conf" class="btn btn-primary">Confirmar</button>` : ''}
-        ${op.estado === 'Confirmado' ? `<button type="button" id="btn-opd-anul" class="btn">Anular</button>` : ''}
-        ${op.estado === 'Borrador' ? `<button type="button" id="btn-opd-del" class="btn btn-danger">Eliminar</button>` : ''}
-      </div>
-    </div>
+  const totalUnidades = lineas.reduce((s, l) => s + Number(l.cantidad || 0), 0);
+  const tipoLabel = TIPO_LABELS[op.tipo] || op.tipo || 'Operación';
 
+  const datosHtml = `
     <div class="card">
       <div class="card-header"><h2>Datos de la Operación</h2></div>
       <div class="form-grid">
         <label><span>Fecha</span><input type="text" readonly value="${esc(op.fecha || '')}" /></label>
         <label><span>Origen → Destino</span><input type="text" readonly value="${esc(`${op.origen_nombre || '-'} → ${op.destino_nombre || '-'}`)}" /></label>
         <label>
-          <span>Contacto / Destinatario</span>
+          <span>Contacto</span>
           ${op.contacto_id
             ? `<div style="padding:8px 0;"><a href="/contactos/${op.contacto_id}" data-link class="link-primary"><strong>${esc(op.contacto_nombre || op.contacto_razon_social || '-')}</strong></a></div>`
             : `<input type="text" readonly value="-" />`}
         </label>
         <label>
-          <span>Documento Origen / Referencia</span>
+          <span>Documento Origen</span>
           ${refLink
             ? `<div style="padding:8px 0;"><a href="${refLink}" data-link class="link-primary"><strong>${esc(`${op.referencia_tipo} #${op.referencia_id}`)}</strong></a></div>`
             : `<input type="text" readonly value="${esc(op.referencia_tipo ? `${op.referencia_tipo} #${op.referencia_id}` : '-')}" />`}
@@ -784,7 +773,7 @@ export async function renderOperacionStockDetalleView({ id }) {
         <label><span>Motivo</span><input type="text" readonly value="${esc(op.motivo || '-')}" /></label>
         <label><span>Observaciones</span><input type="text" readonly value="${esc(op.observaciones || '-')}" /></label>
         <label>
-          <span>Envío / Transporte</span>
+          <span>Transporte</span>
           <input type="text" id="opd-envio" value="${esc(op.envio || '')}" placeholder="Ej: Andreani, Correo Argentino..." />
         </label>
         <label>
@@ -796,9 +785,17 @@ export async function renderOperacionStockDetalleView({ id }) {
         </label>
       </div>
     </div>
+  `;
 
+  const isBorrador = op.estado === 'Borrador';
+  const itemsHtml = `
     <div class="card">
-      <div class="card-header"><h2>Detalle de Ítems (${lineas.length})</h2></div>
+      <div class="card-header">
+        <div>
+          <h2>Ítems (${lineas.length})</h2>
+          ${isBorrador ? `<span class="muted" style="font-size:0.82rem;">Podés ajustar la cantidad a procesar hoy; si es menor al total pedido se generará automáticamente un documento en Borrador por el saldo pendiente.</span>` : ''}
+        </div>
+      </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -806,17 +803,28 @@ export async function renderOperacionStockDetalleView({ id }) {
               <th>Producto</th>
               <th>SKU</th>
               <th>Lote</th>
-              <th class="num">Cantidad</th>
+              ${isBorrador ? '<th class="num">Pedido</th><th class="num">A Procesar</th>' : '<th class="num">Cantidad</th>'}
               <th>Unidad</th>
             </tr>
           </thead>
           <tbody>
-            ${lineas.length === 0 ? '<tr><td colspan="5" class="muted">Sin líneas registradas.</td></tr>' : lineas.map(l => `
+            ${lineas.length === 0 ? `<tr><td colspan="${isBorrador ? 6 : 5}" class="muted">Sin líneas registradas.</td></tr>` : lineas.map(l => `
               <tr>
                 <td><strong>${esc(l.item_nombre || l.descripcion || '-')}</strong></td>
                 <td class="muted">${esc(l.sku || '-')}</td>
-                <td>${l.lote_codigo || l.lote ? `<span class="badge badge-muted">${esc(l.lote_codigo || l.lote)}</span>` : '<span class="muted">-</span>'}</td>
-                <td class="num"><strong>${fmtNum(l.cantidad)}</strong></td>
+                <td>
+                  ${isBorrador
+                    ? `<input type="text" class="opd-line-lote" data-lid="${l.id}" value="${esc(l.lote_codigo || l.lote || '')}" placeholder="Lote" style="width:130px;" />`
+                    : (l.lote_codigo || l.lote ? `<span class="badge badge-muted">${esc(l.lote_codigo || l.lote)}</span>` : '<span class="muted">-</span>')}
+                </td>
+                ${isBorrador ? `
+                  <td class="num muted">${fmtNum(l.cantidad)}</td>
+                  <td class="num">
+                    <input type="number" step="0.0001" min="0" max="${l.cantidad}" class="opd-line-qty num" data-lid="${l.id}" data-pid="${l.producto_id}" value="${l.cantidad}" style="width:110px;text-align:right;font-weight:600;" />
+                  </td>
+                ` : `
+                  <td class="num"><strong>${fmtNum(l.cantidad)}</strong></td>
+                `}
                 <td>${esc(l.udm || 'unidades')}</td>
               </tr>
             `).join('')}
@@ -824,53 +832,125 @@ export async function renderOperacionStockDetalleView({ id }) {
         </table>
       </div>
     </div>
-
-    <div id="opd-meta-panel"></div>
   `;
 
-  renderMetaPanel(root.querySelector('#opd-meta-panel'), {
-    entidadTipo: 'operacion_stock',
-    entidadId: id,
-    titulo: `Operación ${op.numero || '#' + id}`,
-    record: op,
-  });
+  const actions = [
+    {
+      label: 'Imprimir Remito',
+      onClick: async () => {
+        try { await imprimirOperacionById(id, empresa); }
+        catch (err) { toast(err.message, true); }
+      },
+    },
+  ];
+  if (op.estado === 'Borrador') {
+    actions.push({
+      label: 'Confirmar',
+      primary: true,
+      onClick: async () => {
+        try {
+          const partialLines = Array.from(root.querySelectorAll('.opd-line-qty')).map(inp => {
+            const lid = Number(inp.dataset.lid);
+            const loteInp = root.querySelector(`.opd-line-lote[data-lid="${lid}"]`);
+            return {
+              id: lid,
+              producto_id: Number(inp.dataset.pid),
+              cantidad: Number(inp.value) || 0,
+              lote: loteInp ? loteInp.value.trim() : undefined,
+            };
+          });
+          const res = await api(`/api/operaciones-stock/${id}/confirmar`, {
+            method: 'POST',
+            body: { lineas: partialLines, generar_backorder: true },
+          });
+          if (res?.backorder_id) {
+            toast(`Confirmado parcialmente. Se generó el Borrador #${res.backorder_id} por el saldo pendiente.`);
+          } else {
+            toast('Documento confirmado y stock actualizado');
+          }
+          await renderOperacionStockDetalleView({ id });
+        } catch (err) { toast(err.message, true); }
+      },
+    });
+    actions.push({
+      label: 'Eliminar',
+      className: 'btn btn-danger',
+      onClick: async () => {
+        if (!(await showConfirmModal('¿Eliminar este borrador?'))) return;
+        try {
+          await api(`/api/operaciones-stock/${id}`, { method: 'DELETE' });
+          toast('Borrador eliminado');
+          navigate('/operaciones-stock');
+        } catch (err) { toast(err.message, true); }
+      },
+    });
+  } else if (op.estado === 'Confirmado') {
+    actions.push({
+      label: 'Anular',
+      onClick: async () => {
+        if (!(await showConfirmModal('¿Anular este documento? Se generarán movimientos inversos para revertir el stock.'))) return;
+        try {
+          await api(`/api/operaciones-stock/${id}/anular`, { method: 'POST' });
+          toast('Documento anulado');
+          await renderOperacionStockDetalleView({ id });
+        } catch (err) { toast(err.message, true); }
+      },
+    });
+  }
 
-  root.querySelector('#btn-opd-save-envio')?.addEventListener('click', async () => {
-    try {
-      const envio = root.querySelector('#opd-envio')?.value || '';
-      const codigo_seguimiento = root.querySelector('#opd-seg')?.value || '';
-      await api(`/api/operaciones-stock/${id}`, {
-        method: 'PATCH',
-        body: { envio, codigo_seguimiento },
+  const smartButtons = [{ label: 'Ítems', count: lineas.length, icon: '📦' }];
+  if (refLink) {
+    smartButtons.push({ label: `${op.referencia_tipo} #${op.referencia_id}`, count: '↗', icon: '🔗', href: refLink });
+  }
+
+  mountDetailView(root, {
+    breadcrumb: { label: 'Volver a Operaciones', href: '/operaciones-stock' },
+    title: `${op.numero || '#' + op.id} — ${tipoLabel}`,
+    subtitle: `${esc(op.origen_nombre || '-')} → ${esc(op.destino_nombre || '-')} · Fecha: ${esc(op.fecha || '-')}`,
+    badge: {
+      text: op.estado,
+      className: op.estado === 'Confirmado' ? 'badge-ok' : op.estado === 'Anulado' ? 'badge-danger' : 'badge-muted',
+    },
+    actions,
+    steps: [
+      { key: 'Borrador', label: 'Borrador' },
+      { key: 'Confirmado', label: 'Confirmado' },
+      ...(op.estado === 'Anulado' ? [{ key: 'Anulado', label: 'Anulado' }] : []),
+    ],
+    currentStep: op.estado,
+    smartButtons,
+    kpis: [
+      { label: 'Tipo', value: esc(tipoLabel) },
+      { label: 'Fecha', value: esc(op.fecha || '-') },
+      { label: 'Ítems', value: String(lineas.length) },
+      { label: 'Total Unidades', value: fmtNum(totalUnidades) },
+    ],
+    tabs: [
+      { id: 'items', label: 'Ítems', badge: lineas.length, html: itemsHtml },
+      { id: 'datos', label: 'Datos y Envío', html: datosHtml },
+    ],
+    defaultTab: 'items',
+    sidebarHtml: '<div id="opd-meta-panel"></div>',
+    onMountSidebar: (sidebarEl) => {
+      renderMetaPanel(sidebarEl.querySelector('#opd-meta-panel'), {
+        entidadTipo: 'operacion_stock',
+        entidadId: id,
+        titulo: `Operación ${op.numero || '#' + id}`,
+        record: op,
       });
-      toast('Datos de envío y seguimiento guardados');
-    } catch (err) { toast(err.message, true); }
-  });
-  root.querySelector('#btn-opd-print')?.addEventListener('click', async () => {
-    try { await imprimirOperacionById(id, empresa); }
-    catch (err) { toast(err.message, true); }
-  });
-  root.querySelector('#btn-opd-conf')?.addEventListener('click', async () => {
-    try {
-      await api(`/api/operaciones-stock/${id}/confirmar`, { method: 'POST' });
-      toast('Documento confirmado y stock actualizado');
-      await renderOperacionStockDetalleView({ id });
-    } catch (err) { toast(err.message, true); }
-  });
-  root.querySelector('#btn-opd-anul')?.addEventListener('click', async () => {
-    if (!(await showConfirmModal('¿Anular este documento? Se generarán movimientos inversos para revertir el stock.'))) return;
-    try {
-      await api(`/api/operaciones-stock/${id}/anular`, { method: 'POST' });
-      toast('Documento anulado');
-      await renderOperacionStockDetalleView({ id });
-    } catch (err) { toast(err.message, true); }
-  });
-  root.querySelector('#btn-opd-del')?.addEventListener('click', async () => {
-    if (!(await showConfirmModal('¿Eliminar este borrador?'))) return;
-    try {
-      await api(`/api/operaciones-stock/${id}`, { method: 'DELETE' });
-      toast('Borrador eliminado');
-      navigate('/traslados');
-    } catch (err) { toast(err.message, true); }
+    },
+    onAfterMount: (container) => {
+      container.querySelector('#btn-opd-save-envio')?.addEventListener('click', async () => {
+        try {
+          const envio = container.querySelector('#opd-envio')?.value || '';
+          const codigo_seguimiento = container.querySelector('#opd-seg')?.value || '';
+          await api(`/api/operaciones-stock/${id}`, {
+            method: 'PATCH',
+            body: { envio, codigo_seguimiento },
+          });
+          toast('Datos de envío y seguimiento guardados');
+        } catch (err) { toast(err.message, true); }
+      });
+    },
   });
 }

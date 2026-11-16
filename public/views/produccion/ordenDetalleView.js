@@ -1,71 +1,70 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtNum, fmtMoney, badgeForTipo } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
+import { openPdfFromEndpoint } from '../../lib/remitoPrint.js';
+import { mountDetailView, createModal, renderGanttChart } from '../../lib/engine/index.js';
 
 export async function renderOrdenDetalleView({ id }) {
   const root = document.getElementById('app-view');
-  const [detail, talleres, operaciones, compras] = await Promise.all([
+  const [detail, talleres, operaciones, compras, planCuentas] = await Promise.all([
     api(`/api/ordenes/${id}`),
     api('/api/contactos?es_taller=1'),
     api('/api/operaciones-stock').catch(() => []),
     api('/api/compras').catch(() => []),
+    api('/api/tesoreria/plan-cuentas').catch(() => []),
   ]);
 
   const { orden, lineas, etapas, insumos, movimientos } = detail;
   const opsOrden = (operaciones || []).filter(o => o.referencia_tipo === 'orden' && Number(o.referencia_id) === Number(id));
   const comprasOrden = (compras || []).filter(c => Number(c.orden_id) === Number(id));
+  const cuentasEgreso = (planCuentas || []).filter(c => Number(c.activo) !== 0 && Number(c.imputable) !== 0 && (c.tipo === 'egreso' || c.tipo === 'activo'));
 
-  root.innerHTML = `
-    <div class="page-header">
-      <div>
-        <div style="margin-bottom:6px;">
-          <a href="/ordenes" data-link class="muted" style="font-size:0.85rem;">← Volver a Órdenes</a>
-        </div>
-        <h1>${esc(orden.codigo)} — ${esc(orden.plantilla_nombre)} <span class="badge ${orden.estado === 'Completada' ? 'badge-ok' : orden.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado'}">${esc(orden.estado)}</span></h1>
-        <p class="muted">Receta: ${esc(orden.receta_nombre || 'Activa')} · Inicio: ${esc(orden.fecha_inicio)} · Objetivo: ${esc(orden.fecha_objetivo || '-')} · Costo Procesos Est.: <strong>${fmtMoney(orden.costo_procesos_est || 0)}</strong> · Real: <strong>${fmtMoney(orden.costo_procesos_real || 0)}</strong></p>
-      </div>
-      <div class="actions">
-        <a href="/ordenes/nueva" data-link class="btn">+ Nueva Orden</a>
-        <a href="/remitos" data-link class="btn">+ Emitir Remito a Taller</a>
-      </div>
-    </div>
+  const costoEst = Number(orden.costo_procesos_est || 0);
+  const costoReal = Number(orden.costo_procesos_real || 0);
+  const desvio = costoReal - costoEst;
 
-    ${(opsOrden.length > 0 || comprasOrden.length > 0) ? `
-      <div class="card">
-        <div class="card-header"><h2>Documentos Vinculados</h2></div>
-        <div class="actions" style="flex-wrap:wrap;gap:8px;padding:12px 16px;">
-          ${opsOrden.map(o => `<a href="/remitos" data-link class="btn btn-sm">Remito/Op: ${esc(o.numero)} (${esc(o.estado)})</a>`).join('')}
-          ${comprasOrden.map(c => `<a href="/compras" data-link class="btn btn-sm">Compra: ${esc(c.numero || '#' + c.id)} — ${esc(c.proveedor_nombre)} (${esc(c.estado)})</a>`).join('')}
-        </div>
-      </div>
-    ` : ''}
-
+  const cantidadesHtml = `
     <div class="card">
       <div class="card-header">
-        <h2>Cantidades de la Orden</h2>
+        <div>
+          <h2>Cantidades de la Orden</h2>
+          <span class="muted" style="font-size:0.82rem;">Podés registrar ingresos parciales de producto terminado a medida que salen del taller o completar todo al cierre.</span>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
+              <th>Concepto</th>
               ${(lineas || []).map(l => `<th class="num">${esc(l.combinacion || l.sku || l.producto_nombre)}</th>`).join('')}
               <th class="num">Total</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              ${(lineas || []).map(l => `<td class="num">${l.cantidad}</td>`).join('')}
-              <td class="num"><strong>${orden.cantidad}</strong></td>
+              <td><strong>Planificado</strong></td>
+              ${(lineas || []).map(l => `<td class="num">${fmtNum(l.cantidad)}</td>`).join('')}
+              <td class="num"><strong>${fmtNum(orden.cantidad)}</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Ingresado</strong></td>
+              ${(lineas || []).map(l => `<td class="num" style="color:#15803d;">${fmtNum(l.cantidad_ingresada || 0)}</td>`).join('')}
+              <td class="num"><strong style="color:#15803d;">${fmtNum(orden.cantidad_ingresada || 0)}</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Pendiente</strong></td>
+              ${(lineas || []).map(l => `<td class="num" style="color:${Number(l.cantidad_pendiente) > 0 ? 'var(--color-accent)' : 'var(--color-muted)'};">${fmtNum(l.cantidad_pendiente ?? l.cantidad)}</td>`).join('')}
+              <td class="num"><strong style="color:${Number(orden.cantidad_pendiente) > 0 ? 'var(--color-accent)' : 'var(--color-muted)'};">${fmtNum(orden.cantidad_pendiente ?? orden.cantidad)}</strong></td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
+  `;
 
+  const etapasHtml = `
     <div class="card">
-      <div class="card-header">
-        <h2>Etapas de Producción</h2>
-      </div>
+      <div class="card-header"><h2>Etapas de Producción</h2></div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -90,6 +89,7 @@ export async function renderOrdenDetalleView({ id }) {
               <tr>
                 <td>
                   <strong>${e.orden_num}. ${esc(e.nombre)}</strong>
+                  ${e.descripcion ? `<div class="muted" style="font-size:11px;">${esc(e.descripcion)}</div>` : ''}
                   ${e.depende_de_nombre ? `<div class="muted" style="font-size:11px;">Depende de: ${esc(e.depende_de_nombre)}</div>` : ''}
                 </td>
                 <td>
@@ -97,6 +97,11 @@ export async function renderOrdenDetalleView({ id }) {
                     <option value="">-- Sin taller --</option>
                     ${talleres.map(t => `<option value="${t.id}" ${String(t.id) === String(e.taller_id || '') ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}
                   </select>
+                  <select class="etapa-cta input-sm" data-etapa-id="${e.id}" style="margin-top:4px;">
+                    <option value="">-- Cuenta por defecto --</option>
+                    ${cuentasEgreso.map(c => `<option value="${c.id}" ${String(c.id) === String(e.plan_cuenta_id || '') ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('')}
+                  </select>
+                  ${e.compra_id ? `<div style="margin-top:4px;"><a href="/compras/${e.compra_id}" data-link class="badge badge-ok">Compra ${esc(e.compra_numero || '#' + e.compra_id)}</a></div>` : ''}
                 </td>
                 <td>
                   <div style="display:flex;flex-direction:column;gap:4px;">
@@ -137,11 +142,20 @@ export async function renderOrdenDetalleView({ id }) {
         </table>
       </div>
     </div>
-
-    <div class="card">
+    <div class="card" style="margin-top:14px;">
       <div class="card-header">
-        <h2>Materiales y Servicios por Etapa</h2>
+        <div>
+          <h2>Cronograma Gantt de Etapas</h2>
+          <span class="muted" style="font-size:0.82rem;">Secuencia temporal estimada y real por etapa y taller asignado.</span>
+        </div>
       </div>
+      <div id="orden-det-gantt"></div>
+    </div>
+  `;
+
+  const insumosHtml = `
+    <div class="card">
+      <div class="card-header"><h2>Materiales y Servicios por Etapa</h2></div>
       ${(insumos || []).length === 0 ? `
         <div class="empty-state">No hay insumos asociados a la receta de esta orden.</div>
       ` : `
@@ -173,12 +187,14 @@ export async function renderOrdenDetalleView({ id }) {
         </div>
       `}
     </div>
+  `;
 
-    ${movimientos.length > 0 ? `
-      <div class="card">
-        <div class="card-header">
-          <h2>Movimientos de Stock Generados</h2>
-        </div>
+  const movimientosHtml = `
+    <div class="card">
+      <div class="card-header"><h2>Movimientos de Stock Generados</h2></div>
+      ${movimientos.length === 0 ? `
+        <div class="empty-state">Todavía no se generaron movimientos de stock para esta orden.</div>
+      ` : `
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -203,58 +219,208 @@ export async function renderOrdenDetalleView({ id }) {
             </tbody>
           </table>
         </div>
-      </div>
-    ` : ''}
-
-    <div id="orden-meta-panel"></div>
+      `}
+    </div>
   `;
 
-  renderMetaPanel(root.querySelector('#orden-meta-panel'), {
-    entidadTipo: 'orden',
-    entidadId: id,
-    titulo: `Orden ${orden.codigo}`,
-    record: orden,
-  });
+  const vinculadosHtml = (opsOrden.length || comprasOrden.length) ? `
+    <div class="card">
+      <div class="card-header"><h2>Documentos Vinculados</h2></div>
+      <div class="actions" style="flex-wrap:wrap;gap:8px;padding:12px 16px;">
+        ${opsOrden.map(o => `<a href="/operaciones-stock/${o.id}" data-link class="btn btn-sm">Operación: ${esc(o.numero)} (${esc(o.estado)})</a>`).join('')}
+        ${comprasOrden.map(c => `<a href="/compras/${c.id}" data-link class="btn btn-sm">Compra: ${esc(c.numero || '#' + c.id)} — ${esc(c.proveedor_nombre)} (${esc(c.estado)})</a>`).join('')}
+      </div>
+    </div>
+  ` : '';
 
-  const readEtapaPayload = (eid) => ({
-    taller_id: root.querySelector(`.etapa-taller[data-etapa-id="${eid}"]`)?.value || null,
-    fecha_inicio_est: root.querySelector(`.etapa-ini[data-etapa-id="${eid}"]`)?.value || null,
-    fecha_fin_est: root.querySelector(`.etapa-fin[data-etapa-id="${eid}"]`)?.value || null,
-    cantidad_producida: Number(root.querySelector(`.etapa-prod[data-etapa-id="${eid}"]`)?.value) || 0,
-    cantidad_merma: Number(root.querySelector(`.etapa-merma[data-etapa-id="${eid}"]`)?.value) || 0,
-    costo_real: Number(root.querySelector(`.etapa-costo-real[data-etapa-id="${eid}"]`)?.value) || 0,
-  });
-
-  root.querySelectorAll('.btn-save-etapa').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const eid = btn.dataset.etapaId;
-      try {
-        await api(`/api/orden-etapas/${eid}`, {
-          method: 'PUT',
-          body: JSON.stringify(readEtapaPayload(eid)),
+  mountDetailView(root, {
+    breadcrumb: { label: 'Volver a Órdenes', href: '/ordenes' },
+    title: `${orden.codigo} — ${orden.plantilla_nombre}`,
+    subtitle: `Receta: ${esc(orden.receta_nombre || 'Activa')} · Inicio: ${esc(orden.fecha_inicio)} · Objetivo: ${esc(orden.fecha_objetivo || '-')}`,
+    badge: {
+      text: orden.estado,
+      className: orden.estado === 'Completada' ? 'badge-ok' : orden.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado',
+    },
+    actions: [
+      {
+        label: 'Imprimir PDF',
+        onClick: async () => {
+          try {
+            await openPdfFromEndpoint('/api/print/orden-pdf', detail, `Orden_${orden.codigo || id}.pdf`);
+          } catch (err) {
+            toast(err.message, true);
+          }
+        },
+      },
+      ...(Number(orden.cantidad_pendiente ?? orden.cantidad) > 0 ? [{
+        label: '+ Ingresar Terminado',
+        onClick: () => {
+          const hoy = new Date().toISOString().slice(0, 10);
+          createModal({
+            title: `Ingreso de Producto Terminado — ${orden.codigo}`,
+            size: 'md',
+            bodyHtml: `
+              <div class="form-grid">
+                <label><span>Fecha *</span><input type="date" id="mod-ing-fecha" value="${hoy}" /></label>
+                <label><span>Lote</span><input type="text" id="mod-ing-lote" value="${esc(orden.codigo)}" /></label>
+                <label class="full"><span>Observación</span><input type="text" id="mod-ing-nota" placeholder="Ej: 1ra tanda recibida de taller..." /></label>
+              </div>
+              <div class="table-wrap" style="margin-top:10px;">
+                <table class="data-table no-bulk">
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th class="num">Planificado</th>
+                      <th class="num">Ingresado</th>
+                      <th class="num">Pendiente</th>
+                      <th class="num">A Ingresar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${(lineas || []).map(l => `
+                      <tr>
+                        <td><strong>${esc(l.producto_nombre || l.combinacion || l.sku)}</strong></td>
+                        <td class="num muted">${fmtNum(l.cantidad)}</td>
+                        <td class="num muted">${fmtNum(l.cantidad_ingresada || 0)}</td>
+                        <td class="num"><strong>${fmtNum(l.cantidad_pendiente ?? l.cantidad)}</strong></td>
+                        <td class="num">
+                          <input type="number" step="1" min="0" max="${l.cantidad_pendiente ?? l.cantidad}" class="mod-ing-qty num" data-pid="${l.producto_id}" value="${l.cantidad_pendiente ?? l.cantidad}" style="width:95px;text-align:right;font-weight:600;" />
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `,
+            footerHtml: `
+              <button type="button" class="btn" data-ve-cancel>Cancelar</button>
+              <button type="button" class="btn btn-primary" data-ve-ok>Confirmar Ingreso</button>
+            `,
+            onMount: (el, cleanup) => {
+              el.querySelector('[data-ve-cancel]')?.addEventListener('click', cleanup);
+              el.querySelector('[data-ve-ok]')?.addEventListener('click', async () => {
+                try {
+                  const reqLineas = Array.from(el.querySelectorAll('.mod-ing-qty')).map(inp => ({
+                    producto_id: Number(inp.dataset.pid),
+                    cantidad: Number(inp.value) || 0,
+                  })).filter(x => x.cantidad > 0);
+                  await api(`/api/ordenes/${id}/ingresar`, {
+                    method: 'POST',
+                    body: {
+                      fecha: el.querySelector('#mod-ing-fecha')?.value || hoy,
+                      lote: el.querySelector('#mod-ing-lote')?.value || orden.codigo,
+                      nota: el.querySelector('#mod-ing-nota')?.value || '',
+                      lineas: reqLineas,
+                    },
+                  });
+                  cleanup();
+                  toast('Producto terminado ingresado a stock');
+                  await renderOrdenDetalleView({ id });
+                } catch (err) { toast(err.message, true); }
+              });
+            },
+          });
+        },
+      }] : []),
+      { label: '+ Nueva Orden', href: '/ordenes/nueva' },
+      { label: '+ Nuevo Traslado', href: '/operaciones-stock/nueva', primary: true },
+    ],
+    steps: [
+      { key: 'Planificada', label: 'Planificada' },
+      { key: 'En Proceso', label: 'En Proceso' },
+      { key: 'Completada', label: 'Completada' },
+    ],
+    currentStep: orden.estado,
+    smartButtons: [
+      { label: 'Operaciones', count: opsOrden.length, icon: '📦', href: '/operaciones-stock' },
+      { label: 'Compras', count: comprasOrden.length, icon: '🧾', href: '/compras' },
+    ],
+    kpis: [
+      { label: 'Planificado / Ingresado', value: `${fmtNum(orden.cantidad || 0)} / ${fmtNum(orden.cantidad_ingresada || 0)}`, hint: `Pendiente: ${fmtNum(orden.cantidad_pendiente ?? orden.cantidad ?? 0)}` },
+      { label: 'Costo Estimado', value: fmtMoney(costoEst) },
+      { label: 'Costo Real', value: fmtMoney(costoReal) },
+      {
+        label: 'Desvío',
+        value: fmtMoney(desvio),
+        tone: desvio > 0.01 ? 'danger' : desvio < -0.01 ? 'ok' : '',
+      },
+    ],
+    tabs: [
+      { id: 'etapas', label: 'Etapas', badge: etapas.length, html: etapasHtml },
+      { id: 'cantidades', label: 'Cantidades', badge: (lineas || []).length, html: cantidadesHtml },
+      { id: 'insumos', label: 'Insumos', badge: (insumos || []).length, html: insumosHtml },
+      { id: 'movimientos', label: 'Movimientos', badge: movimientos.length, html: movimientosHtml },
+    ],
+    defaultTab: 'etapas',
+    sidebarHtml: `${vinculadosHtml}<div id="orden-meta-panel"></div>`,
+    onMountSidebar: (sidebarEl) => {
+      renderMetaPanel(sidebarEl.querySelector('#orden-meta-panel'), {
+        entidadTipo: 'orden',
+        entidadId: id,
+        titulo: `Orden ${orden.codigo}`,
+        record: orden,
+      });
+    },
+    onAfterMount: (container) => {
+      const ganttEl = container.querySelector('#orden-det-gantt');
+      if (ganttEl) {
+        const completadas = etapas.filter(e => e.estado === 'Completada').length;
+        renderGanttChart(ganttEl, {
+          rows: [{
+            ...orden,
+            etapas_total: etapas.length,
+            etapas_completadas: completadas,
+            etapas,
+          }],
+          labelRender: (op) => `
+            <div><strong>${esc(op.codigo)}</strong> · ${esc(op.plantilla_nombre)}</div>
+            <div class="muted" style="font-size:11px;">${esc(op.fecha_inicio)} → ${esc(op.fecha_objetivo || '-')} · ${op.cantidad || 0} u.</div>
+          `,
         });
-        toast('Etapa actualizada');
-        await renderOrdenDetalleView({ id });
-      } catch (err) {
-        toast(err.message, true);
       }
-    });
-  });
 
-  root.querySelectorAll('.btn-estado-etapa').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const eid = btn.dataset.etapaId;
-      const estado = btn.dataset.estado;
-      try {
-        await api(`/api/orden-etapas/${eid}`, {
-          method: 'PUT',
-          body: JSON.stringify({ ...readEtapaPayload(eid), estado }),
+      const readEtapaPayload = (eid) => ({
+        taller_id: container.querySelector(`.etapa-taller[data-etapa-id="${eid}"]`)?.value || null,
+        plan_cuenta_id: container.querySelector(`.etapa-cta[data-etapa-id="${eid}"]`)?.value || null,
+        fecha_inicio_est: container.querySelector(`.etapa-ini[data-etapa-id="${eid}"]`)?.value || null,
+        fecha_fin_est: container.querySelector(`.etapa-fin[data-etapa-id="${eid}"]`)?.value || null,
+        cantidad_producida: Number(container.querySelector(`.etapa-prod[data-etapa-id="${eid}"]`)?.value) || 0,
+        cantidad_merma: Number(container.querySelector(`.etapa-merma[data-etapa-id="${eid}"]`)?.value) || 0,
+        costo_real: Number(container.querySelector(`.etapa-costo-real[data-etapa-id="${eid}"]`)?.value) || 0,
+      });
+
+      container.querySelectorAll('.btn-save-etapa').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const eid = btn.dataset.etapaId;
+          try {
+            await api(`/api/orden-etapas/${eid}`, {
+              method: 'PUT',
+              body: JSON.stringify(readEtapaPayload(eid)),
+            });
+            toast('Etapa actualizada');
+            await renderOrdenDetalleView({ id });
+          } catch (err) {
+            toast(err.message, true);
+          }
         });
-        toast(estado === 'Completada' ? 'Etapa completada y stock actualizado' : 'Etapa iniciada');
-        await renderOrdenDetalleView({ id });
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
+      });
+
+      container.querySelectorAll('.btn-estado-etapa').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const eid = btn.dataset.etapaId;
+          const estado = btn.dataset.estado;
+          try {
+            await api(`/api/orden-etapas/${eid}`, {
+              method: 'PUT',
+              body: JSON.stringify({ ...readEtapaPayload(eid), estado }),
+            });
+            toast(estado === 'Completada' ? 'Etapa completada y stock actualizado' : 'Etapa iniciada');
+            await renderOrdenDetalleView({ id });
+          } catch (err) {
+            toast(err.message, true);
+          }
+        });
+      });
+    },
   });
 }

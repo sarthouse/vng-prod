@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney } from '../../lib/format.js';
-import { mountFormFields, renderDataTable, renderKpiStrip, renderFilterBar } from '../../lib/viewEngine.js';
-import { showConfirmModal, createModal } from '../../lib/modal.js';
+import { mountFormFields, renderDataTable, renderKpiStrip, renderFilterBar } from '../../lib/engine/index.js';
+import { showConfirmModal, createModal } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 
 export async function renderLibroDiarioView() {
@@ -13,7 +13,10 @@ export async function renderLibroDiarioView() {
   let hasta = '';
   let viewMode = 'asientos'; // 'asientos' (1 fila por documento) | 'diario' (líneas expandidas)
 
-  const diarios = await api('/api/tesoreria/diarios').catch(() => []);
+  const [diarios, planCuentas] = await Promise.all([
+    api('/api/tesoreria/diarios').catch(() => []),
+    api('/api/tesoreria/plan-cuentas').catch(() => []),
+  ]);
 
   const draw = async () => {
     const qs = new URLSearchParams();
@@ -38,11 +41,11 @@ export async function renderLibroDiarioView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Contabilidad — Libro Diario</h1>
+          <h1>Libro Diario</h1>
           <p class="muted">Asientos automáticos y manuales de partida doble.</p>
         </div>
         <div class="actions">
-          <a href="/contabilidad/asientos/nuevo" data-link class="btn btn-primary">+ Nuevo Asiento Manual</a>
+          <a href="/contabilidad/asientos/nuevo" data-link class="btn btn-primary">+ Nuevo Asiento</a>
         </div>
       </div>
 
@@ -50,7 +53,7 @@ export async function renderLibroDiarioView() {
 
       <div class="card">
         <div class="card-header">
-          <h2>${viewMode === 'asientos' ? 'Asientos Contables' : 'Libro Diario (Detalle por Línea)'}</h2>
+          <h2>${viewMode === 'asientos' ? 'Asientos Contables' : 'Detalle por Línea'}</h2>
           <div class="pill-group">
             <button type="button" class="pill ${viewMode === 'asientos' ? 'active' : ''}" data-ld-mode="asientos">Por Asiento</button>
             <button type="button" class="pill ${viewMode === 'diario' ? 'active' : ''}" data-ld-mode="diario">Líneas Expandidas</button>
@@ -436,7 +439,7 @@ export async function renderLibroMayorView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Contabilidad — Libro Mayor</h1>
+          <h1>Libro Mayor</h1>
           <p class="muted">Movimientos y saldo acumulado por cuenta del Plan de Cuentas.</p>
         </div>
       </div>
@@ -511,8 +514,8 @@ export async function renderBalanceResultadosView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Contabilidad — Balance y Resultados</h1>
-          <p class="muted">Estado de Resultados (Ingresos vs. Egresos) y Balance de Sumas y Saldos.</p>
+          <h1>Balance</h1>
+          <p class="muted">Estado de Resultados y Balance de Sumas y Saldos.</p>
         </div>
       </div>
 
@@ -605,7 +608,7 @@ export async function renderPlanCuentasView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Contabilidad — Plan de Cuentas y Diarios</h1>
+          <h1>Plan de Cuentas</h1>
           <p class="muted">Estructura de cuentas contables y diarios de imputación.</p>
         </div>
       </div>

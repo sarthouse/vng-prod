@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderComercialReglasView() {
   const root = document.getElementById('app-view');

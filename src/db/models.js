@@ -108,9 +108,11 @@ export const MODELS = {
       tipo: { type: 'TEXT', notNull: true, default: 'almacenable', enum: ['almacenable', 'consumible', 'servicio'] },
       categoria_id: { type: 'INTEGER', references: 'categorias(id)', onDelete: 'SET NULL' },
       unidad_id: { type: 'INTEGER', references: 'unidades_medida(id)', onDelete: 'SET NULL' },
-      unidad_compra_id: { type: 'INTEGER', references: 'unidades_medida(id)', onDelete: 'SET NULL' },
       requiere_lote: { type: 'INTEGER', notNull: true, default: 0, boolean: true },
       alicuota_iva: { type: 'REAL', notNull: true, default: 21, min: 0 },
+      alicuota_iva_compra: { type: 'REAL', notNull: true, default: 21, min: 0 },
+      impuestos_venta_json: { type: 'TEXT', notNull: true, default: '[]', trim: false },
+      impuestos_compra_json: { type: 'TEXT', notNull: true, default: '[]', trim: false },
       proveedor_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
       lead_time_dias: { type: 'INTEGER', notNull: true, default: 0, min: 0 },
       se_fabrica: { type: 'INTEGER', notNull: true, default: 0, boolean: true },
@@ -142,6 +144,27 @@ export const MODELS = {
     indexes: [{ name: 'idx_productos_plantilla', columns: ['plantilla_id'] }],
   },
 
+  producto_historial_precios: {
+    table: 'producto_historial_precios',
+    fields: {
+      producto_id: { type: 'INTEGER', notNull: true, references: 'productos(id)', onDelete: 'CASCADE' },
+      plantilla_id: { type: 'INTEGER', notNull: true, references: 'producto_plantillas(id)', onDelete: 'CASCADE' },
+      costo_anterior: { type: 'REAL', notNull: true, default: 0 },
+      costo_nuevo: { type: 'REAL', notNull: true, default: 0 },
+      precio_anterior: { type: 'REAL', notNull: true, default: 0 },
+      precio_nuevo: { type: 'REAL', notNull: true, default: 0 },
+      origen: { type: 'TEXT', notNull: true, default: 'manual' },
+      referencia_tipo: { type: 'TEXT', default: '' },
+      referencia_id: { type: 'INTEGER' },
+      observacion: { type: 'TEXT', default: '' },
+      usuario: { type: 'TEXT', default: '' },
+    },
+    indexes: [
+      { name: 'idx_hist_precios_prod', columns: ['producto_id', 'id'] },
+      { name: 'idx_hist_precios_plt', columns: ['plantilla_id', 'id'] },
+    ],
+  },
+
   producto_variantes: {
     table: 'producto_variantes',
     timestamps: false,
@@ -152,14 +175,29 @@ export const MODELS = {
     constraints: ['UNIQUE(producto_id, variante_id)'],
   },
 
+  plantilla_impuestos: {
+    table: 'plantilla_impuestos',
+    timestamps: false,
+    fields: {
+      plantilla_id: { type: 'INTEGER', notNull: true, references: 'producto_plantillas(id)', onDelete: 'CASCADE' },
+      impuesto_id: { type: 'INTEGER', notNull: true, references: 'impuestos_config(id)', onDelete: 'CASCADE' },
+      ambito: { type: 'TEXT', notNull: true, default: 'venta', enum: ['venta', 'compra'] },
+    },
+    constraints: ['UNIQUE(plantilla_id, impuesto_id, ambito)'],
+    indexes: [{ name: 'idx_plt_impuestos_plt', columns: ['plantilla_id'] }],
+  },
+
   etapas_config: {
     table: 'etapas_config',
     timestamps: false,
     fields: {
       nombre: { type: 'TEXT', unique: true, notNull: true },
+      descripcion: { type: 'TEXT', default: '' },
       orden: { type: 'INTEGER', notNull: true, default: 1 },
       dias_estimados: { type: 'INTEGER', notNull: true, default: 3 },
       costo_unidad: { type: 'REAL', notNull: true, default: 0 },
+      taller_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
+      plan_cuenta_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
       depende_de_id: { type: 'INTEGER' },
     },
   },
@@ -184,9 +222,12 @@ export const MODELS = {
     fields: {
       receta_id: { type: 'INTEGER', notNull: true, references: 'recetas(id)', onDelete: 'CASCADE' },
       nombre: { type: 'TEXT', notNull: true },
+      descripcion: { type: 'TEXT', default: '' },
       orden: { type: 'INTEGER', notNull: true, default: 1 },
       dias_estimados: { type: 'INTEGER', notNull: true, default: 3 },
       costo_unidad: { type: 'REAL', notNull: true, default: 0 },
+      taller_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
+      plan_cuenta_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
       depende_de_id: { type: 'INTEGER' },
     },
   },
@@ -379,8 +420,11 @@ export const MODELS = {
       receta_etapa_id: { type: 'INTEGER', references: 'receta_etapas(id)', onDelete: 'SET NULL' },
       depende_de_orden_etapa_id: { type: 'INTEGER' },
       nombre: { type: 'TEXT', notNull: true },
+      descripcion: { type: 'TEXT', default: '' },
       orden_num: { type: 'INTEGER', notNull: true, default: 1 },
       taller_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
+      plan_cuenta_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      compra_id: { type: 'INTEGER', references: 'compras(id)', onDelete: 'SET NULL' },
       estado: { type: 'TEXT', notNull: true, default: 'Pendiente' },
       fecha_inicio_est: { type: 'TEXT' },
       fecha_fin_est: { type: 'TEXT' },
@@ -1252,7 +1296,7 @@ export const VIEWS = [
       'COALESCE(SUM(sq.cantidad - sq.cantidad_reservada), 0) AS stock_disponible',
     ],
     joins: ['JOIN ubicaciones u ON u.id = sq.ubicacion_id'],
-    where: "u.tipo = 'interna'",
+    where: "u.tipo IN ('interna', 'dedicada')",
     groupBy: ['sq.producto_id'],
   },
   {
@@ -1261,14 +1305,13 @@ export const VIEWS = [
     alias: 'pt',
     select: [
       'pt.*',
-      "COALESCE(cat.nombre, 'Otros insumos') AS categoria",
+      "CASE WHEN pcat.nombre IS NOT NULL THEN pcat.nombre || ' / ' || cat.nombre ELSE COALESCE(cat.nombre, 'Otros insumos') END AS categoria",
       "COALESCE(um.nombre, 'unidades') AS udm",
-      "COALESCE(umc.nombre, um.nombre, 'unidades') AS udm_compra",
     ],
     joins: [
       'LEFT JOIN categorias cat ON cat.id = pt.categoria_id',
+      'LEFT JOIN categorias pcat ON pcat.id = cat.padre_id',
       'LEFT JOIN unidades_medida um ON um.id = pt.unidad_id',
-      'LEFT JOIN unidades_medida umc ON umc.id = pt.unidad_compra_id',
     ],
   },
   {

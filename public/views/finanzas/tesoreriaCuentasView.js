@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal, showFormModal } from '../../lib/engine/index.js';
 
 export async function renderTesoreriaCuentasView() {
   const root = document.getElementById('app-view');
@@ -15,6 +15,8 @@ export async function renderTesoreriaCuentasView() {
 
     const cuentasActivas = (cuentas || []).filter(c => c.activa !== 0);
     const planActivas = (planCuentas || []).filter(pc => pc.activo !== 0);
+    const planActivoImputable = planActivas.filter(pc => pc.imputable !== 0 && pc.tipo === 'activo');
+    const planCajaDef = planActivoImputable.find(pc => pc.codigo === '1.1.01') || planActivoImputable[0];
     const planCapital = planActivas.find(pc => pc.codigo === '3.1.01');
     const movsInternos = (asientos || []).filter(a =>
       ['apertura_cuenta', 'ajuste_saldo', 'transferencia'].includes(a.tipo_origen)
@@ -24,18 +26,18 @@ export async function renderTesoreriaCuentasView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/tesoreria" data-link class="muted" style="font-size:0.85rem;">← Volver al Dashboard de Tesorería</a></div>
-          <h1>Cuentas, Ajustes de Saldo y Transferencias</h1>
+          <div style="margin-bottom:6px;"><a href="/tesoreria" data-link class="muted" style="font-size:0.85rem;">← Volver a Tesorería</a></div>
+          <h1>Cuentas y Transferencias</h1>
         </div>
         <div class="actions">
-          <a href="/contabilidad" data-link class="btn">Ver Libro Diario</a>
+          <a href="/contabilidad" data-link class="btn">Libro Diario</a>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div>
-            <h2>Cuentas de Caja y Banco</h2>
+            <h2>Cuentas de Tesorería</h2>
             <span class="muted" style="font-size:0.82rem;">Los saldos iniciales generan un asiento de apertura; los arqueos o diferencias generan un asiento de ajuste sin alterar el historial.</span>
           </div>
         </div>
@@ -52,6 +54,12 @@ export async function renderTesoreriaCuentasView() {
           </label>
           <label><span>Saldo Inicial</span><input type="number" step="0.01" name="saldo_inicial" value="0" /></label>
           <label><span>Fecha Apertura</span><input type="date" name="fecha" value="${new Date().toISOString().slice(0, 10)}" /></label>
+          <label><span>Cuenta Contable</span>
+            <select name="cuenta_contable_id">
+              <option value="">Automática según tipo</option>
+              ${planActivoImputable.map(pc => `<option value="${pc.id}" ${planCajaDef && pc.id === planCajaDef.id ? 'selected' : ''}>${esc(pc.codigo)} — ${esc(pc.nombre)}</option>`).join('')}
+            </select>
+          </label>
           <label style="grid-column: span 2;"><span>Contrapartida Contable (si saldo inicial ≠ 0)</span>
             <select name="plan_cuenta_contrapartida_id">
               ${planActivas.map(pc => `<option value="${pc.id}" ${planCapital && pc.id === planCapital.id ? 'selected' : ''}>${esc(pc.codigo)} — ${esc(pc.nombre)} (${esc(pc.tipo)})</option>`).join('')}
@@ -69,6 +77,7 @@ export async function renderTesoreriaCuentasView() {
                 <th>Cuenta</th>
                 <th>Tipo</th>
                 <th>Moneda</th>
+                <th>Cuenta Contable</th>
                 <th class="num">Saldo Inicial</th>
                 <th class="num">Saldo Actual</th>
                 <th>Acciones</th>
@@ -80,10 +89,12 @@ export async function renderTesoreriaCuentasView() {
                   <td><strong>${esc(c.nombre)}</strong></td>
                   <td><span class="badge badge-muted">${esc(c.tipo)}</span></td>
                   <td>${esc(c.moneda)}</td>
+                  <td>${c.plan_cuenta_codigo ? `<code>${esc(c.plan_cuenta_codigo)}</code> ${esc(c.plan_cuenta_nombre)}` : '<span class="muted">-</span>'}</td>
                   <td class="num">${fmtMoney(c.saldo_inicial)}</td>
                   <td class="num"><strong>${fmtMoney(c.saldo_actual)}</strong></td>
                   <td>
                     <div class="actions">
+                      <button type="button" class="btn btn-sm" data-edit-cta="${c.id}">Editar</button>
                       <button type="button" class="btn btn-sm" data-adj-cta="${c.id}">Ajustar Saldo / Arqueo</button>
                       <button type="button" class="btn btn-sm btn-danger" data-del-cta="${c.id}">Eliminar</button>
                     </div>
@@ -200,6 +211,7 @@ export async function renderTesoreriaCuentasView() {
           body: JSON.stringify({
             nombre: fd.get('nombre'),
             tipo: fd.get('tipo'),
+            cuenta_contable_id: fd.get('cuenta_contable_id') ? Number(fd.get('cuenta_contable_id')) : null,
             saldo_inicial: Number(fd.get('saldo_inicial')) || 0,
             fecha: fd.get('fecha'),
             plan_cuenta_contrapartida_id: fd.get('plan_cuenta_contrapartida_id') ? Number(fd.get('plan_cuenta_contrapartida_id')) : null,
@@ -209,6 +221,75 @@ export async function renderTesoreriaCuentasView() {
         await loadAndRender();
       } catch (err) { toast(err.message, true); }
     });
+
+    root.querySelectorAll('[data-edit-cta]').forEach(btn => btn.addEventListener('click', () => {
+      const cta = cuentasActivas.find(x => String(x.id) === String(btn.dataset.editCta));
+      if (!cta) return;
+      showFormModal({
+        title: `Editar Cuenta — ${cta.nombre}`,
+        submitText: 'Guardar Cambios',
+        initialState: {
+          nombre: cta.nombre || '',
+          tipo: cta.tipo || 'efectivo',
+          moneda: cta.moneda || 'ARS',
+          cuenta_contable_id: cta.cuenta_contable_id ? String(cta.cuenta_contable_id) : '',
+        },
+        fields: [
+          { name: 'nombre', label: 'Nombre de Cuenta', type: 'text', required: true },
+          {
+            name: 'tipo',
+            label: 'Tipo',
+            type: 'select',
+            searchable: false,
+            options: [
+              { value: 'efectivo', label: 'Efectivo' },
+              { value: 'banco', label: 'Banco' },
+              { value: 'billetera', label: 'Billetera virtual' },
+              { value: 'otro', label: 'Otra' },
+            ],
+          },
+          {
+            name: 'moneda',
+            label: 'Moneda',
+            type: 'select',
+            searchable: false,
+            options: [
+              { value: 'ARS', label: 'ARS' },
+              { value: 'USD', label: 'USD' },
+              { value: 'EUR', label: 'EUR' },
+            ],
+          },
+          {
+            name: 'cuenta_contable_id',
+            label: 'Cuenta Contable',
+            type: 'select',
+            options: [
+              { value: '', label: '-- Sin asignar (automática) --' },
+              ...planActivoImputable.map(pc => ({ value: String(pc.id), label: `${pc.codigo} — ${pc.nombre}` })),
+            ],
+          },
+        ],
+        onSubmit: async (data) => {
+          try {
+            await api(`/api/tesoreria/cuentas/${cta.id}`, {
+              method: 'PUT',
+              body: {
+                nombre: data.nombre,
+                tipo: data.tipo,
+                moneda: data.moneda,
+                cuenta_contable_id: data.cuenta_contable_id ? Number(data.cuenta_contable_id) : null,
+              },
+            });
+            toast('Cuenta actualizada');
+            await loadAndRender();
+            return true;
+          } catch (err) {
+            toast(err.message, true);
+            throw err;
+          }
+        },
+      });
+    }));
 
     root.querySelectorAll('[data-adj-cta]').forEach(btn => btn.addEventListener('click', () => {
       ajusteCuentaId = btn.dataset.adjCta;

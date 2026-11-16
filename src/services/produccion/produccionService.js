@@ -1,5 +1,6 @@
 import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
+import { MODELS } from '../../db/models.js';
 import { convertUnitFromDb } from '../config/configService.js';
 import { resolveVariantForPlantilla } from './presupuestoService.js';
 import { applicableQtyForLine, getActiveRecetaForPlantilla } from './recetaService.js';
@@ -19,6 +20,9 @@ class OrdenRepository extends BaseRepository {
 }
 
 export const ordenRepo = new OrdenRepository();
+export const ordenEtapaRepo = new BaseRepository({ model: MODELS.orden_etapas });
+export const ordenLineaRepo = new BaseRepository({ model: MODELS.orden_lineas });
+export const planCuentaRepo = new BaseRepository({ model: MODELS.plan_cuentas });
 
 function explodeRecetaLineForOrden(line, ordenLineas, udmCompra) {
   let vars = [];
@@ -119,24 +123,49 @@ export function getOrdenDetalle(id) {
   if (!orden) return null;
 
   const lineas = db.prepare(`
-    SELECT ol.*, p.nombre as producto_nombre, p.sku, p.combinacion_json
+    SELECT ol.*, p.nombre as producto_nombre, p.sku, p.combinacion_json,
+           COALESCE((
+             SELECT SUM(ms.cantidad)
+             FROM movimientos_stock ms
+             WHERE ms.referencia_tipo = 'orden_produccion'
+               AND ms.referencia_id = ol.orden_id
+               AND ms.tipo = 'ingreso_produccion'
+               AND ms.producto_id = ol.producto_id
+           ), 0) as cantidad_ingresada
     FROM orden_lineas ol
     JOIN productos p ON p.id = ol.producto_id
     WHERE ol.orden_id = ?
     ORDER BY ol.id ASC
-  `).all(id);
+  `).all(id).map(l => {
+    const pedida = Number(l.cantidad || 0);
+    const ingresada = Number(l.cantidad_ingresada || 0);
+    return {
+      ...l,
+      cantidad_ingresada: Number(ingresada.toFixed(4)),
+      cantidad_pendiente: Number(Math.max(0, pedida - ingresada).toFixed(4)),
+    };
+  });
   orden.cantidad = lineas.reduce((s, l) => s + Number(l.cantidad || 0), 0);
+  orden.cantidad_ingresada = lineas.reduce((s, l) => s + Number(l.cantidad_ingresada || 0), 0);
+  orden.cantidad_pendiente = lineas.reduce((s, l) => s + Number(l.cantidad_pendiente || 0), 0);
 
-  const etapas = db.prepare(`
-    SELECT oe.*, COALESCE(c.nombre, '') as taller_nombre,
-           COALESCE(pred.nombre, '') as depende_de_nombre,
-           COALESCE(pred.estado, '') as depende_de_estado
-    FROM orden_etapas oe
-    LEFT JOIN contactos c ON c.id = oe.taller_id
-    LEFT JOIN orden_etapas pred ON pred.id = oe.depende_de_orden_etapa_id
-    WHERE oe.orden_id = ?
-    ORDER BY oe.orden_num ASC, oe.id ASC
-  `).all(id);
+  const etapas = ordenEtapaRepo.query('oe')
+    .select(
+      'oe.*',
+      "COALESCE(c.nombre, '') as taller_nombre",
+      "COALESCE(pc.codigo || ' ' || pc.nombre, '') as plan_cuenta_nombre",
+      "COALESCE(cmp.numero, '') as compra_numero",
+      "COALESCE(pred.nombre, '') as depende_de_nombre",
+      "COALESCE(pred.estado, '') as depende_de_estado"
+    )
+    .leftJoin('contactos', 'c', 'c.id', 'oe.taller_id')
+    .leftJoin('plan_cuentas', 'pc', 'pc.id', 'oe.plan_cuenta_id')
+    .leftJoin('compras', 'cmp', 'cmp.id', 'oe.compra_id')
+    .leftJoin('orden_etapas', 'pred', 'pred.id', 'oe.depende_de_orden_etapa_id')
+    .where('oe.orden_id', id)
+    .orderBy('oe.orden_num', 'ASC')
+    .orderBy('oe.id', 'ASC')
+    .all();
   orden.costo_procesos_est = Number(etapas.reduce((s, e) => s + (Number(e.costo_estimado) || 0), 0).toFixed(2));
   orden.costo_procesos_real = Number(etapas.reduce((s, e) => s + (Number(e.costo_real) || 0), 0).toFixed(2));
 
@@ -147,7 +176,7 @@ export function getOrdenDetalle(id) {
   if (recetaId) {
     const rLineas = db.prepare(`
       SELECT rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, pt.tipo as producto_tipo,
-             pt.udm as udm_compra, p.stock, COALESCE(re.nombre, ec.nombre, 'General') as etapa_nombre,
+             pt.udm, p.stock, COALESCE(re.nombre, ec.nombre, 'General') as etapa_nombre,
              COALESCE(c.nombre, '') as proveedor_nombre
       FROM receta_lineas rl
       JOIN v_productos p ON p.id = rl.producto_id
@@ -161,7 +190,7 @@ export function getOrdenDetalle(id) {
 
     for (const l of rLineas) {
       usedPlantillasOrProds.add(`plt:${l.prod_plantilla_id}`);
-      const exploded = explodeRecetaLineForOrden(l, lineas, l.udm_compra);
+      const exploded = explodeRecetaLineForOrden(l, lineas, l.udm);
       for (const item of exploded) {
         usedPlantillasOrProds.add(item.producto_id);
         insumosPorEtapa.push({
@@ -172,7 +201,7 @@ export function getOrdenDetalle(id) {
           etapa_nombre: l.etapa_nombre,
           proveedor_nombre: l.proveedor_nombre,
           cantidad_requerida: item.qty,
-          udm: l.udm_compra,
+          udm: l.udm,
           stock_actual: item.stock,
         });
       }
@@ -204,7 +233,7 @@ function planificarDocumentosOrden(ordenId, codigo, fechaInicio, user = null) {
     if (req <= 0) continue;
 
     const prod = db.prepare(`
-      SELECT p.id, p.precio, p.minimo_compra, p.stock, pt.proveedor_id, pt.alicuota_iva
+      SELECT p.id, p.costo, p.precio, p.minimo_compra, p.stock, pt.proveedor_id, pt.alicuota_iva
       FROM v_productos p
       JOIN producto_plantillas pt ON pt.id = p.plantilla_id
       WHERE p.id = ?
@@ -235,7 +264,7 @@ function planificarDocumentosOrden(ordenId, codigo, fechaInicio, user = null) {
         descripcion: ins.producto_nombre,
         cantidad: qtyComprar,
         udm: ins.udm || 'unidades',
-        precio_unitario: Number(prod.precio || 0),
+        precio_unitario: Number(prod.costo || prod.precio || 0),
         alicuota_iva: Number(prod.alicuota_iva ?? 21),
       });
     }
@@ -334,38 +363,33 @@ export function createOrden(b, user = null) {
       notas: (b.notas || '').trim(),
     }, user);
 
-    const insLin = db.prepare('INSERT INTO orden_lineas (orden_id, producto_id, cantidad) VALUES (?, ?, ?)');
-    for (const l of lineas) insLin.run(ordenId, l.producto_id, l.cantidad);
+    for (const l of lineas) ordenLineaRepo.create({ orden_id: ordenId, producto_id: l.producto_id, cantidad: l.cantidad });
 
-    const insEtapa = db.prepare(`
-      INSERT INTO orden_etapas (
-        orden_id, etapa_id, receta_etapa_id, nombre, orden_num, taller_id, estado,
-        fecha_inicio_est, fecha_fin_est, costo_estimado, costo_real, cantidad_objetivo
-      ) VALUES (?, ?, ?, ?, ?, ?, 'Pendiente', ?, ?, ?, ?, ?)
-    `);
     const etapaIdMap = new Map();
     for (const ec of etapasSource) {
       const win = windows.get(ec.id) || { inicio: fechaInicio, fin: addDaysISO(fechaInicio, 1) };
       const costoEst = Number(((Number(ec.costo_unidad) || 0) * totalCantidadOrden).toFixed(2));
-      const info = insEtapa.run(
-        ordenId,
-        usingRecetaEtapas ? null : ec.id,
-        usingRecetaEtapas ? ec.id : null,
-        ec.nombre,
-        ec.orden,
-        null,
-        win.inicio,
-        win.fin,
-        costoEst,
-        costoEst,
-        totalCantidadOrden
-      );
-      etapaIdMap.set(ec.id, Number(info.lastInsertRowid));
+      const newEtapaId = ordenEtapaRepo.create({
+        orden_id: ordenId,
+        etapa_id: usingRecetaEtapas ? null : ec.id,
+        receta_etapa_id: usingRecetaEtapas ? ec.id : null,
+        nombre: ec.nombre,
+        descripcion: ec.descripcion || '',
+        orden_num: ec.orden,
+        taller_id: ec.taller_id || null,
+        plan_cuenta_id: ec.plan_cuenta_id || null,
+        estado: 'Pendiente',
+        fecha_inicio_est: win.inicio,
+        fecha_fin_est: win.fin,
+        costo_estimado: costoEst,
+        costo_real: costoEst,
+        cantidad_objetivo: totalCantidadOrden,
+      });
+      etapaIdMap.set(ec.id, newEtapaId);
     }
-    const updDep = db.prepare('UPDATE orden_etapas SET depende_de_orden_etapa_id = ? WHERE id = ?');
     for (const ec of etapasSource) {
       if (ec.depende_de_id && etapaIdMap.has(ec.depende_de_id) && etapaIdMap.has(ec.id)) {
-        updDep.run(etapaIdMap.get(ec.depende_de_id), etapaIdMap.get(ec.id));
+        ordenEtapaRepo.update(etapaIdMap.get(ec.id), { depende_de_orden_etapa_id: etapaIdMap.get(ec.depende_de_id) });
       }
     }
 
@@ -428,20 +452,48 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
             AND ((? IS NOT NULL AND rl.receta_etapa_id = ?) OR (? IS NOT NULL AND rl.etapa_id = ?))
         `).all(recetaId, etapa.receta_etapa_id || null, etapa.receta_etapa_id || null, etapa.etapa_id || null, etapa.etapa_id || null);
 
+        const tallerExtId = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'TALLER-EXT'").get()?.id || null;
+        const depCentralId = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id || null;
+
         for (const l of rLineas) {
           const exploded = explodeRecetaLineForOrden(l, ordenLineas, l.udm);
           for (const item of exploded) {
             if (item.qty > 0) {
-              registrarMovimientoStock({
-                producto_id: item.producto_id,
-                tipo: 'consumo_produccion',
-                cantidad: -item.qty,
-                fecha: today,
-                referencia_tipo: 'orden_produccion',
-                referencia_id: orden.id,
-                nota: `${orden.codigo} · Etapa ${etapa.nombre}`,
-                user,
-              });
+              // Si los materiales fueron enviados a TALLER-EXT mediante remito_taller, consumir desde TALLER-EXT primero
+              let qtyTaller = 0;
+              if (tallerExtId) {
+                const qRow = db.prepare('SELECT COALESCE(SUM(cantidad), 0) as c FROM stock_quants WHERE producto_id = ? AND ubicacion_id = ?').get(item.producto_id, tallerExtId);
+                qtyTaller = Math.max(0, Number(qRow?.c || 0));
+              }
+              const fromTaller = Math.min(item.qty, qtyTaller);
+              const fromDep = Number((item.qty - fromTaller).toFixed(4));
+
+              if (fromTaller > 0) {
+                registrarMovimientoStock({
+                  producto_id: item.producto_id,
+                  tipo: 'consumo_produccion',
+                  cantidad: -fromTaller,
+                  fecha: today,
+                  ubicacion_origen_id: tallerExtId,
+                  referencia_tipo: 'orden_produccion',
+                  referencia_id: orden.id,
+                  nota: `${orden.codigo} · Etapa ${etapa.nombre} (Taller)`,
+                  user,
+                });
+              }
+              if (fromDep > 0) {
+                registrarMovimientoStock({
+                  producto_id: item.producto_id,
+                  tipo: 'consumo_produccion',
+                  cantidad: -fromDep,
+                  fecha: today,
+                  ubicacion_origen_id: depCentralId,
+                  referencia_tipo: 'orden_produccion',
+                  referencia_id: orden.id,
+                  nota: `${orden.codigo} · Etapa ${etapa.nombre}`,
+                  user,
+                });
+              }
             }
           }
         }
@@ -449,60 +501,125 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
       stockConsumido = 1;
     }
 
-    db.prepare(`
-      UPDATE orden_etapas SET
-        taller_id=?, estado=?, fecha_inicio_est=?, fecha_fin_est=?, fecha_inicio_real=?, fecha_fin_real=?,
-        costo_real=?, cantidad_producida=?, cantidad_merma=?, notas=?, stock_consumido=?
-      WHERE id=?
-    `).run(
-      b.taller_id !== undefined ? (b.taller_id ? Number(b.taller_id) : null) : etapa.taller_id,
-      newEstado,
-      b.fecha_inicio_est !== undefined ? b.fecha_inicio_est : etapa.fecha_inicio_est,
-      b.fecha_fin_est !== undefined ? b.fecha_fin_est : etapa.fecha_fin_est,
-      fechaInicioReal,
-      fechaFinReal,
-      nextCostoReal,
-      nextProducida,
-      nextMerma,
-      nextNotas,
-      stockConsumido,
-      etapaRowId
-    );
+    const nextTallerId = b.taller_id !== undefined ? (b.taller_id ? Number(b.taller_id) : null) : etapa.taller_id;
+    const nextPlanCuentaId = b.plan_cuenta_id !== undefined ? (b.plan_cuenta_id ? Number(b.plan_cuenta_id) : null) : (etapa.plan_cuenta_id || null);
+    let nextCompraId = etapa.compra_id || null;
+
+    if (newEstado === 'Completada' && nextTallerId && nextCostoReal > 0 && !nextCompraId) {
+      const defaultManoObra = planCuentaRepo.query().select('id').where('codigo', '5.1.02').where('activo', 1).get()?.id || null;
+      nextCompraId = createCompra({
+        contacto_id: nextTallerId,
+        orden_id: orden.id,
+        fecha: fechaFinReal || today,
+        caracter: 'interno',
+        tipo_comprobante: 'INT',
+        estado: 'Confirmado',
+        observaciones: `Imputación automática etapa "${etapa.nombre}" (${orden.codigo})`,
+        lineas: [{
+          descripcion: `${orden.codigo} · Etapa ${etapa.nombre}`,
+          cantidad: 1,
+          udm: 'servicio',
+          precio_unitario: nextCostoReal,
+          alicuota_iva: 0,
+          plan_cuenta_id: nextPlanCuentaId || defaultManoObra,
+        }],
+      }, user);
+    }
+
+    ordenEtapaRepo.update(etapaRowId, {
+      taller_id: nextTallerId,
+      plan_cuenta_id: nextPlanCuentaId,
+      compra_id: nextCompraId,
+      estado: newEstado,
+      fecha_inicio_est: b.fecha_inicio_est !== undefined ? b.fecha_inicio_est : etapa.fecha_inicio_est,
+      fecha_fin_est: b.fecha_fin_est !== undefined ? b.fecha_fin_est : etapa.fecha_fin_est,
+      fecha_inicio_real: fechaInicioReal,
+      fecha_fin_real: fechaFinReal,
+      costo_real: nextCostoReal,
+      cantidad_producida: nextProducida,
+      cantidad_merma: nextMerma,
+      notas: nextNotas,
+      stock_consumido: stockConsumido,
+    });
 
     const allEtapas = db.prepare('SELECT estado FROM orden_etapas WHERE orden_id = ?').all(orden.id);
     if (allEtapas.length > 0 && allEtapas.every(e => e.estado === 'Completada')) {
       ordenRepo.update(orden.id, { estado: 'Completada' }, user);
-      const alreadyIngresado = db.prepare(`
-        SELECT id FROM movimientos_stock
-        WHERE referencia_tipo = 'orden_produccion' AND referencia_id = ? AND tipo = 'ingreso_produccion'
-        LIMIT 1
-      `).get(orden.id);
-      if (!alreadyIngresado) {
-        const destUbi = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'PROD-TERM'").get()?.id
-          || db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id
-          || null;
-        const oLineas = db.prepare('SELECT producto_id, cantidad FROM orden_lineas WHERE orden_id = ?').all(orden.id);
-        for (const ol of oLineas) {
-          if (Number(ol.cantidad) > 0) {
-            registrarMovimientoStock({
-              producto_id: ol.producto_id,
-              tipo: 'ingreso_produccion',
-              cantidad: Number(ol.cantidad),
-              fecha: today,
-              ubicacion_destino_id: destUbi,
-              lote: orden.codigo,
-              referencia_tipo: 'orden_produccion',
-              referencia_id: orden.id,
-              nota: `Ingreso Prod. Terminado ${orden.codigo}`,
-              user,
-            });
-          }
+      const destUbi = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'PROD-TERM'").get()?.id
+        || db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id
+        || null;
+      const oLineas = db.prepare('SELECT producto_id, cantidad FROM orden_lineas WHERE orden_id = ?').all(orden.id);
+      for (const ol of oLineas) {
+        const yaIngresado = Number(db.prepare(`
+          SELECT COALESCE(SUM(cantidad), 0) as c FROM movimientos_stock
+          WHERE referencia_tipo = 'orden_produccion' AND referencia_id = ? AND tipo = 'ingreso_produccion' AND producto_id = ?
+        `).get(orden.id, ol.producto_id)?.c || 0);
+        const rem = Number((Number(ol.cantidad || 0) - yaIngresado).toFixed(4));
+        if (rem > 0) {
+          registrarMovimientoStock({
+            producto_id: ol.producto_id,
+            tipo: 'ingreso_produccion',
+            cantidad: rem,
+            fecha: today,
+            ubicacion_destino_id: destUbi,
+            lote: orden.codigo,
+            referencia_tipo: 'orden_produccion',
+            referencia_id: orden.id,
+            nota: `Ingreso Prod. Terminado ${orden.codigo}`,
+            user,
+          });
         }
       }
     } else if (allEtapas.some(e => e.estado === 'En Proceso' || e.estado === 'Completada')) {
       if (orden.estado === 'Planificada') ordenRepo.update(orden.id, { estado: 'En Proceso' }, user);
     }
     return true;
+  });
+}
+
+export function registrarIngresoParcialOrden(ordenId, b = {}, user = null) {
+  const det = getOrdenDetalle(Number(ordenId));
+  if (!det) throw new Error('Orden de producción no encontrada');
+  const { orden, lineas } = det;
+  const fecha = b.fecha || new Date().toISOString().slice(0, 10);
+  const destUbi = b.ubicacion_destino_id
+    ? Number(b.ubicacion_destino_id)
+    : (db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'PROD-TERM'").get()?.id
+      || db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id
+      || null);
+  const lote = (b.lote || orden.codigo || '').trim();
+  const reqMap = new Map((Array.isArray(b.lineas) ? b.lineas : []).map(l => [Number(l.producto_id), Number(l.cantidad) || 0]));
+
+  return ordenRepo.transaction(() => {
+    let totalIngresadoAhora = 0;
+    for (const ol of lineas) {
+      const cant = reqMap.has(Number(ol.producto_id))
+        ? Math.max(0, Number(reqMap.get(Number(ol.producto_id))) || 0)
+        : 0;
+      if (cant <= 0) continue;
+      registrarMovimientoStock({
+        producto_id: ol.producto_id,
+        tipo: 'ingreso_produccion',
+        cantidad: cant,
+        fecha,
+        ubicacion_destino_id: destUbi,
+        lote,
+        referencia_tipo: 'orden_produccion',
+        referencia_id: orden.id,
+        nota: b.nota ? `${orden.codigo} · ${b.nota}` : `Ingreso parcial Prod. Terminado ${orden.codigo}`,
+        user,
+      });
+      totalIngresadoAhora += cant;
+    }
+
+    if (totalIngresadoAhora <= 0) {
+      throw new Error('Ingresá una cantidad mayor a 0 en al menos una variante');
+    }
+
+    if (orden.estado === 'Planificada') {
+      ordenRepo.update(orden.id, { estado: 'En Proceso' }, user);
+    }
+    return { ok: true, ingresado: totalIngresadoAhora };
   });
 }
 
@@ -566,7 +683,7 @@ export function computeCronogramaCompras() {
     if (recetaId) {
       const lineas = db.prepare(`
         SELECT rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, pt.tipo as producto_tipo,
-               pt.udm as udm_compra, p.precio, p.minimo_compra, p.stock, COALESCE(c.nombre, '') as proveedor_nombre
+               pt.udm, p.precio, p.minimo_compra, p.stock, COALESCE(c.nombre, '') as proveedor_nombre
         FROM receta_lineas rl
         JOIN v_productos p ON p.id = rl.producto_id
         JOIN v_plantillas pt ON pt.id = p.plantilla_id
@@ -581,7 +698,7 @@ export function computeCronogramaCompras() {
           || etapas[0];
         if (etapaOrden && etapaOrden.stock_consumido) continue;
 
-        const exploded = explodeRecetaLineForOrden(l, ordenLineas, l.udm_compra);
+        const exploded = explodeRecetaLineForOrden(l, ordenLineas, l.udm);
         for (const item of exploded) {
           usedPlantillasOrProds.add(item.producto_id);
           const cantReq = item.qty;
@@ -600,7 +717,7 @@ export function computeCronogramaCompras() {
             producto_id: item.producto_id,
             producto_nombre: item.producto_nombre,
             proveedor_nombre: l.proveedor_nombre,
-            udm: l.udm_compra,
+            udm: l.udm,
             cantidad_necesaria: cantReq,
             stock_disponible: disponible,
             a_comprar: Number((aComprar > 0 && l.minimo_compra > 0 ? Math.max(aComprar, l.minimo_compra) : aComprar).toFixed(4)),
@@ -692,7 +809,7 @@ export function computeCronogramaCompras() {
 
 export function getPendientesOperativos() {
   const entregas = db.prepare(`
-    SELECT os.id, os.numero, os.fecha, os.estado, os.referencia_tipo, os.referencia_id, os.motivo,
+    SELECT os.id, os.numero, os.fecha, os.estado, os.contacto_id, os.referencia_tipo, os.referencia_id, os.motivo,
            COALESCE(c.nombre, 'Sin cliente') as contacto_nombre
     FROM operaciones_stock os
     LEFT JOIN contactos c ON c.id = os.contacto_id

@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { MODELS } from '../../db/models.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { defaultAsientoService } from './asientoService.js';
@@ -32,44 +31,46 @@ export class ChequeService {
   }
 
   listCheques({ origen, modalidad, estado, vencimiento_desde, vencimiento_hasta, search } = {}) {
-    let sql = `
-      SELECT ch.*,
-             COALESCE(cb.nombre, '') as cuenta_bancaria_nombre,
-             COALESCE(co.nombre, '') as contacto_origen_nombre,
-             COALESCE(cd.nombre, '') as contacto_destino_nombre
-      FROM cheques ch
-      LEFT JOIN cuentas cb ON cb.id = ch.cuenta_bancaria_id
-      LEFT JOIN contactos co ON co.id = ch.contacto_origen_id
-      LEFT JOIN contactos cd ON cd.id = ch.contacto_destino_id
-      WHERE 1=1
-    `;
-    const args = [];
-    if (origen) { sql += ' AND ch.origen = ?'; args.push(origen); }
-    if (modalidad) { sql += ' AND ch.modalidad = ?'; args.push(modalidad); }
-    if (estado) { sql += ' AND ch.estado = ?'; args.push(estado); }
-    if (vencimiento_desde) { sql += ' AND ch.fecha_pago >= ?'; args.push(vencimiento_desde); }
-    if (vencimiento_hasta) { sql += ' AND ch.fecha_pago <= ?'; args.push(vencimiento_hasta); }
-    if (search) {
-      const q = `%${String(search).trim().toLowerCase()}%`;
-      sql += ' AND (LOWER(ch.numero) LIKE ? OR LOWER(ch.banco) LIKE ? OR LOWER(ch.librador_nombre) LIKE ? OR LOWER(COALESCE(co.nombre, \'\')) LIKE ?)';
-      args.push(q, q, q, q);
-    }
-    sql += ' ORDER BY ch.fecha_pago ASC, ch.id DESC';
-    return db.prepare(sql).all(...args);
+    const qb = this.chequeRepo.query('ch')
+      .select(
+        'ch.*',
+        "COALESCE(cb.nombre, '') as cuenta_bancaria_nombre",
+        "COALESCE(co.nombre, '') as contacto_origen_nombre",
+        "COALESCE(cd.nombre, '') as contacto_destino_nombre",
+      )
+      .leftJoin('cuentas', 'cb', 'cb.id', 'ch.cuenta_bancaria_id')
+      .leftJoin('contactos', 'co', 'co.id', 'ch.contacto_origen_id')
+      .leftJoin('contactos', 'cd', 'cd.id', 'ch.contacto_destino_id')
+      .orderBy('ch.fecha_pago', 'ASC')
+      .orderBy('ch.id', 'DESC');
+
+    if (origen) qb.where('ch.origen', origen);
+    if (modalidad) qb.where('ch.modalidad', modalidad);
+    if (estado) qb.where('ch.estado', estado);
+    if (vencimiento_desde) qb.where('ch.fecha_pago', '>=', vencimiento_desde);
+    if (vencimiento_hasta) qb.where('ch.fecha_pago', '<=', vencimiento_hasta);
+
+    const rows = qb.all();
+    if (!search) return rows;
+    const q = String(search).trim().toLowerCase();
+    return rows.filter(r =>
+      `${r.numero || ''} ${r.banco || ''} ${r.librador_nombre || ''} ${r.contacto_origen_nombre || ''}`.toLowerCase().includes(q),
+    );
   }
 
   getChequeById(id) {
-    return db.prepare(`
-      SELECT ch.*,
-             COALESCE(cb.nombre, '') as cuenta_bancaria_nombre,
-             COALESCE(co.nombre, '') as contacto_origen_nombre,
-             COALESCE(cd.nombre, '') as contacto_destino_nombre
-      FROM cheques ch
-      LEFT JOIN cuentas cb ON cb.id = ch.cuenta_bancaria_id
-      LEFT JOIN contactos co ON co.id = ch.contacto_origen_id
-      LEFT JOIN contactos cd ON cd.id = ch.contacto_destino_id
-      WHERE ch.id = ?
-    `).get(Number(id)) || null;
+    return this.chequeRepo.query('ch')
+      .select(
+        'ch.*',
+        "COALESCE(cb.nombre, '') as cuenta_bancaria_nombre",
+        "COALESCE(co.nombre, '') as contacto_origen_nombre",
+        "COALESCE(cd.nombre, '') as contacto_destino_nombre",
+      )
+      .leftJoin('cuentas', 'cb', 'cb.id', 'ch.cuenta_bancaria_id')
+      .leftJoin('contactos', 'co', 'co.id', 'ch.contacto_origen_id')
+      .leftJoin('contactos', 'cd', 'cd.id', 'ch.contacto_destino_id')
+      .where('ch.id', Number(id))
+      .get() || null;
   }
 
   registrarChequeTercero(b, user = null) {

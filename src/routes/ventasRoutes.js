@@ -122,13 +122,17 @@ export async function handleVentasRoutes(req, res, pathname, user) {
     return true;
   }
   if (vtaMatch && req.method === 'PUT') {
-    if (!ventaSvc.updateVenta(Number(vtaMatch[1]), await parseBody(req), user)) json(res, 404, { error: 'Venta no encontrada' });
-    else json(res, 200, { ok: true });
+    try {
+      if (!ventaSvc.updateVenta(Number(vtaMatch[1]), await parseBody(req), user)) json(res, 404, { error: 'Venta no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
   if (vtaMatch && req.method === 'DELETE') {
-    ventaSvc.deleteVenta(Number(vtaMatch[1]));
-    json(res, 200, { ok: true });
+    try {
+      ventaSvc.deleteVenta(Number(vtaMatch[1]));
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
 

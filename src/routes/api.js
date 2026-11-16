@@ -4,6 +4,8 @@ import { json, parseBody } from './http.js';
 import { getConfig } from '../services/config/configService.js';
 import { generateRemitoPdf } from '../services/print/remitoPdfService.js';
 import { generateVentaPdf } from '../services/print/ventaPdfService.js';
+import { generatePresupuestoPdf } from '../services/print/presupuestoPdfService.js';
+import { generateOrdenPdf } from '../services/print/ordenPdfService.js';
 import { handlePublicAuthRoutes, handleAdminAuthRoutes } from './authRoutes.js';
 import { handleDbRoutes } from './dbRoutes.js';
 import { handleMetaRoutes } from './metaRoutes.js';
@@ -66,6 +68,18 @@ export async function handleApi(req, res, pathname) {
   }
   if (pathname.startsWith('/api/ventas')) {
     if (!hasAny(isWrite ? ['comercial.editar', 'ventas.editar'] : ['comercial.ver', 'ventas.ver'])) {
+      if (deny(isWrite ? 'comercial.editar' : 'comercial.ver')) return;
+    }
+  }
+  if (
+    pathname.startsWith('/api/terminos-pago') ||
+    pathname.startsWith('/api/metodos-pago') ||
+    pathname.startsWith('/api/listas-precios') ||
+    pathname.startsWith('/api/producto-proveedores')
+  ) {
+    if (!hasAny(isWrite
+      ? ['comercial.editar', 'ventas.editar', 'compras.editar', 'configuracion.editar']
+      : ['comercial.ver', 'ventas.ver', 'compras.ver', 'inventario.ver', 'configuracion.ver'])) {
       if (deny(isWrite ? 'comercial.editar' : 'comercial.ver')) return;
     }
   }
@@ -145,6 +159,42 @@ export async function handleApi(req, res, pathname) {
       res.writeHead(200, {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="Comprobante_${safeName}.pdf"`,
+        'Content-Length': pdfBuf.length,
+        'Cache-Control': 'no-store',
+      });
+      res.end(pdfBuf);
+    } catch (e) {
+      json(res, 400, { error: e.message });
+    }
+    return;
+  }
+  if (pathname === '/api/print/presupuesto-pdf' && req.method === 'POST') {
+    try {
+      const body = await parseBody(req);
+      const emp = body.empresa || getConfig()?.empresa || {};
+      const pdfBuf = generatePresupuestoPdf(body.presupuesto || body, emp);
+      const safeName = String(body.presupuesto?.id || body.id || 'presupuesto').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="Presupuesto_${safeName}.pdf"`,
+        'Content-Length': pdfBuf.length,
+        'Cache-Control': 'no-store',
+      });
+      res.end(pdfBuf);
+    } catch (e) {
+      json(res, 400, { error: e.message });
+    }
+    return;
+  }
+  if (pathname === '/api/print/orden-pdf' && req.method === 'POST') {
+    try {
+      const body = await parseBody(req);
+      const emp = body.empresa || getConfig()?.empresa || {};
+      const pdfBuf = generateOrdenPdf(body, emp);
+      const safeName = String(body.orden?.codigo || body.codigo || body.id || 'orden').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="Orden_${safeName}.pdf"`,
         'Content-Length': pdfBuf.length,
         'Cache-Control': 'no-store',
       });

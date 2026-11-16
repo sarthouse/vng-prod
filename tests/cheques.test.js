@@ -219,6 +219,26 @@ test('Cartera de Cheques (Fase 1) y validación Caja Efectivo', async (t) => {
       chTerc = chequeSvc.getChequeById(chTerc.id);
       assert.equal(chTerc.estado, 'Endosado');
       assert.equal(chTerc.pago_id, pagoEndosoId);
+
+      // 5. getFlujoMatriz devuelve siempre columnas continuas (históricas + actual + proyectadas) y arrastra saldos
+      const matriz = tesSvc.getFlujoMatriz({ granularidad: 'semana', hist_periodos: 3, proy_periodos: 4 });
+      assert.equal(matriz.periods.length, 8, '3 históricas + 1 actual + 4 proyectadas = 8 columnas');
+      const rowIni = matriz.rows.find(r => r.id === 'saldo_inicial');
+      const rowFin = matriz.rows.find(r => r.id === 'saldo_final');
+      const rowNet = matriz.rows.find(r => r.id === 'flujo_neto');
+      assert.ok(rowIni && rowFin && rowNet);
+      for (let i = 0; i < matriz.periods.length; i++) {
+        const pk = matriz.periods[i].key;
+        assert.equal(
+          Number((rowIni.values[pk] + rowNet.values[pk]).toFixed(2)),
+          rowFin.values[pk],
+          `Saldo final de ${pk} debe coincidir con Saldo Inicial + Flujo Neto`,
+        );
+        if (i + 1 < matriz.periods.length) {
+          const nextPk = matriz.periods[i + 1].key;
+          assert.equal(rowFin.values[pk], rowIni.values[nextPk], 'Saldo Final pasa a ser Saldo Inicial de la semana siguiente');
+        }
+      }
     });
   });
 });

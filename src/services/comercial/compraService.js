@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { anularOperacionStock, createOperacionStock, deleteOperacionStock, operacionStockRepo } from '../inventario/operacionStockService.js';
@@ -6,6 +5,8 @@ import { getNextNumeroDocumento } from '../config/configService.js';
 import { defaultAsientoService } from '../finanzas/asientoService.js';
 import { crearImputacion, getFacturaImputado } from '../finanzas/imputacionService.js';
 import { calcularFechaVencimiento, getContactoCondiciones, resolverPrecioCompra } from './condicionesComercialesService.js';
+import { sanitizeDocumentoLineas, computeDocumentoTotales } from './documentoComercialHelper.js';
+import { registrarHistorialCostoPrecio } from '../inventario/productoService.js';
 
 export const compraRepo = new BaseRepository({
   model: MODELS.compras,
@@ -13,58 +14,30 @@ export const compraRepo = new BaseRepository({
 });
 const compraLineaRepo = new BaseRepository({ model: MODELS.compra_lineas });
 const compraImpuestoRepo = new BaseRepository({ model: MODELS.compra_impuestos });
+const productoRepo = new BaseRepository({ model: MODELS.productos });
+const pagoRepo = new BaseRepository({ model: MODELS.pagos });
 
 function sanitizeCompraLineas(lineas, caracter = 'fiscal', tipoComp = 'FA-A') {
-  if (!Array.isArray(lineas)) return [];
-  const noIva = caracter === 'interno' || tipoComp === 'FA-C';
-  return lineas.map(l => {
-    const cantidad = Number(l.cantidad) || 0;
-    const precio_unitario = Number(l.precio_unitario) || 0;
-    const subtotal = l.subtotal !== undefined && l.subtotal !== '' ? Number(l.subtotal) : Number((cantidad * precio_unitario).toFixed(2));
-    const alicuota_iva = noIva ? 0 : Math.max(0, Number(l.alicuota_iva ?? 21));
-    const iva_monto = Number((subtotal * alicuota_iva / 100).toFixed(2));
-    return {
-      producto_id: l.producto_id ? Number(l.producto_id) : null,
-      plan_cuenta_id: l.plan_cuenta_id ? Number(l.plan_cuenta_id) : null,
-      descripcion: (l.descripcion || '').trim(),
-      cantidad,
-      udm: (l.udm || 'unidades').trim(),
-      precio_unitario,
-      alicuota_iva,
-      iva_monto,
-      subtotal: Number(subtotal.toFixed(2)),
-    };
-  }).filter(l => l.producto_id || l.descripcion || l.cantidad > 0);
+  return sanitizeDocumentoLineas(lineas, {
+    caracter,
+    tipoComprobante: tipoComp,
+    defaultUdm: 'unidades',
+    allowTiposLinea: false,
+  });
 }
 
-function sanitizeImpuestos(impuestos, neto) {
-  if (!Array.isArray(impuestos)) return [];
-  return impuestos.map(imp => {
-    const nombre = (imp.nombre || '').trim();
-    const tipo = ['percepcion', 'retencion', 'otro'].includes(imp.tipo) ? imp.tipo : 'percepcion';
-    const base = imp.base !== undefined && imp.base !== '' ? Number(imp.base) : neto;
-    const alicuota = Math.max(0, Number(imp.alicuota) || 0);
-    const monto = imp.monto !== undefined && imp.monto !== '' ? Number(imp.monto) : Number((base * alicuota / 100).toFixed(2));
-    return {
-      impuesto_id: imp.impuesto_id ? Number(imp.impuesto_id) : null,
-      nombre,
-      tipo,
-      base: Number(base.toFixed(2)),
-      alicuota,
-      monto: Number(monto.toFixed(2)),
-    };
-  }).filter(imp => imp.nombre && imp.monto !== 0);
+function getPlantillaForProducto(productoId) {
+  return productoRepo.query('p')
+    .select('pt.tipo', 'pt.cuenta_compra_id')
+    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .where('p.id', Number(productoId))
+    .get();
 }
 
 function createCompraOperacion(compra, lineas, recibirInmediato = false, user = null) {
-  const getTipo = db.prepare(`
-    SELECT pp.tipo FROM productos p
-    JOIN producto_plantillas pp ON pp.id = p.plantilla_id
-    WHERE p.id = ?
-  `);
   const stockLines = (lineas || []).filter(l => {
     if (!l.producto_id || l.cantidad <= 0) return false;
-    const row = getTipo.get(Number(l.producto_id));
+    const row = getPlantillaForProducto(l.producto_id);
     return row?.tipo !== 'servicio';
   });
   if (stockLines.length === 0) return null;
@@ -94,59 +67,62 @@ function createCompraOperacion(compra, lineas, recibirInmediato = false, user = 
 }
 
 export function listCompras({ contacto_id, proveedor_id } = {}) {
-  let sql = `
-    SELECT c.*, co.nombre as proveedor_nombre, co.nombre as contacto_nombre,
-           (
-             COALESCE((SELECT SUM(i.monto_imputado) FROM imputaciones i WHERE i.dominio = 'compras' AND i.factura_id = c.id), 0)
-             + COALESCE((SELECT SUM(COALESCE(NULLIF(p.total_bruto, 0), p.monto)) FROM pagos p WHERE p.compra_id = c.id AND p.estado = 'Confirmado'
-               AND NOT EXISTS (SELECT 1 FROM imputaciones i2 WHERE i2.dominio = 'compras' AND i2.comprobante_tipo = 'pago' AND i2.comprobante_id = p.id)), 0)
-           ) as pagado
-    FROM compras c
-    JOIN contactos co ON co.id = c.contacto_id
-    WHERE 1=1
-  `;
-  const args = [];
+  const qb = compraRepo.query('c')
+    .select('c.*', 'co.nombre as proveedor_nombre', 'co.nombre as contacto_nombre')
+    .innerJoin('contactos', 'co', 'co.id', 'c.contacto_id')
+    .orderBy('c.fecha', 'DESC')
+    .orderBy('c.id', 'DESC');
+
   const filterId = contacto_id || proveedor_id;
-  if (filterId) { sql += ' AND c.contacto_id = ?'; args.push(Number(filterId)); }
-  sql += ' ORDER BY c.fecha DESC, c.id DESC';
-  return db.prepare(sql).all(...args).map(c => ({
-    ...c,
-    pagado: Number(Number(c.pagado || 0).toFixed(2)),
-    saldo_pendiente: Number(Math.max(0, (Number(c.total) || 0) - (Number(c.pagado) || 0)).toFixed(2)),
-  }));
+  if (filterId) qb.where('c.contacto_id', Number(filterId));
+
+  return qb.all().map(c => {
+    const pagado = getFacturaImputado('compras', c.id);
+    return {
+      ...c,
+      pagado: Number(pagado.toFixed(2)),
+      saldo_pendiente: Number(Math.max(0, (Number(c.total) || 0) - pagado).toFixed(2)),
+    };
+  });
 }
 
 export function getCompraById(id) {
-  const compra = db.prepare(`
-    SELECT c.*, co.nombre as proveedor_nombre, co.nombre as contacto_nombre,
-           co.cuit as proveedor_cuit,
-           COALESCE(NULLIF(co.direccion_fiscal, ''), co.direccion, '') as proveedor_direccion,
-           co.localidad as proveedor_localidad,
-           co.provincia as proveedor_provincia,
-           co.codigo_postal as proveedor_codigo_postal,
-           co.telefono as proveedor_telefono,
-           co.email as proveedor_email
-    FROM compras c
-    JOIN contactos co ON co.id = c.contacto_id
-    WHERE c.id = ?
-  `).get(id);
+  const compra = compraRepo.query('c')
+    .select(
+      'c.*',
+      'co.nombre as proveedor_nombre',
+      'co.nombre as contacto_nombre',
+      'co.cuit as proveedor_cuit',
+      "COALESCE(NULLIF(co.direccion_fiscal, ''), co.direccion, '') as proveedor_direccion",
+      'co.localidad as proveedor_localidad',
+      'co.provincia as proveedor_provincia',
+      'co.codigo_postal as proveedor_codigo_postal',
+      'co.telefono as proveedor_telefono',
+      'co.email as proveedor_email',
+    )
+    .innerJoin('contactos', 'co', 'co.id', 'c.contacto_id')
+    .where('c.id', Number(id))
+    .get();
   if (!compra) return null;
-  const lineas = db.prepare(`
-    SELECT cl.*, COALESCE(p.nombre, cl.descripcion) as item_nombre
-    FROM compra_lineas cl
-    LEFT JOIN productos p ON p.id = cl.producto_id
-    WHERE cl.compra_id = ?
-    ORDER BY cl.id ASC
-  `).all(id);
-  const pagos = db.prepare(`
-    SELECT p.*, COALESCE(cu.nombre, '') as cuenta_nombre
-    FROM pagos p
-    LEFT JOIN cuentas cu ON cu.id = p.cuenta_id
-    WHERE p.compra_id = ?
-    ORDER BY p.fecha DESC, p.id DESC
-  `).all(id);
-  const impuestos = db.prepare('SELECT * FROM compra_impuestos WHERE compra_id = ? ORDER BY id ASC').all(id);
-  const pagado = pagos.filter(p => p.estado === 'Confirmado').reduce((s, p) => s + Number(p.monto || 0), 0);
+
+  const lineas = compraLineaRepo.query('cl')
+    .select('cl.*', 'COALESCE(p.nombre, cl.descripcion) as item_nombre')
+    .leftJoin('productos', 'p', 'p.id', 'cl.producto_id')
+    .where('cl.compra_id', Number(id))
+    .orderBy('cl.id', 'ASC')
+    .all();
+
+  const pagos = pagoRepo.query('p')
+    .select('p.*', "COALESCE(cu.nombre, '') as cuenta_nombre")
+    .leftJoin('cuentas', 'cu', 'cu.id', 'p.cuenta_id')
+    .where('p.compra_id', Number(id))
+    .orderBy('p.fecha', 'DESC')
+    .orderBy('p.id', 'DESC')
+    .all();
+
+  const impuestos = compraImpuestoRepo.findWhere({ compra_id: Number(id) }, { orderBy: 'id ASC' });
+  const pagadoFromPagos = pagos.filter(p => p.estado === 'Confirmado').reduce((s, p) => s + Number(p.monto || 0), 0);
+  const pagado = Math.max(pagadoFromPagos, getFacturaImputado('compras', id));
   return {
     compra: {
       ...compra,
@@ -183,11 +159,7 @@ export function createCompra(b, user = null) {
             next.precio_unitario = pr.precio_unitario;
           }
           if (!next.plan_cuenta_id) {
-            const ptCta = db.prepare(`
-              SELECT pt.cuenta_compra_id
-              FROM productos p JOIN producto_plantillas pt ON pt.id = p.plantilla_id
-              WHERE p.id = ?
-            `).get(Number(next.producto_id));
+            const ptCta = getPlantillaForProducto(next.producto_id);
             if (ptCta?.cuenta_compra_id) next.plan_cuenta_id = ptCta.cuenta_compra_id;
           }
         }
@@ -195,16 +167,12 @@ export function createCompra(b, user = null) {
       })
     : [];
   const lineas = sanitizeCompraLineas(rawLineas, caracter, tipoComprobante);
-  const neto = lineas.length > 0
-    ? Number(lineas.reduce((s, l) => s + l.subtotal, 0).toFixed(2))
-    : Number((Number(b.neto) || Number(b.total) || 0).toFixed(2));
-  const ivaMonto = lineas.length > 0
-    ? Number(lineas.reduce((s, l) => s + l.iva_monto, 0).toFixed(2))
-    : Number((neto * Math.max(0, Number(b.alicuota_iva ?? 0)) / 100).toFixed(2));
-  const alicuotaIva = neto > 0 ? Number(((ivaMonto / neto) * 100).toFixed(2)) : 0;
-  const impuestos = sanitizeImpuestos(b.impuestos, neto);
-  const otrosImpuestosMonto = Number(impuestos.reduce((s, i) => s + (i.tipo === 'retencion' ? -i.monto : i.monto), 0).toFixed(2));
-  const total = Number((neto + ivaMonto + otrosImpuestosMonto).toFixed(2));
+  const { neto, ivaMonto, alicuotaIva, impuestos, otrosImpuestosMonto, total } = computeDocumentoTotales(
+    lineas,
+    b.impuestos,
+    { fallbackNeto: Number(b.neto) || Number(b.total) || 0, fallbackAlicuotaIva: b.alicuota_iva ?? 0 },
+  );
+
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
   const condContacto = getContactoCondiciones(contactoId);
   const terminoPagoId = b.termino_pago_id ? Number(b.termino_pago_id) : (condContacto?.termino_pago_compra_id || condContacto?.termino_pago_id || null);
@@ -249,20 +217,34 @@ export function createCompra(b, user = null) {
       observaciones: (b.observaciones || '').trim(),
     }, user);
 
-    const ins = db.prepare(`
-      INSERT INTO compra_lineas (compra_id, producto_id, plan_cuenta_id, descripcion, cantidad, udm, precio_unitario, alicuota_iva, iva_monto, subtotal)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    for (const l of lineas) ins.run(id, l.producto_id, l.plan_cuenta_id, l.descripcion, l.cantidad, l.udm, l.precio_unitario, l.alicuota_iva, l.iva_monto, l.subtotal);
-
-    const insImp = db.prepare(`
-      INSERT INTO compra_impuestos (compra_id, impuesto_id, nombre, tipo, base, alicuota, monto)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    for (const imp of impuestos) insImp.run(id, imp.impuesto_id, imp.nombre, imp.tipo, imp.base, imp.alicuota, imp.monto);
+    for (const l of lineas) {
+      compraLineaRepo.create({
+        compra_id: id,
+        producto_id: l.producto_id,
+        plan_cuenta_id: l.plan_cuenta_id,
+        descripcion: l.descripcion,
+        cantidad: l.cantidad,
+        udm: l.udm,
+        precio_unitario: l.precio_unitario,
+        alicuota_iva: l.alicuota_iva,
+        iva_monto: l.iva_monto,
+        subtotal: l.subtotal,
+      });
+    }
+    for (const imp of impuestos) {
+      compraImpuestoRepo.create({
+        compra_id: id,
+        impuesto_id: imp.impuesto_id,
+        nombre: imp.nombre,
+        tipo: imp.tipo,
+        base: imp.base,
+        alicuota: imp.alicuota,
+        monto: imp.monto,
+      });
+    }
 
     if (estado === 'Confirmado') {
-      syncUltimoCostoProductos(lineas);
+      syncUltimoCostoProductos(lineas, { compraId: id, numero, user });
       if (claseDocumento === 'nota_credito' && b.comprobante_origen_id) {
         const facOrig = compraRepo.findById(Number(b.comprobante_origen_id));
         if (facOrig) {
@@ -331,16 +313,14 @@ export function updateCompra(id, b, user = null) {
     : ((b.tipo_comprobante ?? ex.compra.tipo_comprobante ?? defaultTipo).trim() || defaultTipo);
 
   const lineas = sanitizeCompraLineas(b.lineas !== undefined ? b.lineas : ex.lineas, caracter, tipoComprobante);
-  const neto = lineas.length > 0
-    ? Number(lineas.reduce((s, l) => s + l.subtotal, 0).toFixed(2))
-    : Number((Number(b.neto ?? ex.compra.neto ?? b.total ?? ex.compra.total ?? 0)).toFixed(2));
-  const ivaMonto = lineas.length > 0
-    ? Number(lineas.reduce((s, l) => s + l.iva_monto, 0).toFixed(2))
-    : Number((neto * Math.max(0, Number(b.alicuota_iva ?? ex.compra.alicuota_iva ?? 0)) / 100).toFixed(2));
-  const alicuotaIva = neto > 0 ? Number(((ivaMonto / neto) * 100).toFixed(2)) : 0;
-  const impuestos = sanitizeImpuestos(b.impuestos !== undefined ? b.impuestos : ex.impuestos, neto);
-  const otrosImpuestosMonto = Number(impuestos.reduce((s, i) => s + (i.tipo === 'retencion' ? -i.monto : i.monto), 0).toFixed(2));
-  const total = Number((neto + ivaMonto + otrosImpuestosMonto).toFixed(2));
+  const { neto, ivaMonto, alicuotaIva, impuestos, otrosImpuestosMonto, total } = computeDocumentoTotales(
+    lineas,
+    b.impuestos !== undefined ? b.impuestos : ex.impuestos,
+    {
+      fallbackNeto: Number(b.neto ?? ex.compra.neto ?? b.total ?? ex.compra.total ?? 0),
+      fallbackAlicuotaIva: b.alicuota_iva ?? ex.compra.alicuota_iva ?? 0,
+    },
+  );
   const fecha = b.fecha || ex.compra.fecha || new Date().toISOString().slice(0, 10);
   const numero = b.numero !== undefined ? String(b.numero).trim() : (ex.compra.numero || '');
 
@@ -424,7 +404,7 @@ export function confirmarCompra(id, b = {}, user = null) {
       estado: 'Confirmado',
     }, user);
 
-    syncUltimoCostoProductos(ex.lineas);
+    syncUltimoCostoProductos(ex.lineas, { compraId: Number(id), numero: finalNum, user });
 
     createCompraOperacion({
       id: Number(id),
@@ -450,6 +430,9 @@ export function confirmarCompra(id, b = {}, user = null) {
 export function deleteCompra(id, user = null) {
   const ex = getCompraById(id);
   if (!ex) return;
+  if (ex.compra.estado === 'Confirmado') {
+    throw new Error('No se puede eliminar una compra confirmada; emití una Nota de Crédito del proveedor.');
+  }
   compraRepo.transaction(() => {
     const ops = operacionStockRepo.query()
       .where('referencia_tipo', 'compra')
@@ -463,11 +446,28 @@ export function deleteCompra(id, user = null) {
   });
 }
 
-function syncUltimoCostoProductos(lineas) {
-  const upd = db.prepare("UPDATE productos SET costo = ?, updated_at = datetime('now') WHERE id = ?");
+function syncUltimoCostoProductos(lineas, { compraId = null, numero = '', user = null } = {}) {
   for (const l of lineas || []) {
     const pid = Number(l.producto_id || 0);
     const costo = Number(l.precio_unitario || 0);
-    if (pid > 0 && costo > 0) upd.run(costo, pid);
+    if (pid > 0 && costo > 0) {
+      const prev = productoRepo.findById(pid);
+      if (prev) {
+        productoRepo.update(pid, { costo });
+        registrarHistorialCostoPrecio({
+          producto_id: prev.id,
+          plantilla_id: prev.plantilla_id,
+          costo_anterior: prev.costo ?? 0,
+          costo_nuevo: costo,
+          precio_anterior: prev.precio ?? 0,
+          precio_nuevo: prev.precio ?? 0,
+          origen: 'compra',
+          referencia_tipo: 'compra',
+          referencia_id: compraId,
+          observacion: numero ? `Compra ${numero}` : 'Confirmación de compra',
+          user,
+        });
+      }
+    }
   }
 }

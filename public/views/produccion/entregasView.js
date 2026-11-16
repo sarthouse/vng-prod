@@ -1,7 +1,7 @@
 import { api, toast, refreshKPIs } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/modal.js';
-import { renderDataTable } from '../../lib/viewEngine.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
+import { renderDataTable } from '../../lib/engine/index.js';
 
 export async function renderEntregasView() {
   const root = document.getElementById('app-view');

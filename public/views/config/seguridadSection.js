@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 const PERM_CATEGORY_LABELS = {
   produccion: 'Producción',

@@ -1,10 +1,16 @@
-import { esc } from './format.js';
+import { esc } from '../format.js';
+import { mountFormFields } from './formEngine.js';
 
-export function createModal({ title, bodyHtml, footerHtml, onMount, onCancel }) {
+/**
+ * Motor unificado de modales (createModal, showAlertModal, showConfirmModal, showPromptModal, showFormModal).
+ * Soporta tamaños: 'sm' (440px), 'md' (620px), 'lg' (820px).
+ */
+export function createModal({ title, bodyHtml, footerHtml, size = 'sm', onMount, onCancel }) {
   const backdrop = document.createElement('div');
   backdrop.className = 've-modal-backdrop';
+  const sizeClass = size === 'lg' ? 've-modal-lg' : size === 'md' ? 've-modal-md' : '';
   backdrop.innerHTML = `
-    <div class="ve-modal" role="dialog" aria-modal="true">
+    <div class="ve-modal ${sizeClass}" role="dialog" aria-modal="true">
       <div class="ve-modal-header">
         <h3>${esc(title)}</h3>
         <button type="button" class="ve-modal-close" aria-label="Cerrar">×</button>
@@ -44,6 +50,7 @@ export function createModal({ title, bodyHtml, footerHtml, onMount, onCancel }) 
   });
 
   onMount?.(backdrop, cleanup);
+  cleanup.close = cleanup;
   return cleanup;
 }
 
@@ -144,6 +151,72 @@ export function showPromptModal(message, {
         });
         input?.focus();
         input?.select();
+      },
+    });
+  });
+}
+
+/**
+ * Motor declarativo de modales con formulario.
+ * Combina createModal (contenedor visual) + mountFormFields (campos como datos).
+ */
+export function showFormModal({
+  title = 'Formulario',
+  fields = [],
+  initialState = {},
+  submitText = 'Guardar',
+  cancelText = 'Cancelar',
+  size = null,
+  onChange = null,
+  onSubmit,
+} = {}) {
+  return new Promise((resolve) => {
+    const state = { ...initialState };
+    const formId = `ve-modal-form-${Math.random().toString(36).slice(2, 9)}`;
+    const resolvedSize = size || (fields.length > 4 ? 'md' : 'sm');
+
+    createModal({
+      title,
+      size: resolvedSize,
+      bodyHtml: `<form id="${formId}" class="form-grid" style="margin-bottom:0;"></form>`,
+      footerHtml: `
+        <button type="button" class="btn" data-ve-cancel>${esc(cancelText)}</button>
+        <button type="submit" form="${formId}" class="btn btn-primary" data-ve-submit>${esc(submitText)}</button>
+      `,
+      onCancel: () => resolve(null),
+      onMount: (el, cleanup) => {
+        const form = el.querySelector(`#${formId}`);
+        const cancelBtn = el.querySelector('[data-ve-cancel]');
+        const submitBtn = el.querySelector('[data-ve-submit]');
+
+        mountFormFields(form, fields, state, { onChange });
+
+        cancelBtn?.addEventListener('click', () => {
+          cleanup();
+          resolve(null);
+        });
+
+        const firstInput = form.querySelector('input:not([type="hidden"]), select, textarea');
+        firstInput?.focus();
+
+        let submitting = false;
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (submitting) return;
+          submitting = true;
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const result = onSubmit ? await onSubmit({ ...state }, { cleanup, form }) : { ...state };
+            if (result === false) return;
+            cleanup();
+            resolve(result ?? { ...state });
+          } catch {
+            // El callback maneja el feedback (ej. toast); mantener modal abierto para corregir
+          } finally {
+            submitting = false;
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        });
       },
     });
   });

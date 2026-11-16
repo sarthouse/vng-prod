@@ -89,6 +89,16 @@ export async function handleTesoreriaRoutes(req, res, pathname, user) {
     }));
     return true;
   }
+  if (pathname === '/api/tesoreria/flujo-matriz' && req.method === 'GET') {
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    json(res, 200, tesSvc.getFlujoMatriz({
+      granularidad: qs.get('granularidad') || 'semana',
+      hist_periodos: qs.get('hist') ? Number(qs.get('hist')) : 4,
+      proy_periodos: qs.get('proy') ? Number(qs.get('proy')) : 6,
+      cuenta_id: qs.get('cuenta_id') || undefined,
+    }));
+    return true;
+  }
   if (pathname === '/api/tesoreria/flujo-operativo' && req.method === 'GET') {
     json(res, 200, tesSvc.getFlujoOperativo());
     return true;
@@ -250,6 +260,14 @@ export async function handleTesoreriaRoutes(req, res, pathname, user) {
       vencimiento_hasta: qs.get('vencimiento_hasta') || undefined,
       search: qs.get('search') || undefined,
     }));
+    return true;
+  }
+  if (pathname === '/api/tesoreria/cheques' && req.method === 'POST') {
+    try {
+      const b = await parseBody(req);
+      const id = chequeSvc.registrarChequeTercero({ ...b, generar_asiento: b.generar_asiento === true }, user);
+      json(res, 201, { id });
+    } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
   const chequeMatch = pathname.match(/^\/api\/tesoreria\/cheques\/(\d+)$/);

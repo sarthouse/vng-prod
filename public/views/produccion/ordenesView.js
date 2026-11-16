@@ -1,11 +1,12 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, exportRowsToCSV } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { renderKpiStrip, renderDataTable, renderGroupedList, renderKanbanBoard, renderViewSwitcher } from '../../lib/viewEngine.js';
+import { renderKpiStrip, renderDataTable, renderGroupedList, renderKanbanBoard, renderGanttChart, renderViewSwitcher } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 let ordenesViewMode = 'lista';
+let ganttSoloPendientes = true;
 
 export async function renderOrdenesView() {
   const root = document.getElementById('app-view');
@@ -19,7 +20,7 @@ export async function renderOrdenesView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Órdenes de Producción</h1>
+        <h1>Órdenes</h1>
         <p class="muted">Planificación y seguimiento por etapas productivas asociadas a cada receta y taller.</p>
       </div>
       <div class="actions">
@@ -111,6 +112,7 @@ export async function renderOrdenesView() {
         { id: 'lista', label: 'Lista' },
         { id: 'agrupada', label: 'Agrupada' },
         { id: 'kanban', label: 'Kanban' },
+        { id: 'gantt', label: 'Gantt' },
       ],
       onChange: (mode) => {
         ordenesViewMode = mode;
@@ -118,7 +120,40 @@ export async function renderOrdenesView() {
       },
     });
 
-    if (ordenesViewMode === 'agrupada') {
+    if (ordenesViewMode === 'gantt') {
+      const ganttRows = ganttSoloPendientes
+        ? ordenes.filter(o => o.estado !== 'Completada' && o.estado !== 'Cancelada')
+        : ordenes;
+      const toolbarHtml = `
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 16px;border-bottom:1px solid var(--color-border);">
+          <div>
+            <strong>Cronograma Gantt de Producción</strong>
+            <span class="muted" style="font-size:12px;margin-left:8px;">Visualización temporal de órdenes y sus etapas por taller (${ganttRows.length} orden${ganttRows.length === 1 ? '' : 'es'})</span>
+          </div>
+          <label class="checkbox-inline" style="margin:0;font-size:12px;">
+            <input type="checkbox" id="cb-gantt-pendientes" ${ganttSoloPendientes ? 'checked' : ''} />
+            <span>Solo órdenes pendientes / en proceso</span>
+          </label>
+        </div>
+      `;
+      renderGanttChart(container, {
+        rows: ganttRows,
+        toolbarHtml,
+        emptyText: ganttSoloPendientes ? 'No hay órdenes pendientes de producción.' : 'No hay órdenes de producción creadas todavía.',
+        labelRender: (op) => `
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <a href="/ordenes/${op.id}" data-link class="link-primary"><strong>${esc(op.codigo)}</strong></a>
+            <span class="badge ${op.estado === 'Completada' ? 'badge-ok' : op.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado'}" style="font-size:10px;">${esc(op.estado)}</span>
+          </div>
+          <div style="font-size:12px;font-weight:500;">${esc(op.plantilla_nombre)} · <strong>${op.cantidad} u.</strong></div>
+          <div class="muted" style="font-size:11px;">${esc(op.fecha_inicio)} → ${esc(op.fecha_objetivo || '-')} · Etapas: ${op.etapas_completadas}/${op.etapas_total}</div>
+        `,
+      });
+      container.querySelector('#cb-gantt-pendientes')?.addEventListener('change', (e) => {
+        ganttSoloPendientes = e.target.checked;
+        drawBody();
+      });
+    } else if (ordenesViewMode === 'agrupada') {
       renderGroupedList(container, {
         emptyText: 'No hay órdenes de producción creadas todavía.',
         groupBy: 'estado',

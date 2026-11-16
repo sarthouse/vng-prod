@@ -9,6 +9,10 @@ import { defaultAsientoService } from './asientoService.js';
 import { crearImputacion, getFacturaImputado } from './imputacionService.js';
 
 function resolveCuentaPlanContable(cuenta) {
+  if (cuenta?.cuenta_contable_id) {
+    const explicit = defaultAsientoService.resolvePlanCuenta(Number(cuenta.cuenta_contable_id));
+    if (explicit) return explicit;
+  }
   const isBanco = cuenta?.tipo === 'banco' || cuenta?.tipo === 'billetera';
   const cod = isBanco ? '1.1.02' : '1.1.01';
   return defaultAsientoService.resolvePlanCuenta(cod);
@@ -101,7 +105,14 @@ export function recalcCuentaSaldo(cuentaId) {
 }
 
 export function listCuentas() {
-  const cuentas = db.prepare('SELECT * FROM cuentas ORDER BY id ASC').all();
+  const cuentas = db.prepare(`
+    SELECT c.*,
+           COALESCE(pc.codigo, '') as plan_cuenta_codigo,
+           COALESCE(pc.nombre, '') as plan_cuenta_nombre
+    FROM cuentas c
+    LEFT JOIN plan_cuentas pc ON pc.id = c.cuenta_contable_id
+    ORDER BY c.id ASC
+  `).all();
   return cuentas.map(c => ({ ...c, saldo_actual: recalcCuentaSaldo(c.id) }));
 }
 
@@ -112,17 +123,20 @@ export function createCuenta(b) {
   const moneda = b.moneda || 'ARS';
   const saldoInicial = Number((Number(b.saldo_inicial) || 0).toFixed(2));
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
+  const planCuenta = b.cuenta_contable_id
+    ? defaultAsientoService.resolvePlanCuenta(Number(b.cuenta_contable_id))
+    : resolveCuentaPlanContable({ tipo });
+  const cuentaContableId = planCuenta?.id || (b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null);
 
   db.exec('BEGIN');
   try {
     const info = db.prepare(`
-      INSERT INTO cuentas (nombre, tipo, moneda, saldo_inicial, saldo_actual, activa)
-      VALUES (?, ?, ?, ?, ?, 1)
-    `).run(nombre, tipo, moneda, saldoInicial, saldoInicial);
+      INSERT INTO cuentas (nombre, tipo, moneda, cuenta_contable_id, saldo_inicial, saldo_actual, activa)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `).run(nombre, tipo, moneda, cuentaContableId, saldoInicial, saldoInicial);
     const id = Number(info.lastInsertRowid);
 
     if (Math.abs(saldoInicial) >= 0.01) {
-      const planCuenta = resolveCuentaPlanContable({ tipo });
       const planContra = b.plan_cuenta_contrapartida_id
         ? defaultAsientoService.resolvePlanCuenta(Number(b.plan_cuenta_contrapartida_id))
         : defaultAsientoService.resolvePlanCuenta('3.1.01');
@@ -220,12 +234,16 @@ export function ajustarSaldoCuenta(id, b = {}) {
 export function updateCuenta(id, b) {
   const ex = db.prepare('SELECT * FROM cuentas WHERE id = ?').get(id);
   if (!ex) return false;
+  const cuentaContableId = b.cuenta_contable_id !== undefined
+    ? (b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null)
+    : ex.cuenta_contable_id;
   db.prepare(`
-    UPDATE cuentas SET nombre=?, tipo=?, moneda=?, saldo_inicial=?, activa=? WHERE id=?
+    UPDATE cuentas SET nombre=?, tipo=?, moneda=?, cuenta_contable_id=?, saldo_inicial=?, activa=? WHERE id=?
   `).run(
     b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
     b.tipo !== undefined ? b.tipo : ex.tipo,
     b.moneda !== undefined ? b.moneda : ex.moneda,
+    cuentaContableId,
     b.saldo_inicial !== undefined ? Number(b.saldo_inicial) : ex.saldo_inicial,
     b.activa !== undefined ? (b.activa ? 1 : 0) : ex.activa,
     id
@@ -1313,5 +1331,281 @@ export function getFlujoProyectado({ desde, hasta, dias = 30, meses, cuenta_id, 
     por_periodo: por_mes,
     por_mes,
     eventos: timeline,
+  };
+}
+
+function buildContinuousPeriods(granularidad = 'semana', histCount = 4, proyCount = 4, refDate = null) {
+  const hoyIso = refDate || new Date().toISOString().slice(0, 10);
+  const periods = [];
+  if (granularidad === 'mes') {
+    const [y, m] = hoyIso.split('-').map(Number);
+    const curYm = `${y}-${String(m).padStart(2, '0')}`;
+    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    for (let i = -histCount; i <= proyCount; i++) {
+      const dt = new Date(Date.UTC(y, m - 1 + i, 1));
+      const py = dt.getUTCFullYear();
+      const pm = dt.getUTCMonth() + 1;
+      const key = `${py}-${String(pm).padStart(2, '0')}`;
+      const start = `${key}-01`;
+      const lastDay = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+      const end = `${key}-${String(lastDay).padStart(2, '0')}`;
+      periods.push({
+        key,
+        label: `${monthNames[pm - 1]} ${py}`,
+        sublabel: i < 0 ? 'Histórico' : i === 0 ? 'Mes Actual' : 'Proyectado',
+        kind: i < 0 ? 'historico' : i === 0 ? 'actual' : 'proyectado',
+        start,
+        end,
+        isCurrent: key === curYm,
+      });
+    }
+    return periods;
+  }
+
+  const [y, m, d] = hoyIso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const offsetToMonday = (dt.getUTCDay() + 6) % 7;
+  const curMonday = new Date(Date.UTC(y, m - 1, d - offsetToMonday));
+  const fmt = (x) => `${String(x.getUTCDate()).padStart(2, '0')}/${String(x.getUTCMonth() + 1).padStart(2, '0')}`;
+
+  for (let i = -histCount; i <= proyCount; i++) {
+    const mon = new Date(Date.UTC(curMonday.getUTCFullYear(), curMonday.getUTCMonth(), curMonday.getUTCDate() + i * 7));
+    const sun = new Date(Date.UTC(mon.getUTCFullYear(), mon.getUTCMonth(), mon.getUTCDate() + 6));
+    const key = mon.toISOString().slice(0, 10);
+    const start = key;
+    const end = sun.toISOString().slice(0, 10);
+    periods.push({
+      key,
+      label: `${fmt(mon)} – ${fmt(sun)}`,
+      sublabel: i < 0 ? 'Histórico' : i === 0 ? 'Semana Actual' : `Sem +${i}`,
+      kind: i < 0 ? 'historico' : i === 0 ? 'actual' : 'proyectado',
+      start,
+      end,
+      isCurrent: i === 0,
+    });
+  }
+  return periods;
+}
+
+export function getFlujoMatriz({
+  granularidad = 'semana',
+  hist_periodos = 4,
+  proy_periodos = 6,
+  cuenta_id = null,
+} = {}) {
+  const histCount = Math.max(1, Math.min(12, Number(hist_periodos) || 4));
+  const proyCount = Math.max(1, Math.min(16, Number(proy_periodos) || 6));
+  const hoyIso = new Date().toISOString().slice(0, 10);
+  const periods = buildContinuousPeriods(granularidad, histCount, proyCount, hoyIso);
+  const firstStart = periods[0].start;
+  const lastEnd = periods[periods.length - 1].end;
+
+  const histData = getFlujoCaja({
+    desde: firstStart,
+    hasta: lastEnd,
+    cuenta_id,
+    granularidad,
+  });
+
+  const proyDays = granularidad === 'mes' ? (proyCount + 1) * 31 : (proyCount + 1) * 7;
+  const proyData = getFlujoProyectado({
+    desde: hoyIso,
+    hasta: lastEnd,
+    dias: proyDays,
+    cuenta_id,
+    granularidad,
+  });
+
+  const rowDefs = [
+    { id: 'saldo_inicial', label: 'Saldo Inicial', type: 'balance_start' },
+    { id: 'ingresos_total', label: '(+) Ingresos', type: 'group_in', children: ['ing_cobros_reales', 'ing_ventas_vencer', 'ing_cheques_cartera', 'ing_proyecciones'] },
+    { id: 'ing_cobros_reales', label: 'Cobros Confirmados', type: 'item_in', parent: 'ingresos_total' },
+    { id: 'ing_ventas_vencer', label: 'Ventas por Cobrar', type: 'item_in', parent: 'ingresos_total' },
+    { id: 'ing_cheques_cartera', label: 'Cheques en Cartera', type: 'item_in', parent: 'ingresos_total' },
+    { id: 'ing_proyecciones', label: 'Ingresos Recurrentes', type: 'item_in', parent: 'ingresos_total' },
+    { id: 'egresos_total', label: '(-) Egresos', type: 'group_out', children: ['egr_pagos_reales', 'egr_compras_vencer', 'egr_cheques_propios', 'egr_proyecciones'] },
+    { id: 'egr_pagos_reales', label: 'Pagos Confirmados', type: 'item_out', parent: 'egresos_total' },
+    { id: 'egr_compras_vencer', label: 'Compras por Pagar', type: 'item_out', parent: 'egresos_total' },
+    { id: 'egr_cheques_propios', label: 'Cheques Emitidos', type: 'item_out', parent: 'egresos_total' },
+    { id: 'egr_proyecciones', label: 'Gastos Recurrentes', type: 'item_out', parent: 'egresos_total' },
+    { id: 'transferencias_neto', label: 'Transferencias', type: 'neutral' },
+    { id: 'flujo_neto', label: '(=) Flujo Neto', type: 'net' },
+    { id: 'saldo_final', label: '(=) Saldo Final', type: 'balance_end' },
+  ];
+
+  const values = {};
+  const details = {};
+  for (const r of rowDefs) {
+    values[r.id] = {};
+    details[r.id] = {};
+    for (const p of periods) {
+      values[r.id][p.key] = 0;
+      details[r.id][p.key] = [];
+    }
+  }
+
+  const findPeriodKey = (fecha) => {
+    const f = String(fecha || hoyIso).slice(0, 10);
+    const match = periods.find(p => f >= p.start && f <= p.end);
+    if (match) return match.key;
+    // Si es un vencimiento atrasado (< hoyIso) lo imputamos al período actual
+    if (f < hoyIso) {
+      const cur = periods.find(p => p.isCurrent);
+      if (cur && f >= firstStart) return periods[0].key;
+      if (cur) return cur.key;
+    }
+    return null;
+  };
+
+  // Cargar movimientos reales históricos (incluye los de la semana/mes actual ya ejecutados)
+  for (const m of (histData.movimientos || [])) {
+    const pk = findPeriodKey(m.fecha);
+    if (!pk) continue;
+    if (m.tipo === 'ingreso') {
+      values.ing_cobros_reales[pk] = Number((values.ing_cobros_reales[pk] + m.monto).toFixed(2));
+      details.ing_cobros_reales[pk].push({
+        fecha: m.fecha,
+        origen: 'Cobro Real',
+        contraparte: m.contraparte,
+        concepto: `${m.numero ? m.numero + ' · ' : ''}${m.concepto}`,
+        monto: m.monto,
+      });
+    } else if (m.tipo === 'egreso') {
+      const absM = Math.abs(m.monto);
+      values.egr_pagos_reales[pk] = Number((values.egr_pagos_reales[pk] + absM).toFixed(2));
+      details.egr_pagos_reales[pk].push({
+        fecha: m.fecha,
+        origen: 'Pago Real',
+        contraparte: m.contraparte,
+        concepto: `${m.numero ? m.numero + ' · ' : ''}${m.concepto}`,
+        monto: -absM,
+      });
+    } else if (m.tipo === 'transferencia') {
+      values.transferencias_neto[pk] = Number((values.transferencias_neto[pk] + m.monto).toFixed(2));
+      details.transferencias_neto[pk].push({
+        fecha: m.fecha,
+        origen: 'Transferencia',
+        contraparte: m.cuenta_nombre || 'Interna',
+        concepto: m.concepto,
+        monto: m.monto,
+      });
+    }
+  }
+
+  // Cargar eventos proyectados (comprometidos y estimados) desde el período actual hacia adelante
+  const curPeriod = periods.find(p => p.isCurrent) || periods[0];
+  for (const ev of (proyData.eventos || [])) {
+    const f = String(ev.fecha || hoyIso).slice(0, 10);
+    let pk = periods.find(p => f >= p.start && f <= p.end)?.key || null;
+    if (!pk && f < hoyIso) pk = curPeriod.key;
+    if (!pk) continue;
+    // No proyectar en columnas cerradas del pasado
+    const pObj = periods.find(p => p.key === pk);
+    if (pObj && pObj.kind === 'historico') pk = curPeriod.key;
+
+    if (ev.tipo === 'ingreso') {
+      const rowId = ev.origen === 'venta'
+        ? 'ing_ventas_vencer'
+        : ev.origen === 'cheque_tercero'
+          ? 'ing_cheques_cartera'
+          : 'ing_proyecciones';
+      values[rowId][pk] = Number((values[rowId][pk] + ev.monto).toFixed(2));
+      details[rowId][pk].push({
+        fecha: ev.fecha,
+        vencido: ev.vencido,
+        origen: ev.estado_flujo || ev.origen,
+        contraparte: ev.contraparte,
+        concepto: ev.concepto,
+        monto: ev.monto,
+      });
+    } else {
+      const absM = Math.abs(ev.monto);
+      const rowId = ev.origen === 'compra'
+        ? 'egr_compras_vencer'
+        : ev.origen === 'cheque_propio'
+          ? 'egr_cheques_propios'
+          : 'egr_proyecciones';
+      values[rowId][pk] = Number((values[rowId][pk] + absM).toFixed(2));
+      details[rowId][pk].push({
+        fecha: ev.fecha,
+        vencido: ev.vencido,
+        origen: ev.estado_flujo || ev.origen,
+        contraparte: ev.contraparte,
+        concepto: ev.concepto,
+        monto: -absM,
+      });
+    }
+  }
+
+  // Calcular subtotales, flujo neto y arrastrar saldo inicial -> saldo final período a período
+  let runningBalance = Number(histData.resumen?.saldo_apertura ?? 0);
+  const totals = {};
+  for (const r of rowDefs) totals[r.id] = 0;
+  totals.saldo_inicial = runningBalance;
+
+  for (const p of periods) {
+    const pk = p.key;
+    values.saldo_inicial[pk] = Number(runningBalance.toFixed(2));
+
+    const ingTotal = Number((
+      values.ing_cobros_reales[pk] +
+      values.ing_ventas_vencer[pk] +
+      values.ing_cheques_cartera[pk] +
+      values.ing_proyecciones[pk]
+    ).toFixed(2));
+    values.ingresos_total[pk] = ingTotal;
+    details.ingresos_total[pk] = [
+      ...details.ing_cobros_reales[pk],
+      ...details.ing_ventas_vencer[pk],
+      ...details.ing_cheques_cartera[pk],
+      ...details.ing_proyecciones[pk],
+    ];
+
+    const egrTotal = Number((
+      values.egr_pagos_reales[pk] +
+      values.egr_compras_vencer[pk] +
+      values.egr_cheques_propios[pk] +
+      values.egr_proyecciones[pk]
+    ).toFixed(2));
+    values.egresos_total[pk] = egrTotal;
+    details.egresos_total[pk] = [
+      ...details.egr_pagos_reales[pk],
+      ...details.egr_compras_vencer[pk],
+      ...details.egr_cheques_propios[pk],
+      ...details.egr_proyecciones[pk],
+    ];
+
+    const transf = values.transferencias_neto[pk];
+    const neto = Number((ingTotal - egrTotal + transf).toFixed(2));
+    values.flujo_neto[pk] = neto;
+    details.flujo_neto[pk] = [...details.ingresos_total[pk], ...details.egresos_total[pk], ...details.transferencias_neto[pk]];
+
+    runningBalance = Number((runningBalance + neto).toFixed(2));
+    values.saldo_final[pk] = runningBalance;
+  }
+
+  for (const r of rowDefs) {
+    if (r.id === 'saldo_inicial') continue;
+    if (r.id === 'saldo_final') {
+      totals[r.id] = runningBalance;
+      continue;
+    }
+    totals[r.id] = Number(periods.reduce((s, p) => s + (Number(values[r.id][p.key]) || 0), 0).toFixed(2));
+  }
+
+  return {
+    granularidad,
+    hoy: hoyIso,
+    cuentas: histData.cuentas,
+    caja_actual: proyData.caja_actual,
+    saldo_apertura: totals.saldo_inicial,
+    saldo_final_proyectado: runningBalance,
+    periods,
+    rows: rowDefs.map(r => ({
+      ...r,
+      values: values[r.id],
+      details: details[r.id],
+      total: totals[r.id],
+    })),
   };
 }

@@ -3,6 +3,7 @@ import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 
 export const secuenciaRepo = new BaseRepository({ model: MODELS.secuencias });
+export const etapaConfigRepo = new BaseRepository({ model: MODELS.etapas_config });
 
 export function getEmpresaConfig() {
   const row = db.prepare('SELECT * FROM empresa_config WHERE id = 1').get();
@@ -74,7 +75,14 @@ export function updateEmpresaConfig(b) {
 
 export function getConfig() {
   return {
-    categorias: db.prepare('SELECT * FROM categorias ORDER BY nombre ASC').all(),
+    categorias: db.prepare(`
+      SELECT c.*,
+             COALESCE(p.nombre, '') as padre_nombre,
+             CASE WHEN p.nombre IS NOT NULL THEN p.nombre || ' / ' || c.nombre ELSE c.nombre END as display_name
+      FROM categorias c
+      LEFT JOIN categorias p ON p.id = c.padre_id
+      ORDER BY COALESCE(p.nombre, c.nombre) ASC, c.nombre ASC
+    `).all(),
     unidades: db.prepare('SELECT * FROM unidades_medida ORDER BY grupo ASC, factor ASC, nombre ASC').all(),
     variantes: db.prepare('SELECT * FROM variantes ORDER BY atributo ASC, valor ASC').all(),
     etapas: db.prepare('SELECT * FROM etapas_config ORDER BY orden ASC, id ASC').all(),
@@ -185,36 +193,39 @@ export function deleteVarianteAtributo(atributo) {
   db.prepare('DELETE FROM variantes WHERE atributo = ?').run(atributo);
 }
 
-export function createEtapa({ nombre, orden, dias_estimados, costo_unidad, depende_de_id }) {
-  const info = db.prepare('INSERT INTO etapas_config (nombre, orden, dias_estimados, costo_unidad, depende_de_id) VALUES (?, ?, ?, ?, ?)').run(
-    nombre.trim(),
-    Number(orden) || 1,
-    Math.max(0, Number(dias_estimados) || 0),
-    Math.max(0, Number(costo_unidad) || 0),
-    depende_de_id ? Number(depende_de_id) : null
-  );
-  return Number(info.lastInsertRowid);
+export function createEtapa({ nombre, descripcion = '', orden, dias_estimados, costo_unidad, taller_id, plan_cuenta_id, depende_de_id }) {
+  return etapaConfigRepo.create({
+    nombre: nombre.trim(),
+    descripcion: String(descripcion || '').trim(),
+    orden: Number(orden) || 1,
+    dias_estimados: Math.max(0, Number(dias_estimados) || 0),
+    costo_unidad: Math.max(0, Number(costo_unidad) || 0),
+    taller_id: taller_id ? Number(taller_id) : null,
+    plan_cuenta_id: plan_cuenta_id ? Number(plan_cuenta_id) : null,
+    depende_de_id: depende_de_id ? Number(depende_de_id) : null,
+  });
 }
 
-export function updateEtapa(id, { nombre, orden, dias_estimados, costo_unidad, depende_de_id }) {
-  const existing = db.prepare('SELECT * FROM etapas_config WHERE id = ?').get(id);
+export function updateEtapa(id, { nombre, descripcion, orden, dias_estimados, costo_unidad, taller_id, plan_cuenta_id, depende_de_id }) {
+  const existing = etapaConfigRepo.findById(id);
   if (!existing) return false;
   const nextDep = depende_de_id !== undefined
     ? (depende_de_id && Number(depende_de_id) !== Number(id) ? Number(depende_de_id) : null)
     : existing.depende_de_id;
-  db.prepare('UPDATE etapas_config SET nombre=?, orden=?, dias_estimados=?, costo_unidad=?, depende_de_id=? WHERE id=?').run(
-    nombre !== undefined ? nombre.trim() : existing.nombre,
-    orden !== undefined ? Number(orden) : existing.orden,
-    dias_estimados !== undefined ? Math.max(0, Number(dias_estimados)) : existing.dias_estimados,
-    costo_unidad !== undefined ? Math.max(0, Number(costo_unidad) || 0) : (existing.costo_unidad ?? 0),
-    nextDep,
-    id
-  );
-  return true;
+  return etapaConfigRepo.update(id, {
+    nombre: nombre !== undefined ? nombre.trim() : existing.nombre,
+    descripcion: descripcion !== undefined ? String(descripcion || '').trim() : (existing.descripcion ?? ''),
+    orden: orden !== undefined ? Number(orden) : existing.orden,
+    dias_estimados: dias_estimados !== undefined ? Math.max(0, Number(dias_estimados)) : existing.dias_estimados,
+    costo_unidad: costo_unidad !== undefined ? Math.max(0, Number(costo_unidad) || 0) : (existing.costo_unidad ?? 0),
+    taller_id: taller_id !== undefined ? (taller_id ? Number(taller_id) : null) : (existing.taller_id ?? null),
+    plan_cuenta_id: plan_cuenta_id !== undefined ? (plan_cuenta_id ? Number(plan_cuenta_id) : null) : (existing.plan_cuenta_id ?? null),
+    depende_de_id: nextDep,
+  });
 }
 
 export function deleteEtapa(id) {
-  db.prepare('DELETE FROM etapas_config WHERE id = ?').run(id);
+  etapaConfigRepo.delete(id);
 }
 
 // --- PUNTOS DE VENTA Y SECUENCIAS FISCALES ---

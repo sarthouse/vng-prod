@@ -1,12 +1,13 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, downloadCSV, renderProvinciaOptions, setupFileDropzones } from '../../lib/format.js';
+import { esc, exportRowsToCSV, renderProvinciaOptions, setupFileDropzones } from '../../lib/format.js';
 import { renderSeguridadSection } from './seguridadSection.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 let activeConfigTab = 'empresa';
 
 function parseCsvText(text) {
   const lines = String(text || '')
+    .replace(/^\uFEFF/, '')
     .split(/\r?\n/)
     .map(l => l.trim())
     .filter(Boolean);
@@ -318,10 +319,10 @@ export async function renderConfigView() {
         </div>
         ${afip.cert_info ? `<p class="muted" style="font-size:0.8rem;margin:0 0 8px;">${esc(afip.cert_info.subject)} · Serie: <code>${esc(afip.cert_info.serialNumber)}</code></p>` : ''}
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-          <input type="file" id="afip-crt-file" accept=".crt,.pem,.cer,.txt" />
-          <button type="button" class="btn btn-primary btn-sm" id="btn-afip-save-crt">Guardar Certificado (.crt)</button>
+          <input type="file" id="afip-crt-file" accept=".crt,.pem,.cer" />
+          <button type="button" class="btn btn-primary btn-sm" id="btn-afip-save-crt" disabled>Guardar Certificado (.crt)</button>
         </div>
-        <textarea id="afip-crt-text" rows="4" placeholder="O pegá acá el contenido PEM completo (-----BEGIN CERTIFICATE----- ...)" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+        <div id="afip-crt-status" class="muted" style="font-size:12px;">Seleccioná un archivo de certificado X.509 (.crt, .pem o .cer).</div>
       </div>
     </div>
     ` : ''}
@@ -584,18 +585,52 @@ export async function renderConfigView() {
   root.querySelector('#btn-afip-dl-csr')?.addEventListener('click', () => {
     window.location.href = '/api/afip/csr/download';
   });
+  let pendingAfipCrtPem = '';
   root.querySelector('#afip-crt-file')?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const txt = await file.text();
-    const ta = root.querySelector('#afip-crt-text');
-    if (ta) ta.value = txt;
+    const statusEl = root.querySelector('#afip-crt-status');
+    const saveBtn = root.querySelector('#btn-afip-save-crt');
+    pendingAfipCrtPem = '';
+    if (saveBtn) saveBtn.disabled = true;
+    if (!file) {
+      if (statusEl) {
+        statusEl.textContent = 'Seleccioná un archivo de certificado X.509 (.crt, .pem o .cer).';
+        statusEl.style.color = '';
+      }
+      return;
+    }
+    const extOk = /\.(crt|pem|cer)$/i.test(file.name);
+    if (!extOk) {
+      const msg = `Extensión inválida ("${file.name}"). Debe ser .crt, .pem o .cer.`;
+      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = 'var(--color-accent)'; }
+      toast(msg, true);
+      return;
+    }
+    if (file.size === 0 || file.size > 65536) {
+      const msg = 'Tamaño de archivo inválido (máximo 64 KB).';
+      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = 'var(--color-accent)'; }
+      toast(msg, true);
+      return;
+    }
+    const txt = (await file.text()).trim();
+    const hasPem = /-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----/.test(txt);
+    if (!hasPem) {
+      const msg = `El archivo "${file.name}" no contiene un bloque X.509 PEM válido (BEGIN/END CERTIFICATE).`;
+      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = 'var(--color-accent)'; }
+      toast(msg, true);
+      return;
+    }
+    pendingAfipCrtPem = txt;
+    if (saveBtn) saveBtn.disabled = false;
+    if (statusEl) {
+      statusEl.innerHTML = `Archivo validado: <strong>${esc(file.name)}</strong> (${file.size} bytes) — listo para guardar.`;
+      statusEl.style.color = '#15803d';
+    }
   });
   root.querySelector('#btn-afip-save-crt')?.addEventListener('click', async () => {
-    const crt = root.querySelector('#afip-crt-text')?.value?.trim();
-    if (!crt) { toast('Pegá o seleccioná un archivo .crt primero', true); return; }
+    if (!pendingAfipCrtPem) { toast('Seleccioná un archivo .crt/.pem/.cer válido primero', true); return; }
     try {
-      await api('/api/afip/subir-crt', { method: 'POST', body: JSON.stringify({ crt }) });
+      await api('/api/afip/subir-crt', { method: 'POST', body: JSON.stringify({ crt: pendingAfipCrtPem }) });
       toast('Certificado AFIP guardado');
       await renderConfigView();
     } catch (err) { toast(err.message, true); }
@@ -629,21 +664,27 @@ export async function renderConfigView() {
   }));
 
   root.querySelector('#btn-tpl-cont').addEventListener('click', () => {
-    downloadCSV('plantilla_contactos.csv', [
-      ['nombre', 'razon_social', 'cuit', 'condicion_iva', 'es_cliente', 'es_proveedor', 'es_taller', 'telefono', 'email', 'direccion', 'localidad', 'provincia', 'codigo_postal', 'observaciones'],
-      ['Curtiembre Ejemplo', 'Curtiembre Ejemplo SA', '30-11223344-5', 'Responsable Inscripto', '0', '1', '0', '11-4455-6677', 'ventas@ejemplo.com', 'Av. Industrial 100', 'Avellaneda', 'Buenos Aires', ''],
-      ['Taller Aparado Sur', '', '20-22334455-6', 'Monotributo', '0', '1', '1', '11-5566-7788', '', 'Calle 10 200', 'Lanús', 'Buenos Aires', ''],
-      ['Zapatería Centro', 'Zapatería Centro SRL', '30-12345678-9', 'Responsable Inscripto', '1', '0', '0', '11-4455-6677', 'compras@ejemplo.com', 'Av. Principal 123', 'CABA', 'Buenos Aires', 'Entrega martes y jueves'],
-    ]);
+    exportRowsToCSV(
+      ['nombre', 'razon_social', 'tipo_documento', 'cuit', 'condicion_iva', 'jurisdiccion_codigo', 'es_cliente', 'es_proveedor', 'es_taller', 'telefono', 'email', 'direccion', 'localidad', 'provincia', 'codigo_postal', 'observaciones'],
+      [
+        ['Curtiembre Ejemplo', 'Curtiembre Ejemplo SA', 'CUIT', '30-11223344-5', 'Responsable Inscripto', '902', '0', '1', '0', '11-4455-6677', 'ventas@ejemplo.com', 'Av. Industrial 100', 'Avellaneda', 'Buenos Aires', '1870', ''],
+        ['Taller Aparado Sur', '', 'CUIT', '20-22334455-6', 'Monotributo', '902', '0', '1', '1', '11-5566-7788', '', 'Calle 10 200', 'Lanús', 'Buenos Aires', '1824', ''],
+        ['Zapatería Centro', 'Zapatería Centro SRL', 'CUIT', '30-12345678-9', 'Responsable Inscripto', '901', '1', '0', '0', '11-4455-6677', 'compras@ejemplo.com', 'Av. Principal 123', 'CABA', 'Ciudad Autónoma de Buenos Aires', '1000', 'Entrega martes y jueves'],
+      ],
+      'plantilla_contactos.csv'
+    );
   });
 
   root.querySelector('#btn-tpl-prod').addEventListener('click', () => {
-    downloadCSV('plantilla_productos.csv', [
-      ['codigo', 'nombre', 'descripcion', 'se_fabrica', 'se_compra', 'tipo', 'categoria', 'proveedor', 'udm', 'precio', 'alicuota_iva', 'stock', 'stock_minimo', 'minimo_compra'],
-      ['MOD-01', 'Bota Urbana Clásica', 'Producto fabricado en taller', '1', '0', 'almacenable', 'Calzado', '', 'pares', '48000', '21', '0', '5', '0'],
-      ['CUE-01', 'Cuero Vacuno Negro', 'Espesor 1.4mm', '0', '1', 'almacenable', 'Cueros', 'Curtiembre Ejemplo', 'metros', '12500', '21', '50', '10', '5'],
-      ['SRV-AP', 'Servicio de Aparado', 'Mano de obra', '0', '1', 'servicio', 'Mano de obra', 'Taller Aparado Sur', 'unidades', '3800', '21', '0', '0', '0'],
-    ]);
+    exportRowsToCSV(
+      ['codigo', 'nombre', 'descripcion', 'tipo', 'categoria', 'se_fabrica', 'se_compra', 'se_vende', 'requiere_lote', 'costo', 'precio', 'alicuota_iva', 'alicuota_iva_compra', 'udm', 'stock', 'stock_minimo', 'minimo_compra', 'proveedor'],
+      [
+        ['MOD-01', 'Bota Urbana Clásica', 'Producto fabricado en taller', 'almacenable', 'Calzado', '1', '0', '1', '1', '22000', '48000', '21', '21', 'pares', '0', '5', '0', ''],
+        ['CUE-01', 'Cuero Vacuno Negro', 'Espesor 1.4mm', 'almacenable', 'Cueros', '0', '1', '0', '1', '12500', '12500', '21', '21', 'metros', '50', '10', '5', 'Curtiembre Ejemplo'],
+        ['SRV-AP', 'Servicio de Aparado', 'Mano de obra', 'servicio', 'Mano de obra', '0', '1', '0', '0', '3800', '3800', '21', '21', 'unidades', '0', '0', '0', 'Taller Aparado Sur'],
+      ],
+      'plantilla_productos.csv'
+    );
   });
 
   setupFileDropzones(root);
@@ -673,8 +714,8 @@ export async function renderConfigView() {
   root.querySelector('#btn-imp-cont').addEventListener('click', async () => {
     if (!csvRows.cont.length) return toast('Seleccioná un archivo CSV válido con encabezado y filas', true);
     try {
-      const res = await api('/api/importar/contactos', { method: 'POST', body: JSON.stringify({ rows: csvRows.cont }) });
-      toast(`Contactos importados: ${res.created} creados${res.errors?.length ? `, ${res.errors.length} errores` : ''}`);
+      const res = await api('/api/importar/contactos', { method: 'POST', body: { rows: csvRows.cont } });
+      toast(`Contactos importados: ${res.created} creados, ${res.updated || 0} actualizados${res.errors?.length ? `, ${res.errors.length} errores` : ''}`);
     } catch (err) {
       toast(err.message, true);
     }
@@ -683,8 +724,8 @@ export async function renderConfigView() {
   root.querySelector('#btn-imp-prod').addEventListener('click', async () => {
     if (!csvRows.prod.length) return toast('Seleccioná un archivo CSV válido con encabezado y filas', true);
     try {
-      const res = await api('/api/importar/productos', { method: 'POST', body: JSON.stringify({ rows: csvRows.prod }) });
-      toast(`Productos importados: ${res.created} creados${res.errors?.length ? `, ${res.errors.length} errores` : ''}`);
+      const res = await api('/api/importar/productos', { method: 'POST', body: { rows: csvRows.prod } });
+      toast(`Productos importados: ${res.created} creados, ${res.updated || 0} actualizados${res.errors?.length ? `, ${res.errors.length} errores` : ''}`);
     } catch (err) {
       toast(err.message, true);
     }

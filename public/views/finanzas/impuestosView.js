@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderImpuestosView() {
   const root = document.getElementById('app-view');
@@ -12,8 +12,8 @@ export async function renderImpuestosView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Contabilidad — Impuestos, Percepciones y Retenciones</h1>
-        <p class="muted">Configurá IVA, IIBB, percepciones, retenciones y otros impuestos aplicables en Compras y Ventas.</p>
+        <h1>Impuestos</h1>
+        <p class="muted">IVA, IIBB, percepciones, retenciones y otros tributos aplicables en compras y ventas.</p>
       </div>
     </div>
 

@@ -1,7 +1,7 @@
 import { api, refreshKPIs, toast } from '../../lib/api.js';
 import { esc, badgeForEstado, fmtNum } from '../../lib/format.js';
-import { renderDataTable, renderKpiStrip } from '../../lib/viewEngine.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { renderDataTable, renderKpiStrip } from '../../lib/engine/index.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderPendientesView() {
   const root = document.getElementById('app-view');
@@ -12,11 +12,11 @@ export async function renderPendientesView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Pendientes Operativos</h1>
-        <p class="muted">Entregas a clientes pendientes de despacho (picking en Borrador) y órdenes de producción activas.</p>
+        <h1>Pendientes</h1>
+        <p class="muted">Entregas pendientes de despacho y órdenes de producción activas.</p>
       </div>
       <div class="actions">
-        <a href="/traslados" data-link class="btn">Ver Operaciones de Stock</a>
+        <a href="/operaciones-stock" data-link class="btn">Operaciones</a>
         <a href="/ordenes/nueva" data-link class="btn btn-primary">+ Nueva Orden</a>
       </div>
     </div>
@@ -25,14 +25,14 @@ export async function renderPendientesView() {
 
     <div class="card">
       <div class="card-header">
-        <h2>Entregas a Clientes Pendientes</h2>
+        <h2>Entregas Pendientes</h2>
       </div>
       <div id="pend-entregas-table"></div>
     </div>
 
     <div class="card">
       <div class="card-header">
-        <h2>Órdenes de Producción Pendientes</h2>
+        <h2>Órdenes Pendientes</h2>
       </div>
       <div id="pend-ordenes-table"></div>
     </div>

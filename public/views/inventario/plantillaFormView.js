@@ -1,20 +1,21 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, fmtNum } from '../../lib/format.js';
 import { navigate } from '../../router.js';
-import { mountCombobox, quickCreateProveedor, quickCreateCategoria } from '../../lib/autocomplete.js';
+import { mountCombobox, mountMultiSelect, quickCreateProveedor, quickCreateCategoria } from '../../lib/autocomplete.js';
 
 export async function renderPlantillaFormView({ id } = {}) {
   const root = document.getElementById('app-view');
   const isEdit = Boolean(id);
 
-  const [config, impuestosIva, proveedores, existing, planCuentas, tarifasCompra, listasPrecios] = await Promise.all([
+  const [config, todosImpuestos, proveedores, existing, planCuentas, tarifasCompra, listasPrecios, historialPrecios] = await Promise.all([
     api('/api/config'),
-    api('/api/impuestos?tipo=iva&solo_activos=1').catch(() => []),
+    api('/api/impuestos?solo_activos=1').catch(() => []),
     api('/api/contactos?es_proveedor=1'),
     isEdit ? api(`/api/plantillas/${id}`) : Promise.resolve(null),
     api('/api/tesoreria/plan-cuentas').catch(() => []),
     isEdit ? api(`/api/producto-proveedores?plantilla_id=${id}`).catch(() => []) : Promise.resolve([]),
     isEdit ? api('/api/listas-precios?solo_activos=1').catch(() => []) : Promise.resolve([]),
+    isEdit ? api(`/api/plantillas/${id}/historial-precios`).catch(() => []) : Promise.resolve([]),
   ]);
   const cuentasImputables = (planCuentas || []).filter(c => c.activo !== 0 && c.imputable !== 0);
   const cuentasIngreso = cuentasImputables.filter(c => c.tipo === 'ingreso');
@@ -24,11 +25,17 @@ export async function renderPlantillaFormView({ id } = {}) {
   const unidades = config.unidades || [];
   const globalVariantes = config.variantes || [];
   const defaultIva = Number(config.empresa?.alicuota_iva_ventas_defecto ?? config.empresa?.alicuota_iva_defecto ?? 21);
-  const currentIva = Number((existing?.plantilla?.alicuota_iva) ?? defaultIva);
-  const ivaOptions = (impuestosIva || []).map(i => ({ value: Number(i.alicuota_defecto), label: `${i.nombre} (${i.alicuota_defecto}%)` }));
-  if (!ivaOptions.some(o => o.value === currentIva)) {
-    ivaOptions.push({ value: currentIva, label: `IVA ${currentIva}%` });
-  }
+  const defaultIvaCompra = Number(config.empresa?.alicuota_iva_compras_defecto ?? config.empresa?.alicuota_iva_defecto ?? 21);
+
+  const impuestosVentaOpts = (todosImpuestos || [])
+    .filter(i => i.aplica_a === 'ventas' || i.aplica_a === 'ambos' || !i.aplica_a)
+    .map(i => ({ value: String(i.id), label: `${i.nombre} (${i.alicuota_defecto}%)`, sublabel: i.tipo?.toUpperCase(), raw: i }));
+  const impuestosCompraOpts = (todosImpuestos || [])
+    .filter(i => i.aplica_a === 'compras' || i.aplica_a === 'ambos' || !i.aplica_a)
+    .map(i => ({ value: String(i.id), label: `${i.nombre} (${i.alicuota_defecto}%)`, sublabel: i.tipo?.toUpperCase(), raw: i }));
+
+  const defaultVentaIvaTax = (todosImpuestos || []).find(i => i.tipo === 'iva' && Number(i.alicuota_defecto) === defaultIva && (i.aplica_a === 'ventas' || i.aplica_a === 'ambos'));
+  const defaultCompraIvaTax = (todosImpuestos || []).find(i => i.tipo === 'iva' && Number(i.alicuota_defecto) === defaultIvaCompra && (i.aplica_a === 'compras' || i.aplica_a === 'ambos'));
 
   const qs = new URLSearchParams(window.location.search);
   const preFabrica = qs.get('se_fabrica') === '1';
@@ -42,6 +49,9 @@ export async function renderPlantillaFormView({ id } = {}) {
     categoria: preFabrica ? (categorias.find(c => /modelo/i.test(c.nombre))?.nombre || categorias[0]?.nombre || 'Otros insumos') : (categorias[0]?.nombre || 'Otros insumos'),
     udm: preFabrica ? (unidades.find(u => /par/i.test(u.nombre))?.nombre || unidades[0]?.nombre || 'unidades') : (unidades[0]?.nombre || 'unidades'),
     alicuota_iva: defaultIva,
+    alicuota_iva_compra: defaultIvaCompra,
+    impuestos_venta_ids: defaultVentaIvaTax ? [defaultVentaIvaTax.id] : [],
+    impuestos_compra_ids: defaultCompraIvaTax ? [defaultCompraIvaTax.id] : [],
     proveedor_id: preProveedorId,
     lead_time_dias: 0,
     se_fabrica: preFabrica ? 1 : 0,
@@ -114,41 +124,36 @@ export async function renderPlantillaFormView({ id } = {}) {
             <div id="pt-cat-combo"></div>
           </label>
           <label>
-            <span>Unidad de Medida (Stock/Venta) *</span>
+            <span>Unidad de Medida *</span>
             <select name="udm" required>
               ${unidades.map(u => `<option value="${esc(u.nombre)}" ${u.nombre === pt.udm ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}
             </select>
           </label>
-          <label>
-            <span>UdM de Compra</span>
-            <select name="udm_compra">
-              <option value="">-- Igual a UdM Stock --</option>
-              ${unidades.map(u => `<option value="${esc(u.nombre)}" ${pt.unidad_compra_id && u.nombre === pt.udm_compra ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}
-            </select>
+          <label class="form-field">
+            <span>Impuestos de Venta</span>
+            <div id="pt-imp-venta-multi"></div>
           </label>
-          <label>
-            <span>Impuesto IVA *</span>
-            <select name="alicuota_iva">
-              ${ivaOptions.map(o => `<option value="${o.value}" ${o.value === currentIva ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
-            </select>
+          <label class="form-field">
+            <span>Impuestos de Compra</span>
+            <div id="pt-imp-compra-multi"></div>
           </label>
           <label class="form-field">
             <span>Proveedor por Defecto</span>
             <div id="pt-prov-combo"></div>
           </label>
           <label class="form-field">
-            <span>Lead Time Compra (días)</span>
+            <span>Plazo de Entrega (días)</span>
             <input type="number" name="lead_time_dias" min="0" step="1" value="${esc(pt.lead_time_dias ?? 0)}" />
           </label>
           <label class="form-field">
-            <span>Cuenta Contable Ventas</span>
+            <span>Cuenta de Ventas</span>
             <select name="cuenta_venta_id">
               <option value="">-- Por defecto (4.1.01) --</option>
               ${cuentasIngreso.map(c => `<option value="${c.id}" ${Number(pt.cuenta_venta_id) === Number(c.id) ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('')}
             </select>
           </label>
           <label class="form-field">
-            <span>Cuenta Contable Compras / Gastos</span>
+            <span>Cuenta de Compras</span>
             <select name="cuenta_compra_id">
               <option value="">-- Por defecto (5.1.01) --</option>
               ${cuentasEgreso.map(c => `<option value="${c.id}" ${Number(pt.cuenta_compra_id) === Number(c.id) ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('')}
@@ -169,18 +174,18 @@ export async function renderPlantillaFormView({ id } = {}) {
             </label>
             <label class="checkbox-inline" style="margin:0;white-space:nowrap;">
               <input type="checkbox" name="requiere_lote" id="pt-req-lote" ${pt.requiere_lote ? 'checked' : ''} />
-              <span>Requiere lote (trazabilidad)</span>
+              <span>Requiere lote</span>
             </label>
           </div>
 
           ${!isEdit ? `
-            <div class="full" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+            <div class="full form-row-3">
               <label>
-                <span>Costo Inicial (Compra)</span>
+                <span>Costo Inicial</span>
                 <input type="number" step="0.01" min="0" name="costo" value="0" />
               </label>
               <label>
-                <span>Precio Inicial (Venta)</span>
+                <span>Precio Inicial</span>
                 <input type="number" step="0.01" min="0" name="precio" value="0" />
               </label>
               <label>
@@ -216,7 +221,7 @@ export async function renderPlantillaFormView({ id } = {}) {
             <span class="muted" style="font-size:0.82rem;">Cada variante tiene su propio SKU, costo de compra, precio de venta y stock real.</span>
           </div>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table no-bulk">
               <thead>
                 <tr>
                   <th>Variante</th>
@@ -284,8 +289,10 @@ export async function renderPlantillaFormView({ id } = {}) {
 
         <div class="card">
           <div class="card-header">
-            <h2>Tarifas de Compra por Proveedor y Variante</h2>
-            <span class="muted">Definí costos, códigos de proveedor, cantidades mínimas y plazos por variante o para toda la plantilla.</span>
+            <div>
+              <h2>Tarifas de Compra por Proveedor</h2>
+              <span class="muted" style="font-size:0.82rem;">Costos, códigos de proveedor, cantidades mínimas y plazos por variante o plantilla.</span>
+            </div>
           </div>
           <form id="form-pt-prov-tarifa" class="form-grid" style="margin-bottom:12px;">
             <label>
@@ -307,15 +314,15 @@ export async function renderPlantillaFormView({ id } = {}) {
             <label><span>Cant. Mínima</span><input type="number" step="1" min="1" name="cantidad_minima" value="1" /></label>
             <label><span>Plazo (días)</span><input type="number" step="1" min="0" name="lead_time_dias" value="0" /></label>
             <div class="actions" style="align-self:end;">
-              <button type="submit" class="btn btn-primary">+ Agregar Tarifa Compra</button>
+              <button type="submit" class="btn btn-primary">+ Agregar Tarifa</button>
             </div>
           </form>
-          <div class="table-wrap" style="margin-bottom:16px;">
+          <div class="table-wrap">
             <table class="data-table">
               <thead><tr><th>Proveedor</th><th>Alcance</th><th>Cód. Prov.</th><th class="num">Costo</th><th class="num">Mín.</th><th class="num">Plazo</th><th></th></tr></thead>
               <tbody>
                 ${(tarifasCompra || []).length === 0
-                  ? '<tr><td colspan="7" class="muted">Sin tarifas específicas de proveedor (usa costo de catálogo).</td></tr>'
+                  ? '<tr><td colspan="7" class="muted">Sin tarifas específicas de proveedor.</td></tr>'
                   : tarifasCompra.map(t => `
                     <tr>
                       <td><strong>${esc(t.proveedor_nombre)}</strong></td>
@@ -330,9 +337,11 @@ export async function renderPlantillaFormView({ id } = {}) {
               </tbody>
             </table>
           </div>
+        </div>
 
-          <div class="card-header" style="padding-left:0;padding-right:0;">
-            <h3>Reglas Rápidas en Listas de Precios (Venta)</h3>
+        <div class="card">
+          <div class="card-header">
+            <h2>Reglas Rápidas en Listas de Precios</h2>
             <a href="/condiciones-comerciales" data-link class="btn btn-sm">Administrar Listas</a>
           </div>
           <form id="form-pt-lp-item" class="form-grid">
@@ -356,6 +365,46 @@ export async function renderPlantillaFormView({ id } = {}) {
               <button type="submit" class="btn btn-primary">+ Agregar a Lista</button>
             </div>
           </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Historial de Costos y Precios</h2>
+          </div>
+          ${historialPrecios.length === 0 ? `
+            <div class="empty-state">Sin variaciones de costo o precio registradas.</div>
+          ` : `
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Variante</th>
+                    <th>Origen</th>
+                    <th class="num">Costo Ant.</th>
+                    <th class="num">Costo Nuevo</th>
+                    <th class="num">Precio Ant.</th>
+                    <th class="num">Precio Nuevo</th>
+                    <th>Referencia / Usuario</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${historialPrecios.map(h => `
+                    <tr>
+                      <td>${esc((h.created_at || '').slice(0, 16).replace('T', ' '))}</td>
+                      <td>${esc(h.producto_nombre || '-')}</td>
+                      <td><span class="badge">${esc(h.origen || 'manual')}</span></td>
+                      <td class="num">${fmtMoney(h.costo_anterior)}</td>
+                      <td class="num"><strong>${fmtMoney(h.costo_nuevo)}</strong></td>
+                      <td class="num">${fmtMoney(h.precio_anterior)}</td>
+                      <td class="num"><strong>${fmtMoney(h.precio_nuevo)}</strong></td>
+                      <td>${esc([h.observacion, h.usuario].filter(Boolean).join(' · ') || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `}
         </div>
       ` : ''}
     `;
@@ -448,7 +497,10 @@ export async function renderPlantillaFormView({ id } = {}) {
       required: true,
       value: pt.categoria || '',
       placeholder: 'Buscar o crear categoría...',
-      items: categorias.map(c => ({ value: c.nombre, label: c.nombre, raw: c })),
+      items: categorias.map(c => {
+        const lbl = c.display_name || (c.padre_nombre ? `${c.padre_nombre} / ${c.nombre}` : c.nombre);
+        return { value: lbl, label: lbl, raw: c };
+      }),
       onSelect: (it) => { if (it) pt.categoria = it.value; },
       onCreate: async (q) => {
         const created = await quickCreateCategoria(q);
@@ -458,6 +510,22 @@ export async function renderPlantillaFormView({ id } = {}) {
         }
         return created;
       },
+    });
+
+    const msVenta = mountMultiSelect(root.querySelector('#pt-imp-venta-multi'), {
+      name: 'impuestos_venta_ids',
+      values: pt.impuestos_venta_ids || [],
+      placeholder: 'Seleccionar impuestos de venta (IVA, Internos, Percepciones)...',
+      items: impuestosVentaOpts,
+      onChange: (vals) => { pt.impuestos_venta_ids = vals.map(Number); },
+    });
+
+    const msCompra = mountMultiSelect(root.querySelector('#pt-imp-compra-multi'), {
+      name: 'impuestos_compra_ids',
+      values: pt.impuestos_compra_ids || [],
+      placeholder: 'Seleccionar impuestos de compra (IVA, Percepciones, Tasas)...',
+      items: impuestosCompraOpts,
+      onChange: (vals) => { pt.impuestos_compra_ids = vals.map(Number); },
     });
 
     mountCombobox(root.querySelector('#pt-prov-combo'), {
@@ -487,6 +555,11 @@ export async function renderPlantillaFormView({ id } = {}) {
       });
       const atributos = Array.from(attrMap.entries()).map(([atributo, valores]) => ({ atributo, valores }));
 
+      const impVentaIds = msVenta.getValues().map(Number).filter(n => n > 0);
+      const impCompraIds = msCompra.getValues().map(Number).filter(n => n > 0);
+      const selectedVentaIva = (todosImpuestos || []).find(i => impVentaIds.includes(Number(i.id)) && i.tipo === 'iva');
+      const selectedCompraIva = (todosImpuestos || []).find(i => impCompraIds.includes(Number(i.id)) && i.tipo === 'iva');
+
       const payload = {
         codigo: fd.get('codigo'),
         nombre: fd.get('nombre'),
@@ -494,9 +567,11 @@ export async function renderPlantillaFormView({ id } = {}) {
         tipo: fd.get('tipo'),
         categoria: fd.get('categoria'),
         udm: fd.get('udm'),
-        udm_compra: fd.get('udm_compra') || '',
         requiere_lote: fd.get('requiere_lote') === 'on' ? 1 : 0,
-        alicuota_iva: Number(fd.get('alicuota_iva')) || 0,
+        alicuota_iva: selectedVentaIva ? Number(selectedVentaIva.alicuota_defecto) : defaultIva,
+        alicuota_iva_compra: selectedCompraIva ? Number(selectedCompraIva.alicuota_defecto) : defaultIvaCompra,
+        impuestos_venta_ids: impVentaIds,
+        impuestos_compra_ids: impCompraIds,
         proveedor_id: fd.get('proveedor_id') ? Number(fd.get('proveedor_id')) : null,
         lead_time_dias: Math.max(0, Number(fd.get('lead_time_dias')) || 0),
         se_fabrica: fd.get('se_fabrica') === 'on' ? 1 : 0,

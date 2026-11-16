@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateRemitoPdf } from '../src/services/print/remitoPdfService.js';
 import { generateVentaPdf } from '../src/services/print/ventaPdfService.js';
+import { generatePresupuestoPdf } from '../src/services/print/presupuestoPdfService.js';
+import { generateOrdenPdf } from '../src/services/print/ordenPdfService.js';
 
 test('Remito PDF: letra X sin CAI, letra R con CAI, fechas dd/mm/aaaa, datos cliente y Recibido Conforme', () => {
   const emp = {
@@ -99,4 +101,40 @@ test('Remito PDF: letra X sin CAI, letra R con CAI, fechas dd/mm/aaaa, datos cli
   assert.ok(strVenta.startsWith('%PDF-1.4') && strVenta.includes('%%EOF'));
   assert.ok(strVenta.includes('(A) Tj') && strVenta.includes('(COD. 001) Tj'));
   assert.ok(strVenta.includes('Punto de Venta: 0001') && strVenta.includes('Comp. Nro: 00000001'));
+
+  const bufPres = generatePresupuestoPdf({
+    id: 42,
+    titulo: 'Campaña Invierno',
+    fecha: '2026-11-16',
+    total_pares: 120,
+    total_monto: 950000,
+    items: [
+      { nombre: 'Cuero Vacuno Negro', categoria: 'Cueros', proveedor_nombre: 'Curtiembre Sur', precio_unitario: 15000, a_comprar: 40, udm: 'metros', subtotal: 600000 },
+    ],
+  }, emp);
+  const strPres = bufPres.toString('latin1');
+  assert.ok(strPres.startsWith('%PDF-1.4') && strPres.includes('%%EOF'));
+  assert.ok(strPres.includes('Campaña Invierno') || strPres.includes('Campa'));
+  assert.ok(strPres.includes('Cuero Vacuno Negro'));
+
+  const bufOrden = generateOrdenPdf({
+    orden: {
+      id: 7,
+      codigo: 'OP-0007',
+      plantilla_nombre: 'Bota Chelsea',
+      estado: 'En Proceso',
+      cantidad: 60,
+      fecha_inicio: '2026-11-16',
+      fecha_objetivo: '2026-11-30',
+      costo_procesos_est: 180000,
+      costo_procesos_real: 90000,
+    },
+    lineas: [{ combinacion: 'Talle 40', cantidad: 30 }, { combinacion: 'Talle 41', cantidad: 30 }],
+    etapas: [{ orden: 1, nombre: 'Corte', taller_nombre: 'Taller Norte', fecha_inicio_est: '2026-11-16', fecha_fin_est: '2026-11-20', cantidad_completada: 30, estado: 'En Proceso' }],
+    insumos: [{ etapa_nombre: 'Corte', producto_nombre: 'Cuero Vacuno', categoria: 'Cueros', cantidad_requerida: 25, udm: 'metros', stock_actual: 50 }],
+  }, emp);
+  const strOrden = bufOrden.toString('latin1');
+  assert.ok(strOrden.startsWith('%PDF-1.4') && strOrden.includes('%%EOF'));
+  assert.ok(strOrden.includes('OP-0007') && strOrden.includes('Bota Chelsea'));
+  assert.ok(strOrden.includes('Taller Norte') && strOrden.includes('Cuero Vacuno'));
 });

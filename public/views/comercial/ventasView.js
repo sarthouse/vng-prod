@@ -7,8 +7,8 @@ import { printVentaComprobante } from '../../lib/ventaPrint.js';
 import { printReciboCobro } from '../../lib/tesoreriaPrint.js';
 import { mountCombobox, quickCreateCliente, quickCreateProducto } from '../../lib/autocomplete.js';
 import { getIvaRatesFromConfig, calcDocumentTotals, renderTaxFooterHtml } from '../../lib/taxHelper.js';
-import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/viewEngine.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 import { COMPROBANTES_AR, resolveComprobanteMeta, resolveLetraFiscalClient } from '../../lib/comprobantesAr.js';
 
 export async function renderVentasView() {
@@ -51,7 +51,7 @@ export async function renderVentasView() {
             if (!targets.length) { toast('No hay ventas fiscales sin CAE en la selección', true); return; }
             let ok = 0; let errs = 0;
             for (const v of targets) {
-              try { await api(`/api/ventas/${v.id}/emitir-afip`, { method: 'POST' }); ok++; }
+              try { await api(`/api/ventas/${v.id}/cae`, { method: 'POST' }); ok++; }
               catch { errs++; }
             }
             toast(`${ok} emitida(s) en AFIP${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
@@ -257,7 +257,7 @@ export async function renderVentaFormView({ id } = {}) {
   const isEdit = Boolean(id);
   const params = new URLSearchParams(window.location.search);
 
-  const [clientes, productos, empresa, puntosVenta, nextSeq, existing, impuestosConfig, ubicaciones, diarios, enviosConfig, recargosConfig, cobroBundle, cuentas, nextCobroSeq, terminosPago, metodosPago, listasPrecios] = await Promise.all([
+  const [clientes, productos, empresa, puntosVenta, nextSeq, existing, impuestosConfig, ubicaciones, diarios, enviosConfig, recargosConfig, cuentas, nextCobroSeq, terminosPago, metodosPago, listasPrecios] = await Promise.all([
     api('/api/contactos?es_cliente=1'),
     api('/api/productos?se_vende=1'),
     api('/api/empresa'),
@@ -269,16 +269,16 @@ export async function renderVentaFormView({ id } = {}) {
     api('/api/tesoreria/diarios').catch(() => []),
     api('/api/ventas/envios').catch(() => []),
     api('/api/ventas/recargos').catch(() => []),
-    isEdit ? api(`/api/ventas/${id}/cobros`).catch(() => null) : Promise.resolve(null),
     isEdit ? api('/api/tesoreria/cuentas').catch(() => []) : Promise.resolve([]),
     isEdit ? api('/api/secuencias/siguiente?tipo=cobro').catch(() => null) : Promise.resolve(null),
     api('/api/terminos-pago?solo_activos=1').catch(() => []),
     api('/api/metodos-pago?solo_activos=1').catch(() => []),
     api('/api/listas-precios?solo_activos=1').catch(() => []),
   ]);
+  const cobroBundle = existing;
   const enviosActivos = (enviosConfig || []).filter(e => e.activo !== 0);
   const recargosActivos = (recargosConfig || []).filter(r => r.activo !== 0);
-  const ubicacionesActivas = (ubicaciones || []).filter(u => u.activo !== 0);
+  const ubicacionesActivas = (ubicaciones || []).filter(u => u.activa !== 0 && u.activo !== 0);
   const diariosVentas = (diarios || []).filter(d => d.tipo === 'ventas' && d.activo !== 0);
   const defaultDiarioFor = (caracter) => {
     const wantFiscal = caracter === 'fiscal';
@@ -634,7 +634,7 @@ export async function renderVentaFormView({ id } = {}) {
     `;
 
     if (isEdit) {
-      bindPuntoVentaSeq(root.querySelector('#cob-vta-det-pv'), root.querySelector('#cob-vta-det-num'), 'cobro');
+      bindPuntoVentaSeq(root.querySelector('#cob-vta-det-pv'), root.querySelector('#cob-vta-det-num'), 'cobro', api);
       bindCuentaMetodoSync(
         root.querySelector('#form-cobro-venta-det select[name="cuenta_id"]'),
         root.querySelector('#form-cobro-venta-det select[name="metodo"]'),
@@ -659,7 +659,7 @@ export async function renderVentaFormView({ id } = {}) {
             }),
           });
           toast('Cobro registrado');
-          await renderVentaFormView(params);
+          await renderVentaFormView({ id });
         } catch (err) { toast(err.message, true); }
       });
       root.querySelectorAll('[data-print-cobro-det]').forEach(btn => btn.addEventListener('click', async () => {
@@ -672,7 +672,7 @@ export async function renderVentaFormView({ id } = {}) {
         try {
           await api(`/api/tesoreria/cobros/${btn.dataset.delCobroDet}`, { method: 'DELETE' });
           toast('Cobro eliminado');
-          await renderVentaFormView(params);
+          await renderVentaFormView({ id });
         } catch (err) { toast(err.message, true); }
       }));
       root.querySelector('#btn-vta-solicitar-cae')?.addEventListener('click', async () => {
@@ -683,7 +683,7 @@ export async function renderVentaFormView({ id } = {}) {
         try {
           const res = await api(`/api/ventas/${id}/cae`, { method: 'POST' });
           toast(`CAE otorgado: ${res.cae} (Vto. ${res.cae_vto})`);
-          await renderVentaFormView(params);
+          await renderVentaFormView({ id });
         } catch (err) {
           toast(err.message, true);
           btn.disabled = false;
@@ -911,6 +911,25 @@ export async function renderVentaFormView({ id } = {}) {
           lineas[idx].precio_unitario = resolvedPrice;
           lineas[idx].alicuota_iva = Number(p.alicuota_iva ?? defaultIva);
           lineas[idx].subtotal = Number((lineas[idx].cantidad * lineas[idx].precio_unitario).toFixed(2));
+          let addedTax = false;
+          if (Array.isArray(p.impuestos_venta_ids) && p.impuestos_venta_ids.length) {
+            const t = calcDocumentTotals(lineas, impuestos, v.caracter, v.tipo_comprobante);
+            for (const taxId of p.impuestos_venta_ids) {
+              const cfg = impuestosConfig.find(c => Number(c.id) === Number(taxId) && c.tipo !== 'iva');
+              if (cfg && !impuestos.some(x => Number(x.impuesto_id) === Number(cfg.id))) {
+                const base = cfg.base_calculo === 'total' ? Number((t.neto + t.ivaTotal).toFixed(2)) : cfg.base_calculo === 'fijo' ? 0 : t.neto;
+                const alic = Number(cfg.alicuota_defecto || 0);
+                const monto = cfg.base_calculo === 'fijo' ? alic : Number((base * alic / 100).toFixed(2));
+                impuestos.push({ impuesto_id: cfg.id, nombre: cfg.nombre, tipo: cfg.tipo, base_calculo: cfg.base_calculo, base, alicuota: alic, monto });
+                addedTax = true;
+              }
+            }
+          }
+          if (addedTax) {
+            capture();
+            render();
+            return;
+          }
           const descInp = root.querySelector(`.vl-desc[data-idx="${idx}"]`);
           const udmBadge = root.querySelector(`.vl-udm-badge[data-idx="${idx}"]`);
           const priceInp = root.querySelector(`.vl-price[data-idx="${idx}"]`);
@@ -1051,13 +1070,14 @@ export async function renderVentaFormView({ id } = {}) {
     });
     root.querySelector('#btn-vta-sugerir-iibb')?.addEventListener('click', async () => {
       capture();
-      if (!v.contacto_id) { toast('Seleccioná primero un cliente', true); return; }
+      const cliId = v.cliente_id || v.contacto_id;
+      if (!cliId) { toast('Seleccioná primero un cliente', true); return; }
       const t = calcDocumentTotals(lineas, impuestos, v.caracter, v.tipo_comprobante);
       try {
         const res = await api('/api/fiscal/sugerir-percepciones', {
           method: 'POST',
           body: JSON.stringify({
-            contacto_id: Number(v.contacto_id),
+            contacto_id: Number(cliId),
             neto: t.neto,
             total: Number((t.neto + t.ivaTotal).toFixed(2)),
             aplica_a: 'ventas',

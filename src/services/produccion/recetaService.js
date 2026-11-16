@@ -2,6 +2,7 @@ import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { convertUnitFromDb } from '../config/configService.js';
+import { productoRepo, registrarHistorialCostoPrecio } from '../inventario/productoService.js';
 
 class RecetaRepository extends BaseRepository {
   constructor() {
@@ -10,6 +11,8 @@ class RecetaRepository extends BaseRepository {
 }
 
 export const recetaRepo = new RecetaRepository();
+export const etapaConfigRepo = new BaseRepository({ model: MODELS.etapas_config });
+export const recetaEtapaRepo = new BaseRepository({ model: MODELS.receta_etapas });
 
 export function applicableQtyForLine(productoRow, cantidad, variantesArr) {
   const qty = Number(cantidad) || 0;
@@ -46,14 +49,16 @@ export function listRecetas() {
   `).all();
 
   const matRows = db.prepare(`
-    SELECT rl.receta_id, rl.coeficiente, rl.udm_receta, p.precio, pt.udm as udm_compra
+    SELECT rl.receta_id, rl.coeficiente, rl.udm_receta,
+           COALESCE(NULLIF(p.costo, 0), p.precio, 0) as precio,
+           pt.udm
     FROM receta_lineas rl
     JOIN productos p ON p.id = rl.producto_id
     JOIN v_plantillas pt ON pt.id = p.plantilla_id
   `).all();
   const matByReceta = new Map();
   for (const row of matRows) {
-    const coef = convertUnitFromDb(row.coeficiente, row.udm_receta || row.udm_compra, row.udm_compra);
+    const coef = convertUnitFromDb(row.coeficiente, row.udm_receta || row.udm, row.udm);
     const prev = matByReceta.get(row.receta_id) || 0;
     matByReceta.set(row.receta_id, prev + coef * (Number(row.precio) || 0));
   }
@@ -71,17 +76,24 @@ export function listRecetas() {
 }
 
 function cloneDefaultEtapasToReceta(recetaId) {
-  const defaults = db.prepare('SELECT * FROM etapas_config ORDER BY orden ASC, id ASC').all();
-  const insEt = db.prepare('INSERT INTO receta_etapas (receta_id, nombre, orden, dias_estimados, costo_unidad) VALUES (?, ?, ?, ?, ?)');
+  const defaults = etapaConfigRepo.findWhere({}, { orderBy: 'orden ASC, id ASC' });
   const idMap = new Map();
   for (const d of defaults) {
-    const info = insEt.run(recetaId, d.nombre, d.orden, d.dias_estimados, Number(d.costo_unidad) || 0);
-    idMap.set(d.id, Number(info.lastInsertRowid));
+    const newId = recetaEtapaRepo.create({
+      receta_id: recetaId,
+      nombre: d.nombre,
+      descripcion: d.descripcion || '',
+      orden: d.orden,
+      dias_estimados: d.dias_estimados,
+      costo_unidad: Number(d.costo_unidad) || 0,
+      taller_id: d.taller_id || null,
+      plan_cuenta_id: d.plan_cuenta_id || null,
+    });
+    idMap.set(d.id, newId);
   }
-  const updDep = db.prepare('UPDATE receta_etapas SET depende_de_id = ? WHERE id = ?');
   for (const d of defaults) {
     if (d.depende_de_id && idMap.has(d.depende_de_id)) {
-      updDep.run(idMap.get(d.depende_de_id), idMap.get(d.id));
+      recetaEtapaRepo.update(idMap.get(d.id), { depende_de_id: idMap.get(d.depende_de_id) });
     }
   }
 }
@@ -104,8 +116,10 @@ export function getRecetaById(id) {
   }
 
   const rawLineas = db.prepare(`
-    SELECT rl.*, p.nombre as producto_nombre, p.sku as producto_sku, p.precio, p.minimo_compra,
-           pt.categoria, pt.udm as udm_compra,
+    SELECT rl.*, p.nombre as producto_nombre, p.sku as producto_sku,
+           COALESCE(NULLIF(p.costo, 0), p.precio, 0) as precio,
+           p.minimo_compra,
+           pt.categoria, pt.udm,
            COALESCE(c.nombre, '') as proveedor_nombre,
            COALESCE(re.nombre, ec.nombre, '') as etapa_nombre
     FROM receta_lineas rl
@@ -119,8 +133,8 @@ export function getRecetaById(id) {
   `).all(id);
 
   const lineas = rawLineas.map(l => {
-    const udmReceta = l.udm_receta || l.udm_compra;
-    const coefConvertido = convertUnitFromDb(l.coeficiente, udmReceta, l.udm_compra);
+    const udmReceta = l.udm_receta || l.udm;
+    const coefConvertido = convertUnitFromDb(l.coeficiente, udmReceta, l.udm);
     let variantes = [];
     try { variantes = JSON.parse(l.variantes_json || '[]'); } catch { variantes = []; }
     return {
@@ -204,33 +218,36 @@ export function deleteReceta(id) {
   return recetaRepo.delete(id);
 }
 
-export function addRecetaEtapa(recetaId, { nombre, orden, dias_estimados, costo_unidad, depende_de_id }) {
-  const info = db.prepare('INSERT INTO receta_etapas (receta_id, nombre, orden, dias_estimados, costo_unidad, depende_de_id) VALUES (?, ?, ?, ?, ?, ?)').run(
-    recetaId,
-    nombre.trim(),
-    Number(orden) || 1,
-    Math.max(0, Number(dias_estimados) || 0),
-    Math.max(0, Number(costo_unidad) || 0),
-    depende_de_id ? Number(depende_de_id) : null
-  );
-  return Number(info.lastInsertRowid);
+export function addRecetaEtapa(recetaId, { nombre, descripcion = '', orden, dias_estimados, costo_unidad, taller_id, plan_cuenta_id, depende_de_id }) {
+  return recetaEtapaRepo.create({
+    receta_id: recetaId,
+    nombre: nombre.trim(),
+    descripcion: String(descripcion || '').trim(),
+    orden: Number(orden) || 1,
+    dias_estimados: Math.max(0, Number(dias_estimados) || 0),
+    costo_unidad: Math.max(0, Number(costo_unidad) || 0),
+    taller_id: taller_id ? Number(taller_id) : null,
+    plan_cuenta_id: plan_cuenta_id ? Number(plan_cuenta_id) : null,
+    depende_de_id: depende_de_id ? Number(depende_de_id) : null,
+  });
 }
 
-export function updateRecetaEtapa(id, { nombre, orden, dias_estimados, costo_unidad, depende_de_id }) {
-  const existing = db.prepare('SELECT * FROM receta_etapas WHERE id = ?').get(id);
+export function updateRecetaEtapa(id, { nombre, descripcion, orden, dias_estimados, costo_unidad, taller_id, plan_cuenta_id, depende_de_id }) {
+  const existing = recetaEtapaRepo.findById(id);
   if (!existing) return false;
   const nextDep = depende_de_id !== undefined
     ? (depende_de_id && Number(depende_de_id) !== Number(id) ? Number(depende_de_id) : null)
     : existing.depende_de_id;
-  db.prepare('UPDATE receta_etapas SET nombre=?, orden=?, dias_estimados=?, costo_unidad=?, depende_de_id=? WHERE id=?').run(
-    nombre !== undefined ? nombre.trim() : existing.nombre,
-    orden !== undefined ? Number(orden) : existing.orden,
-    dias_estimados !== undefined ? Math.max(0, Number(dias_estimados)) : existing.dias_estimados,
-    costo_unidad !== undefined ? Math.max(0, Number(costo_unidad) || 0) : (existing.costo_unidad ?? 0),
-    nextDep,
-    id
-  );
-  return true;
+  return recetaEtapaRepo.update(id, {
+    nombre: nombre !== undefined ? nombre.trim() : existing.nombre,
+    descripcion: descripcion !== undefined ? String(descripcion || '').trim() : (existing.descripcion ?? ''),
+    orden: orden !== undefined ? Number(orden) : existing.orden,
+    dias_estimados: dias_estimados !== undefined ? Math.max(0, Number(dias_estimados)) : existing.dias_estimados,
+    costo_unidad: costo_unidad !== undefined ? Math.max(0, Number(costo_unidad) || 0) : (existing.costo_unidad ?? 0),
+    taller_id: taller_id !== undefined ? (taller_id ? Number(taller_id) : null) : (existing.taller_id ?? null),
+    plan_cuenta_id: plan_cuenta_id !== undefined ? (plan_cuenta_id ? Number(plan_cuenta_id) : null) : (existing.plan_cuenta_id ?? null),
+    depende_de_id: nextDep,
+  });
 }
 
 export function deleteRecetaEtapa(id) {
@@ -325,4 +342,71 @@ export function getActiveRecetaForPlantilla(plantillaId, productoId = null) {
     db.prepare('SELECT * FROM recetas WHERE plantilla_id = ? AND producto_id IS NULL AND activa = 1 ORDER BY id DESC LIMIT 1').get(plantillaId) ||
     db.prepare('SELECT * FROM recetas WHERE plantilla_id = ? AND producto_id IS NULL ORDER BY id DESC LIMIT 1').get(plantillaId)
   );
+}
+
+export function calcularCostoDesdeReceta(recetaId, { aplicar = false, user = null } = {}) {
+  const receta = db.prepare('SELECT * FROM recetas WHERE id = ?').get(Number(recetaId));
+  if (!receta) return null;
+
+  const lineas = db.prepare(`
+    SELECT rl.coeficiente, rl.udm_receta, rl.producto_id,
+           COALESCE(p.costo, 0) as insumo_costo,
+           COALESCE(um.nombre, 'unidades') as insumo_udm
+    FROM receta_lineas rl
+    LEFT JOIN productos p ON p.id = rl.producto_id
+    LEFT JOIN producto_plantillas pt ON pt.id = p.plantilla_id
+    LEFT JOIN unidades_medida um ON um.id = pt.unidad_id
+    WHERE rl.receta_id = ?
+  `).all(Number(recetaId));
+
+  let costoInsumos = 0;
+  for (const l of lineas) {
+    const coef = Number(l.coeficiente) || 0;
+    const udmReceta = l.udm_receta || l.insumo_udm || 'unidades';
+    const qtyStock = convertUnitFromDb(coef, udmReceta, l.insumo_udm || udmReceta);
+    costoInsumos += qtyStock * (Number(l.insumo_costo) || 0);
+  }
+  costoInsumos = Number(costoInsumos.toFixed(2));
+
+  const etapasRow = db.prepare(`
+    SELECT COALESCE(SUM(costo_unidad), 0) as total_etapas
+    FROM receta_etapas
+    WHERE receta_id = ?
+  `).get(Number(recetaId));
+  const costoEtapas = Number((Number(etapasRow?.total_etapas) || 0).toFixed(2));
+  const costoTotal = Number((costoInsumos + costoEtapas).toFixed(2));
+
+  let aplicados = 0;
+  if (aplicar) {
+    const targets = receta.producto_id
+      ? [productoRepo.findById(Number(receta.producto_id))].filter(Boolean)
+      : productoRepo.findWhere({ plantilla_id: Number(receta.plantilla_id) });
+    for (const p of targets) {
+      productoRepo.update(p.id, { costo: costoTotal });
+      registrarHistorialCostoPrecio({
+        producto_id: p.id,
+        plantilla_id: p.plantilla_id,
+        costo_anterior: p.costo ?? 0,
+        costo_nuevo: costoTotal,
+        precio_anterior: p.precio ?? 0,
+        precio_nuevo: p.precio ?? 0,
+        origen: 'receta',
+        referencia_tipo: 'receta',
+        referencia_id: receta.id,
+        observacion: receta.nombre || `Receta #${receta.id}`,
+        user,
+      });
+      aplicados += 1;
+    }
+  }
+
+  return {
+    receta_id: Number(recetaId),
+    plantilla_id: receta.plantilla_id,
+    producto_id: receta.producto_id || null,
+    costo_insumos: costoInsumos,
+    costo_etapas: costoEtapas,
+    costo_total: costoTotal,
+    aplicados,
+  };
 }

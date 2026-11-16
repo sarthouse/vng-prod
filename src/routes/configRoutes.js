@@ -8,6 +8,10 @@ export async function handleConfigRoutes(req, res, pathname) {
     json(res, 200, configSvc.getConfig());
     return true;
   }
+  if (pathname === '/api/categorias' && req.method === 'GET') {
+    json(res, 200, configSvc.getConfig().categorias || []);
+    return true;
+  }
 
   if (pathname === '/api/categorias' && req.method === 'POST') {
     const b = await parseBody(req);
@@ -51,6 +55,10 @@ export async function handleConfigRoutes(req, res, pathname) {
     return true;
   }
 
+  if (pathname === '/api/unidades' && req.method === 'GET') {
+    json(res, 200, configSvc.getConfig().unidades || []);
+    return true;
+  }
   if (pathname === '/api/unidades' && req.method === 'POST') {
     const b = await parseBody(req);
     if (!b.nombre?.trim() || !b.grupo?.trim()) { json(res, 400, { error: 'Nombre y grupo son obligatorios' }); return true; }
@@ -73,6 +81,10 @@ export async function handleConfigRoutes(req, res, pathname) {
     return true;
   }
 
+  if (pathname === '/api/variantes' && req.method === 'GET') {
+    json(res, 200, configSvc.getConfig().variantes || []);
+    return true;
+  }
   if (pathname === '/api/variantes' && req.method === 'POST') {
     const b = await parseBody(req);
     if (!b.atributo?.trim() || !b.valor?.trim()) { json(res, 400, { error: 'Atributo y valor son obligatorios' }); return true; }
@@ -133,7 +145,8 @@ export async function handleConfigRoutes(req, res, pathname) {
   }
   if (pathname === '/api/secuencias/siguiente' && req.method === 'GET') {
     const qs = new URL(req.url, 'http://localhost').searchParams;
-    json(res, 200, configSvc.getNextNumeroDocumento(qs.get('tipo') || 'venta', qs.get('pv')));
+    const pv = qs.get('pv') ?? qs.get('punto_venta');
+    json(res, 200, configSvc.getNextNumeroDocumento(qs.get('tipo') || 'venta', pv));
     return true;
   }
   if (pathname === '/api/secuencias' && req.method === 'GET') {

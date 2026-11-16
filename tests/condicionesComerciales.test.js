@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { db, initDb, runWithDatabase, closeConnection } from '../src/db.js';
 import { createContacto } from '../src/services/comercial/contactoService.js';
-import { createPlantilla } from '../src/services/inventario/productoService.js';
+import { createPlantilla, getPlantillaById, updatePlantilla, listProductos } from '../src/services/inventario/productoService.js';
+import { getFlujoStockMatriz } from '../src/services/inventario/inventarioService.js';
 import {
   createTerminoPago,
   createMetodoPago,
@@ -160,6 +161,46 @@ test('Términos de pago (compra/venta), Métodos de pago, Tarifas por variante y
       const cobroRow = db.prepare('SELECT metodo_pago_id, metodo FROM cobros WHERE id = ?').get(cobroId);
       assert.equal(cobroRow.metodo_pago_id, mpId);
       assert.equal(cobroRow.metodo, 'Transferencia');
+
+      // Impuestos 1-N de venta y compra en plantillas y propagación a productos
+      const impIva105 = db.prepare("SELECT id FROM impuestos_config WHERE tipo = 'iva' AND alicuota_defecto = 10.5 LIMIT 1").get();
+      const impIva27 = db.prepare("SELECT id FROM impuestos_config WHERE tipo = 'iva' AND alicuota_defecto = 27 LIMIT 1").get();
+      const impPerc = db.prepare("SELECT id FROM impuestos_config WHERE tipo = 'percepcion' LIMIT 1").get();
+
+      if (impIva105 && impIva27) {
+        const ventaTaxIds = impPerc ? [impIva105.id, impPerc.id] : [impIva105.id];
+        const compraTaxIds = [impIva27.id];
+        updatePlantilla(ptId, {
+          impuestos_venta_ids: ventaTaxIds,
+          impuestos_compra_ids: compraTaxIds,
+        });
+        const ptLoaded = getPlantillaById(ptId);
+        assert.deepEqual(ptLoaded.plantilla.impuestos_venta_ids, ventaTaxIds);
+        assert.deepEqual(ptLoaded.plantilla.impuestos_compra_ids, compraTaxIds);
+        assert.equal(ptLoaded.plantilla.alicuota_iva, 10.5);
+        assert.equal(ptLoaded.plantilla.alicuota_iva_compra, 27);
+
+        const prods = listProductos({ plantilla_id: ptId });
+        assert.ok(prods.length >= 1);
+        assert.deepEqual(prods[0].impuestos_venta_ids, ventaTaxIds);
+        assert.deepEqual(prods[0].impuestos_compra_ids, compraTaxIds);
+        assert.equal(prods[0].alicuota_iva, 10.5);
+        assert.equal(prods[0].alicuota_iva_compra, 27);
+      }
+
+      // Flujo y Proyección de Stock (Matriz MRP + Serie para Gráfico)
+      const flujoStock = getFlujoStockMatriz({
+        granularidad: 'semana',
+        hist_periodos: 2,
+        proy_periodos: 4,
+        producto_id: prod.id,
+      });
+      assert.ok(Array.isArray(flujoStock.periods));
+      assert.equal(flujoStock.periods.length, 7); // 2 hist + 1 actual + 4 proy
+      assert.ok(Array.isArray(flujoStock.rows));
+      assert.ok(Array.isArray(flujoStock.product_rows));
+      assert.equal(flujoStock.product_rows.length, 1);
+      assert.equal(flujoStock.chart_series.length, 7);
     });
   } finally {
     closeConnection(TEST_DB);

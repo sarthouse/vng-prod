@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 
@@ -10,7 +9,7 @@ export function validarCupon({ codigo, subtotal = 0, fecha = '' } = {}) {
   const code = String(codigo || '').trim().toUpperCase();
   if (!code) throw new Error('Ingresá un código de cupón');
 
-  const cupon = db.prepare('SELECT * FROM cupones WHERE UPPER(codigo) = ?').get(code);
+  const cupon = cuponRepo.findAll().find(c => String(c.codigo || '').toUpperCase() === code) || null;
   if (!cupon) throw new Error(`Cupón "${code}" no encontrado`);
   if (cupon.activo === 0) throw new Error(`El cupón "${code}" está inactivo`);
 
@@ -47,5 +46,8 @@ export function validarCupon({ codigo, subtotal = 0, fecha = '' } = {}) {
 export function incrementarUsoCupon(codigo) {
   const code = String(codigo || '').trim().toUpperCase();
   if (!code) return;
-  db.prepare('UPDATE cupones SET usos_actuales = usos_actuales + 1 WHERE UPPER(codigo) = ?').run(code);
+  const cupon = cuponRepo.findAll().find(c => String(c.codigo || '').toUpperCase() === code);
+  if (cupon) {
+    cuponRepo.update(cupon.id, { usos_actuales: Number(cupon.usos_actuales || 0) + 1 });
+  }
 }

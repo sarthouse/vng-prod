@@ -1,8 +1,8 @@
 import { api, toast } from '../../lib/api.js';
 import { navigate } from '../../router.js';
 import { esc, fmtMoney } from '../../lib/format.js';
-import { renderDataTable } from '../../lib/viewEngine.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { renderDataTable } from '../../lib/engine/index.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderRecetasView() {
   const root = document.getElementById('app-view');
@@ -27,7 +27,7 @@ export async function renderRecetasView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Recetas Técnicas</h1>
+          <h1>Recetas</h1>
           <p class="muted">Cada producto fabricable puede tener múltiples recetas; marcá una como activa para calcular el presupuesto y la producción.</p>
         </div>
         <div class="actions">

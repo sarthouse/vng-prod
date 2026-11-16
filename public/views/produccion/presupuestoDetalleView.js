@@ -1,30 +1,15 @@
-import { api } from '../../lib/api.js';
-import { downloadCSV, esc, fmtMoney, fmtNum } from '../../lib/format.js';
+import { api, toast } from '../../lib/api.js';
+import { exportRowsToCSV, esc, fmtMoney, fmtNum } from '../../lib/format.js';
+import { renderMetaPanel } from '../../lib/metaPanel.js';
+import { openPdfFromEndpoint } from '../../lib/remitoPrint.js';
+import { mountDetailView } from '../../lib/engine/detailEngine.js';
 
 export async function renderPresupuestoDetalleView(container, params) {
   const p = await api(`/api/presupuestos/${params.id}`);
 
-  container.innerHTML = `
-    <div class="panel-header">
-      <div>
-        <h2>Snapshot de Presupuesto #${p.id}: ${esc(p.titulo)}</h2>
-        <p class="muted">Registro inmutable guardado el ${p.fecha}.</p>
-      </div>
-      <div class="actions">
-        <button class="btn btn-secondary" id="btn-export-snap">Exportar CSV</button>
-        <a href="/" data-link class="btn btn-secondary">← Volver al Dashboard</a>
-      </div>
-    </div>
-
-    <div class="detail-meta">
-      <div><span>Fecha</span><strong>${p.fecha}</strong></div>
-      <div><span>Total Pares</span><strong>${p.total_pares}</strong></div>
-      <div><span>Total Presupuesto</span><strong>${fmtMoney(p.total_monto)}</strong></div>
-      <div><span>Observaciones</span><strong>${esc(p.observaciones || '-')}</strong></div>
-    </div>
-
+  const mainHtml = `
     <div class="card">
-      <div class="card-title">Detalle de Insumos (Snapshot)</div>
+      <div class="card-header"><h2>Insumos</h2></div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -33,10 +18,10 @@ export async function renderPresupuestoDetalleView(container, params) {
               <th>Categoría</th>
               <th>Proveedor</th>
               <th class="num">Precio Unit.</th>
-              <th class="num">Cant. Necesaria</th>
+              <th class="num">Requerido</th>
               <th class="num">Mín. Compra</th>
               <th class="num">A Comprar</th>
-              <th>UdM</th>
+              <th>Unidad</th>
               <th class="num">Subtotal</th>
             </tr>
           </thead>
@@ -57,20 +42,72 @@ export async function renderPresupuestoDetalleView(container, params) {
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="8">Total Snapshot</td>
-              <td class="num">${fmtMoney(p.total_monto)}</td>
+              <td colspan="8"><strong>Total</strong></td>
+              <td class="num"><strong>${fmtMoney(p.total_monto)}</strong></td>
             </tr>
           </tfoot>
         </table>
       </div>
+      ${p.observaciones ? `<p class="muted" style="margin-top:10px; font-size:0.85rem;">Observaciones: ${esc(p.observaciones)}</p>` : ''}
     </div>
   `;
 
-  container.querySelector('#btn-export-snap').addEventListener('click', () => {
-    const csv = [
-      ['Componente', 'Categoria', 'Proveedor', 'Precio Unit', 'Cantidad', 'Minimo', 'A Comprar', 'UdM', 'Subtotal'].join(','),
-      ...p.items.map(it => [`"${it.nombre.replace(/"/g, '""')}"`, `"${it.categoria}"`, `"${it.proveedor_nombre || ''}"`, it.precio_unitario, it.cantidad, it.minimo_compra, it.a_comprar ?? it.cantidad, `"${it.udm}"`, it.subtotal].join(',')),
-    ].join('\n');
-    downloadCSV(csv, `presupuesto_${p.id}.csv`);
+  mountDetailView(container, {
+    breadcrumb: { label: 'Volver a Dashboard', href: '/' },
+    title: `Presupuesto #${p.id} — ${p.titulo}`,
+    subtitle: `Fecha: ${esc(p.fecha)}`,
+    badge: { text: p.estado || 'Confirmado', className: 'badge-confirmado' },
+    actions: [
+      {
+        label: 'Imprimir PDF',
+        primary: true,
+        onClick: async () => {
+          try {
+            await openPdfFromEndpoint('/api/print/presupuesto-pdf', { presupuesto: p }, `Presupuesto_${p.id}.pdf`);
+          } catch (err) {
+            toast(err.message, true);
+          }
+        },
+      },
+      {
+        label: 'Exportar CSV',
+        onClick: () => {
+          exportRowsToCSV(
+            ['Producto', 'Categoría', 'Proveedor', 'Precio Unitario', 'Requerido', 'Mínimo Compra', 'A Comprar', 'Unidad', 'Subtotal'],
+            p.items.map(it => [
+              it.nombre,
+              it.categoria,
+              it.proveedor_nombre || '',
+              Number(it.precio_unitario || 0),
+              Number(it.cantidad || 0),
+              Number(it.minimo_compra || 0),
+              Number(it.a_comprar ?? it.cantidad ?? 0),
+              it.udm,
+              Number(it.subtotal || 0),
+            ]),
+            `presupuesto_${p.id}.csv`
+          );
+        },
+      },
+    ],
+    smartButtons: [
+      { label: 'Insumos', count: (p.items || []).length, icon: '📦' },
+    ],
+    kpis: [
+      { label: 'Fecha', value: esc(p.fecha) },
+      { label: 'Unidades', value: fmtNum(p.total_pares || 0) },
+      { label: 'Total', value: fmtMoney(p.total_monto || 0), tone: 'ok' },
+      { label: 'Ítems', value: String((p.items || []).length) },
+    ],
+    mainHtml,
+    sidebarHtml: '<div id="presupuesto-meta-panel"></div>',
+    onMountSidebar: (sidebarEl) => {
+      renderMetaPanel(sidebarEl.querySelector('#presupuesto-meta-panel'), {
+        entidadTipo: 'presupuesto',
+        entidadId: p.id,
+        titulo: `Presupuesto #${p.id}`,
+        record: p,
+      });
+    },
   });
 }

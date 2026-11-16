@@ -1,6 +1,6 @@
 import { addRoute, initRouter } from './router.js';
 import { api, refreshKPIs, setOnUnauthorized, toast } from './lib/api.js';
-import { observeTableBulkSelection } from './lib/viewEngine.js';
+import { observeTableBulkSelection } from './lib/engine/index.js';
 import { loadComprobantesCatalog } from './lib/comprobantesAr.js';
 import { renderAuthView } from './views/auth/authView.js';
 import { renderDatabasesView } from './views/auth/databasesView.js';
@@ -10,14 +10,13 @@ import { renderRecetasView, renderRecetaNuevaView } from './views/produccion/rec
 import { renderRecetaDetalleView } from './views/produccion/recetaDetalleView.js';
 import { renderOrdenesView, renderOrdenNuevaView } from './views/produccion/ordenesView.js';
 import { renderOrdenDetalleView } from './views/produccion/ordenDetalleView.js';
-import { renderEntregasView } from './views/produccion/entregasView.js';
-import { renderEntregaFormView } from './views/produccion/entregaFormView.js';
 import { renderPendientesView } from './views/produccion/pendientesView.js';
 import { renderEtapasView } from './views/produccion/etapasView.js';
 
 import { renderPlantillasView } from './views/inventario/plantillasView.js';
 import { renderPlantillaFormView } from './views/inventario/plantillaFormView.js';
 import { renderInventarioView } from './views/inventario/inventarioView.js';
+import { renderFlujoStockView } from './views/inventario/flujoStockView.js';
 import { renderOperacionesStockView, renderOperacionStockFormView, renderOperacionStockDetalleView } from './views/inventario/operacionesStockView.js';
 import {
   renderCategoriasView,
@@ -34,6 +33,8 @@ import { renderContactosView, renderContactoFormView } from './views/comercial/c
 import { renderCronogramaView } from './views/comercial/cronogramaView.js';
 
 import { renderTesoreriaView, renderPagosView, renderPagoFormView, renderCobrosView, renderCobroFormView } from './views/finanzas/tesoreriaView.js';
+import { renderFlujoCajaView } from './views/finanzas/flujoCajaView.js';
+import { renderChequesView } from './views/finanzas/chequesView.js';
 import { renderTesoreriaCuentasView } from './views/finanzas/tesoreriaCuentasView.js';
 import {
   renderLibroDiarioView,
@@ -79,6 +80,8 @@ addRoute('/contactos/nuevo', () => renderContactoFormView(), 'comercial.editar')
 addRoute('/contactos/:id', (_c, params) => renderContactoFormView(params), 'comercial.ver');
 
 addRoute('/tesoreria', () => renderTesoreriaView(), 'tesoreria.ver');
+addRoute('/tesoreria/flujo-caja', () => renderFlujoCajaView(), 'tesoreria.ver');
+addRoute('/tesoreria/cheques', () => renderChequesView(), 'tesoreria.ver');
 addRoute('/tesoreria/cuentas', () => renderTesoreriaCuentasView(), 'tesoreria.ver');
 addRoute('/tesoreria/pagos', () => renderPagosView(), 'tesoreria.ver');
 addRoute('/tesoreria/pagos/nuevo', () => renderPagoFormView(), 'tesoreria.editar');
@@ -96,6 +99,7 @@ addRoute('/contabilidad/cierres', () => renderCierresYMonedasView(), 'contabilid
 addRoute('/tesoreria/conciliacion', () => renderConciliacionBancariaView(), 'tesoreria.ver');
 
 addRoute('/inventario', () => renderInventarioView(), 'inventario.ver');
+addRoute('/inventario/flujo-stock', () => renderFlujoStockView(), 'inventario.ver');
 addRoute('/traslados', () => renderOperacionesStockView(), 'inventario.ver');
 addRoute('/operaciones-stock', () => renderOperacionesStockView(), 'inventario.ver');
 addRoute('/remitos', () => renderOperacionesStockView(), 'inventario.ver');
@@ -112,9 +116,8 @@ addRoute('/ordenes', () => renderOrdenesView(), 'produccion.ver');
 addRoute('/ordenes/nueva', () => renderOrdenNuevaView(), 'produccion.editar');
 addRoute('/ordenes/:id', (_c, params) => renderOrdenDetalleView(params), 'produccion.ver');
 
-addRoute('/entregas', () => renderEntregasView(), 'produccion.ver');
-addRoute('/entregas/nueva', () => renderEntregaFormView(), 'produccion.editar');
-addRoute('/entregas/:id/editar', (_c, params) => renderEntregaFormView(params), 'produccion.editar');
+addRoute('/entregas', () => renderOperacionesStockView(), 'inventario.ver');
+addRoute('/entregas/nueva', () => renderOperacionStockFormView({ mode: 'operacion' }), 'inventario.editar');
 
 addRoute('/pendientes', () => renderPendientesView(), 'produccion.ver');
 addRoute('/configuracion', () => renderConfigView());
@@ -238,8 +241,10 @@ backdrop?.addEventListener('click', () => {
 function syncActiveNavGroup(sidebar) {
   if (!sidebar) return;
   const active = sidebar.querySelector('a.tab.active');
-  const group = active?.closest('details.nav-group');
-  if (group) group.open = true;
+  const activeGroup = active?.closest('details.nav-group');
+  sidebar.querySelectorAll('details.nav-group').forEach(g => {
+    if (activeGroup) g.open = (g === activeGroup);
+  });
 }
 
 if (nav) {

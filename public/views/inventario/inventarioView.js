@@ -3,18 +3,21 @@ import { esc, fmtNum, badgeForTipo } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { printRemito } from '../../lib/remitoPrint.js';
 import { mountCombobox } from '../../lib/autocomplete.js';
-import { renderDataTable } from '../../lib/viewEngine.js';
+import { renderDataTable } from '../../lib/engine/index.js';
 
 const MOV_LABEL = {
-  compra: '<span class="badge badge-ok">Compra / Recepción</span>',
-  entrada_compra: '<span class="badge badge-ok">Compra / Recepción</span>',
-  venta: '<span class="badge badge-confirmado">Venta / Entrega</span>',
-  remito_taller: '<span class="badge badge-warn">Remito Taller</span>',
-  salida_remito: '<span class="badge badge-warn">Remito Taller</span>',
+  compra: '<span class="badge badge-ok">Recepción</span>',
+  entrada: '<span class="badge badge-ok">Recepción</span>',
+  entrada_compra: '<span class="badge badge-ok">Recepción</span>',
+  ingreso_produccion: '<span class="badge badge-ok">Producción</span>',
+  venta: '<span class="badge badge-confirmado">Entrega</span>',
+  salida: '<span class="badge badge-confirmado">Entrega</span>',
+  remito_taller: '<span class="badge badge-confirmado">Traslado</span>',
+  salida_remito: '<span class="badge badge-confirmado">Traslado</span>',
   consumo_produccion: '<span class="badge badge-parcial">Producción</span>',
   consumo_op: '<span class="badge badge-parcial">Producción</span>',
   transferencia: '<span class="badge badge-confirmado">Traslado</span>',
-  ajuste: '<span class="badge badge-muted">Ajuste Inventario</span>',
+  ajuste: '<span class="badge badge-muted">Ajuste</span>',
 };
 
 export async function renderInventarioView() {
@@ -59,47 +62,48 @@ export async function renderInventarioView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Stock y Movimientos</h1>
-          <p class="muted">Existencias, alertas de mínimo y movimientos de stock.</p>
+          <h1>Existencias</h1>
+          <p class="muted">Saldos por producto, ubicaciones y movimientos de stock.</p>
         </div>
         <div class="actions">
-          <a href="/traslados" data-link class="btn btn-primary">+ Nuevo Traslado / Ajuste</a>
-          <a href="/cronograma" data-link class="btn">Cronograma de Compras</a>
+          <a href="/inventario/flujo-stock" data-link class="btn">Flujo de Stock</a>
+          <a href="/operaciones-stock" data-link class="btn btn-primary">+ Nueva Operación</a>
+          <a href="/cronograma" data-link class="btn">Abastecimiento</a>
         </div>
       </div>
 
       <div class="summary-cards">
         <div class="summary-card">
-          <div class="label">Materiales en Catálogo</div>
+          <div class="label">Productos</div>
           <div class="val">${inventario.length}</div>
         </div>
         <div class="summary-card">
-          <div class="label">Alertas Stock Mínimo</div>
+          <div class="label">Bajo Stock Mínimo</div>
           <div class="val" style="color:var(--color-accent);">${alertasCount}</div>
         </div>
         <div class="summary-card">
-          <div class="label">Con Necesidad de Compra</div>
+          <div class="label">A Reponer</div>
           <div class="val">${conFaltante}</div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <h2>Stock Disponible por Componente</h2>
+          <h2>Saldos por Producto</h2>
         </div>
         <div class="toolbar">
           <label class="checkbox-inline">
             <input type="checkbox" id="inv-only-alerts" ${onlyAlerts ? 'checked' : ''} />
             <span>Solo alertas de stock mínimo</span>
           </label>
-          <input type="search" id="inv-search" placeholder="Buscar componente o proveedor..." value="${esc(search)}" style="min-width:240px;" />
+          <input type="search" id="inv-search" placeholder="Buscar producto o proveedor..." value="${esc(search)}" style="min-width:240px;" />
         </div>
         <div id="inv-stock-table"></div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <h2>Stock por Ubicación / Quants (${quants.filter(q => !quantUbicFilter || String(q.ubicacion_id) === String(quantUbicFilter)).length})</h2>
+          <h2>Saldos por Ubicación (${quants.filter(q => !quantUbicFilter || String(q.ubicacion_id) === String(quantUbicFilter)).length})</h2>
           <select id="quant-ubic-filter" class="input-sm">
             <option value="">Todas las ubicaciones internas</option>
             ${ubicaciones.filter(u => u.tipo === 'interna').map(u => `<option value="${u.id}" ${String(quantUbicFilter) === String(u.id) ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}

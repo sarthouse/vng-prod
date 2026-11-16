@@ -15,7 +15,13 @@
   --color-border: #C1CCDD;
   --color-surface-alt: #EDF2F7;
   --color-bg: #F7FAFC;
+  --color-bg-subtle: #F7FAFC;
   --color-surface: #ffffff;
+  --border: var(--color-border);
+  --muted: var(--color-muted);
+  --accent: var(--color-blue);
+  --surface-2: var(--color-surface-alt);
+  --bg-soft: var(--color-bg);
   --radius: 10px;
   --shadow: 0 2px 6px rgba(15, 31, 42, 0.06);
 }
@@ -442,10 +448,30 @@ body {
 .card > form,
 .card > .form-grid,
 .card > .toolbar,
+.card > .tabs-bar,
+.card > .actions,
+.card > .kpis,
+.card > .ve-detail-tabs,
+.card > .bulk-bar,
 .card > div > .toolbar,
-.card > div > .form-grid {
-  padding: 16px;
+.card > div > .form-grid,
+.card > div > .bulk-bar {
+  padding: 14px 16px;
   margin-bottom: 0;
+}
+
+.card > .bulk-bar,
+.card > div > .bulk-bar {
+  margin: 10px 16px;
+  padding: 8px 12px;
+}
+
+.card > .tabs-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-surface-alt);
+  background: var(--color-bg);
 }
 
 .inline-field {
@@ -653,24 +679,52 @@ body {
   font-weight: 600;
 }
 
-.badge-confirmado {
+.badge-confirmado,
+.badge-info,
+.badge-primary {
   background: #dbeafe;
   color: var(--color-blue-dark);
 }
 
-.badge-parcial {
+.badge-parcial,
+.badge-warn {
   background: #fef3c7;
   color: #b45309;
 }
 
-.badge-entregado {
+.badge-entregado,
+.badge-ok {
   background: #dcfce7;
   color: #166534;
 }
 
-.badge-cancelado {
+.badge-cancelado,
+.badge-danger {
   background: #fee2e2;
   color: var(--color-accent);
+}
+
+.badge-muted {
+  background: var(--color-surface-alt);
+  color: var(--color-muted-dark);
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.inline-form input:not([type="checkbox"]),
+.inline-form select {
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
 }
 
 .zero-val {
@@ -701,9 +755,44 @@ body {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 16px;
   margin-bottom: 14px;
+  align-items: end;
+}
+
+.form-row-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 16px;
+  align-items: end;
+}
+
+.form-row-3 > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.form-row-3 > label > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.form-row-3 > label input:not([type="checkbox"]),
+.form-row-3 > label select,
+.form-row-3 > label textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .hidden {
@@ -1443,11 +1532,20 @@ input[type="file"]::file-selector-button {
 .ve-modal {
   width: 100%;
   max-width: 440px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
   overflow: hidden;
+}
+.ve-modal.ve-modal-md {
+  max-width: 620px;
+}
+.ve-modal.ve-modal-lg {
+  max-width: 820px;
 }
 .ve-modal-header {
   display: flex;
@@ -1455,6 +1553,7 @@ input[type="file"]::file-selector-button {
   justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 .ve-modal-header h3 {
   margin: 0;
@@ -1470,6 +1569,7 @@ input[type="file"]::file-selector-button {
 }
 .ve-modal-body {
   padding: 16px;
+  overflow-y: auto;
 }
 .ve-modal-msg {
   margin: 0;
@@ -1532,4 +1632,694 @@ input[type="file"]::file-selector-button {
 }
 .data-table tbody tr.row-selected {
   background: rgba(30, 64, 175, 0.06);
+}
+
+/* ── Detail Engine (Ficha ERP) ── */
+.ve-detail-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ve-detail-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.ve-detail-breadcrumb {
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+.ve-detail-breadcrumb a {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+.ve-detail-breadcrumb a:hover {
+  color: var(--color-accent);
+}
+.ve-detail-heading h1 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ve-detail-subtitle {
+  margin: 4px 0 0;
+}
+.ve-smart-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ve-smart-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+  cursor: pointer;
+  min-width: 96px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ve-smart-btn:hover {
+  border-color: var(--color-accent);
+  background: rgba(30, 64, 175, 0.04);
+}
+.ve-smart-count {
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+.ve-smart-label {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+}
+.ve-detail-statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.ve-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ve-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ve-step {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+  background: transparent;
+}
+.ve-step.done {
+  border-color: rgba(22, 163, 74, 0.35);
+  background: rgba(22, 163, 74, 0.08);
+  color: #15803d;
+}
+.ve-step.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  font-weight: 600;
+}
+.ve-detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.ve-kpi-card {
+  padding: 12px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.ve-kpi-label {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  margin-bottom: 4px;
+}
+.ve-kpi-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.ve-kpi-hint {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+.ve-kpi-card.tone-ok .ve-kpi-value { color: #15803d; }
+.ve-kpi-card.tone-warn .ve-kpi-value { color: #b45309; }
+.ve-kpi-card.tone-danger .ve-kpi-value,
+.ve-kpi-card.tone-accent .ve-kpi-value { color: var(--color-accent); }
+.ve-kpi-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  transition: border-color 0.15s, transform 0.12s;
+}
+.ve-kpi-link:hover {
+  border-color: var(--color-blue);
+  transform: translateY(-1px);
+}
+.ve-field-help {
+  display: block;
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+.data-table th.ve-sortable-th {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, color 0.12s;
+}
+.data-table th.ve-sortable-th:hover {
+  background: #e2e8f0;
+  color: var(--color-primary);
+}
+.data-table th.ve-sorted-th {
+  color: var(--color-blue-dark);
+  background: #e6effa;
+}
+.ve-sort-ind {
+  font-size: 10px;
+  margin-left: 3px;
+  color: var(--color-blue);
+}
+.ve-table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 4px 2px;
+  font-size: 12px;
+}
+.ve-pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ve-pager-info {
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+/* ── Matrix Engine (Flujo de Caja Semanal / Mensual) ── */
+.ve-matrix-wrap {
+  max-height: 72vh;
+  overflow: auto;
+  border-top: 1px solid var(--color-surface-alt);
+}
+.ve-matrix-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.ve-matrix-table th,
+.ve-matrix-table td {
+  border-right: 1px solid var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-surface-alt);
+  padding: 9px 12px;
+}
+.ve-matrix-table th.ve-matrix-sticky-col,
+.ve-matrix-table td.ve-matrix-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--color-surface);
+  min-width: 250px;
+  border-right: 2px solid var(--color-border);
+}
+.ve-matrix-table thead th.ve-matrix-sticky-col {
+  z-index: 5;
+  background: var(--color-surface-alt);
+}
+.ve-matrix-table th.ve-matrix-total-col,
+.ve-matrix-table td.ve-matrix-total-col {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: #f8fafc;
+  font-weight: 700;
+  border-left: 2px solid var(--color-border);
+}
+.ve-matrix-table thead th.ve-matrix-total-col {
+  z-index: 5;
+  background: #e2e8f0;
+}
+.ve-matrix-col-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+.ve-matrix-col-sub {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.ve-matrix-table th.ve-col-current {
+  background: #dbeafe;
+  color: var(--color-blue-dark);
+  border-bottom: 2px solid var(--color-blue);
+}
+.ve-matrix-table th.ve-col-current .ve-matrix-col-sub {
+  color: var(--color-blue-dark);
+  font-weight: 700;
+}
+.ve-matrix-table td.ve-col-current {
+  background: rgba(219, 234, 254, 0.25);
+}
+.ve-matrix-table th.ve-col-proy {
+  background: #f8fafc;
+}
+.ve-matrix-row-balance_start td {
+  background: #f8fafc;
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+.ve-matrix-row-group_in td,
+.ve-matrix-row-group_out td {
+  background: #fcfdff;
+  font-weight: 600;
+}
+.ve-matrix-row-net td {
+  background: #f1f5f9;
+  font-weight: 700;
+  border-top: 1px solid var(--color-border);
+}
+.ve-matrix-row-balance_end td {
+  background: #eff6ff;
+  font-weight: 700;
+  color: var(--color-primary);
+  border-top: 2px solid var(--color-blue);
+  border-bottom: 2px solid var(--color-border);
+}
+.ve-matrix-row-balance_end td.ve-matrix-sticky-col {
+  background: #eff6ff;
+}
+.ve-matrix-row-net td.ve-matrix-sticky-col {
+  background: #f1f5f9;
+}
+.ve-matrix-row-balance_start td.ve-matrix-sticky-col {
+  background: #f8fafc;
+}
+.ve-matrix-child-label {
+  padding-left: 28px !important;
+  color: var(--color-secondary);
+  font-size: 12.5px;
+}
+.ve-matrix-toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ve-matrix-caret {
+  display: inline-block;
+  width: 12px;
+  color: var(--color-blue);
+}
+.ve-val-pos {
+  color: #15803d;
+}
+.ve-val-neg {
+  color: var(--color-accent);
+}
+.ve-matrix-cell-clickable {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ve-matrix-cell-clickable:hover {
+  background: #e0f2fe !important;
+}
+.ve-matrix-cell-link {
+  border-bottom: 1px dashed currentColor;
+}
+
+/* ── Multi-Select 1-N (Chips + Dropdown) ── */
+.ve-multiselect {
+  width: 100%;
+  min-width: 180px;
+}
+.ve-ms-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  cursor: text;
+}
+.ve-ms-control:focus-within {
+  border-color: var(--color-blue);
+  box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.14);
+}
+.ve-ms-chips {
+  display: contents;
+}
+.ve-ms-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ebf4ff;
+  border: 1px solid #bfdbfe;
+  color: var(--color-blue-dark);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ve-ms-chip-rm {
+  border: 0;
+  background: transparent;
+  color: var(--color-blue-dark);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.ve-ms-chip-rm:hover {
+  opacity: 1;
+  color: var(--color-accent);
+}
+.ve-ms-input {
+  border: 0 !important;
+  outline: none !important;
+  padding: 2px 4px !important;
+  font-size: 13px;
+  font-family: inherit;
+  background: transparent !important;
+  flex: 1;
+  min-width: 90px;
+}
+.ve-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (min-width: 1024px) {
+  .ve-detail-grid.has-sidebar {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+.ve-detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.ve-detail-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.ve-detail-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.ve-detail-tab {
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ve-detail-tab.active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-weight: 600;
+}
+.ve-tab-badge {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.15);
+}
+.ve-detail-tab-panel {
+  display: none;
+}
+.ve-detail-tab-panel.active {
+  display: block;
+}
+
+/* ── Cronograma Gantt (Producción / Etapas) ── */
+.ve-gantt-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.ve-gantt {
+  min-width: 780px;
+  border-top: 1px solid var(--color-border);
+}
+.ve-gantt-header,
+.ve-gantt-row {
+  display: grid;
+  grid-template-columns: 270px minmax(500px, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-border);
+}
+.ve-gantt-header {
+  background: var(--color-bg);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.ve-gantt-col-info {
+  padding: 8px 12px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ve-gantt-header .ve-gantt-col-info {
+  background: var(--color-bg);
+}
+.ve-gantt-col-sub {
+  padding-left: 34px;
+  background: #fafafa;
+  font-size: 12px;
+}
+.ve-gantt-info-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+}
+.ve-gantt-info-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ve-gantt-toggle {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-secondary);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.ve-gantt-toggle:hover {
+  background: #e2e8f0;
+}
+.ve-gantt-timeline-head {
+  display: grid;
+  grid-template-columns: repeat(var(--gantt-days, 14), minmax(26px, 1fr));
+}
+.ve-gantt-day-head {
+  text-align: center;
+  padding: 6px 2px;
+  border-right: 1px solid #f1f5f9;
+  font-size: 10px;
+  color: var(--color-muted);
+  user-select: none;
+}
+.ve-gantt-day-head.is-weekend {
+  background: rgba(148, 163, 184, 0.08);
+}
+.ve-gantt-day-head.is-today {
+  background: #dbeafe;
+  color: var(--color-blue-dark);
+  font-weight: 700;
+}
+.ve-gantt-timeline-track {
+  position: relative;
+  min-height: 44px;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent,
+    transparent calc(100% / var(--gantt-days, 14) - 1px),
+    #f1f5f9 calc(100% / var(--gantt-days, 14) - 1px),
+    #f1f5f9 calc(100% / var(--gantt-days, 14))
+  );
+}
+.ve-gantt-row-sub .ve-gantt-timeline-track {
+  min-height: 32px;
+  background-color: #fcfcfd;
+}
+.ve-gantt-row-sub.is-collapsed {
+  display: none;
+}
+.ve-gantt-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ef4444;
+  z-index: 2;
+  pointer-events: none;
+}
+.ve-gantt-bar {
+  position: absolute;
+  top: 8px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  z-index: 1;
+}
+.ve-gantt-bar-sub {
+  top: 5px;
+  height: 21px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.92;
+}
+.ve-gantt-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.ve-gantt-bar-label {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ve-gantt-bar-info {
+  background: #2563eb;
+}
+.ve-gantt-bar-warn {
+  background: #d97706;
+}
+.ve-gantt-bar-overdue {
+  background: #dc2626;
+}
+.ve-gantt-bar-ok {
+  background: #16a34a;
+}
+.ve-gantt-bar-muted {
+  background: #64748b;
+}
+.ve-gantt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 14px;
+  font-size: 11px;
+  color: var(--color-secondary);
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+}
+.ve-gantt-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ve-gantt-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.ve-gantt-today-swatch {
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  background: #ef4444;
+}
+
+/* ── Gráficos Combinados SVG (Flujo de Stock y Flujo de Caja) ── */
+.ve-chart-card {
+  padding: 12px 16px;
+}
+.ve-chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ve-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--color-secondary);
+}
+.ve-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ve-chart-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+.ve-chart-svg-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.ve-chart-svg {
+  width: 100%;
+  min-width: 660px;
+  height: auto;
+  max-height: 320px;
+  display: block;
 }

@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { showConfirmModal, showPromptModal } from '../../lib/modal.js';
+import { showConfirmModal, showPromptModal } from '../../lib/engine/index.js';
 
 function fmtSize(bytes) {
   const n = Number(bytes || 0);

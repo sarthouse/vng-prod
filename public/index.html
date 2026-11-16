@@ -36,6 +36,10 @@
           <span class="kpi-label">Pares Pendientes</span>
           <strong class="kpi-value accent" id="kpi-pendientes">0</strong>
         </div>
+        <a class="kpi-card" href="/contabilidad/cierres" data-link style="text-decoration:none;color:inherit;" title="Ver y actualizar cotizaciones">
+          <span class="kpi-label">Cotización USD</span>
+          <strong class="kpi-value" id="kpi-usd">-</strong>
+        </a>
         <div class="kpi-card" id="topbar-user-box" style="display:none;flex-direction:row;align-items:center;gap:10px">
           <div style="text-align:right">
             <span class="kpi-label" id="topbar-user-group" style="display:block"></span>
@@ -57,9 +61,8 @@
           <div class="nav-group-items">
             <a class="tab" href="/recetas" data-link data-perm="produccion.ver">Recetas</a>
             <a class="tab" href="/ordenes" data-link data-perm="produccion.ver">Órdenes</a>
-            <a class="tab" href="/entregas" data-link data-perm="produccion.ver">Entregas</a>
+            <a class="tab" href="/produccion/etapas" data-link data-perm="produccion.ver">Etapas</a>
             <a class="tab" href="/pendientes" data-link data-perm="produccion.ver">Pendientes</a>
-            <a class="tab" href="/produccion/etapas" data-link data-perm="produccion.ver">Etapas de Receta</a>
           </div>
         </details>
 
@@ -67,12 +70,13 @@
           <summary class="nav-group-title">Inventario</summary>
           <div class="nav-group-items">
             <a class="tab" href="/productos" data-link data-perm="inventario.ver">Productos</a>
-            <a class="tab" href="/inventario" data-link data-perm="inventario.ver">Stock y Movimientos</a>
-            <a class="tab" href="/traslados" data-link data-perm="inventario.ver">Operaciones y Remitos</a>
+            <a class="tab" href="/inventario" data-link data-perm="inventario.ver">Existencias</a>
+            <a class="tab" href="/inventario/flujo-stock" data-link data-perm="inventario.ver">Flujo de Stock</a>
+            <a class="tab" href="/operaciones-stock" data-link data-perm="inventario.ver">Operaciones</a>
             <a class="tab" href="/inventario/categorias" data-link data-perm="inventario.ver">Categorías</a>
-            <a class="tab" href="/inventario/variantes" data-link data-perm="inventario.ver">Atributos y Variantes</a>
-            <a class="tab" href="/inventario/unidades" data-link data-perm="inventario.ver">Unidades de Medida</a>
-            <a class="tab" href="/inventario/ubicaciones" data-link data-perm="inventario.ver">Ubicaciones de Stock</a>
+            <a class="tab" href="/inventario/variantes" data-link data-perm="inventario.ver">Variantes</a>
+            <a class="tab" href="/inventario/unidades" data-link data-perm="inventario.ver">Unidades</a>
+            <a class="tab" href="/inventario/ubicaciones" data-link data-perm="inventario.ver">Ubicaciones</a>
           </div>
         </details>
 
@@ -81,25 +85,33 @@
           <div class="nav-group-items">
             <a class="tab" href="/ventas" data-link data-perm="comercial.ver">Ventas</a>
             <a class="tab" href="/compras" data-link data-perm="comercial.ver">Compras</a>
-            <a class="tab" href="/cronograma" data-link data-perm="comercial.ver">Cronograma de Compras</a>
+            <a class="tab" href="/cronograma" data-link data-perm="comercial.ver">Abastecimiento</a>
             <a class="tab" href="/contactos" data-link data-perm="comercial.ver">Contactos</a>
-            <a class="tab" href="/condiciones-comerciales" data-link data-perm="comercial.ver">Listas y Condiciones</a>
+            <a class="tab" href="/condiciones-comerciales" data-link data-perm="comercial.ver">Condiciones</a>
           </div>
         </details>
 
-        <details class="nav-group" data-group="finanzas">
-          <summary class="nav-group-title">Tesorería y Contabilidad</summary>
+        <details class="nav-group" data-group="tesoreria">
+          <summary class="nav-group-title">Tesorería</summary>
           <div class="nav-group-items">
-            <a class="tab" href="/tesoreria" data-link data-perm="tesoreria.ver">Cuentas y Flujos</a>
-            <a class="tab" href="/tesoreria/conciliacion" data-link data-perm="tesoreria.ver">Conciliación Bancaria</a>
+            <a class="tab" href="/tesoreria" data-link data-perm="tesoreria.ver">Cuentas y Pagos</a>
+            <a class="tab" href="/tesoreria/flujo-caja" data-link data-perm="tesoreria.ver">Flujo de Caja</a>
+            <a class="tab" href="/tesoreria/cheques" data-link data-perm="tesoreria.ver">Cheques</a>
+            <a class="tab" href="/tesoreria/conciliacion" data-link data-perm="tesoreria.ver">Conciliación</a>
+          </div>
+        </details>
+
+        <details class="nav-group" data-group="contabilidad">
+          <summary class="nav-group-title">Contabilidad</summary>
+          <div class="nav-group-items">
             <a class="tab" href="/contabilidad" data-link data-perm="contabilidad.ver">Libro Diario</a>
             <a class="tab" href="/contabilidad/mayor" data-link data-perm="contabilidad.ver">Libro Mayor</a>
-            <a class="tab" href="/contabilidad/balance" data-link data-perm="contabilidad.ver">Balance y Resultados</a>
+            <a class="tab" href="/contabilidad/balance" data-link data-perm="contabilidad.ver">Balance</a>
             <a class="tab" href="/contabilidad/plan-cuentas" data-link data-perm="contabilidad.ver">Plan de Cuentas</a>
             <a class="tab" href="/contabilidad/impuestos" data-link data-perm="contabilidad.ver">Impuestos</a>
-            <a class="tab" href="/contabilidad/libros-fiscales" data-link data-perm="contabilidad.ver">Libros IVA y Fiscales</a>
-            <a class="tab" href="/contabilidad/posicion-iva" data-link data-perm="contabilidad.ver">Posición Mensual IVA</a>
-            <a class="tab" href="/contabilidad/cierres" data-link data-perm="contabilidad.ver">Cierre y Multimoneda</a>
+            <a class="tab" href="/contabilidad/libros-fiscales" data-link data-perm="contabilidad.ver">Libros IVA</a>
+            <a class="tab" href="/contabilidad/posicion-iva" data-link data-perm="contabilidad.ver">Posición IVA</a>
+            <a class="tab" href="/contabilidad/cierres" data-link data-perm="contabilidad.ver">Cierres</a>
           </div>
         </details>
 

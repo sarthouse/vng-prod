@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { registrarMovimientoStock, resolveOrCreateLote } from './inventarioService.js';
@@ -10,6 +9,8 @@ export const operacionStockRepo = new BaseRepository({
 });
 const lineaRepo = new BaseRepository({ model: MODELS.operacion_stock_lineas });
 const ubicacionRepo = new BaseRepository({ model: MODELS.ubicaciones });
+const productoRepo = new BaseRepository({ model: MODELS.productos });
+const notaRepo = new BaseRepository({ model: MODELS.notas_internas });
 
 const VALID_TIPOS = new Set(['recepcion', 'entrega', 'traslado', 'remito_taller', 'ajuste']);
 
@@ -49,15 +50,12 @@ function applyOperacionMovements(op, lineas, reverse = false, user = null) {
   const notaPrefix = reverse ? `Anulación ${op.numero}` : op.numero;
   const notaText = op.motivo ? `${notaPrefix} — ${op.motivo}` : notaPrefix;
 
-  const getProdMeta = db.prepare(`
-    SELECT p.nombre, pt.udm, pt.requiere_lote
-    FROM productos p
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    WHERE p.id = ?
-  `);
-
   for (const l of lineas) {
-    const prod = getProdMeta.get(Number(l.producto_id));
+    const prod = productoRepo.query('p')
+      .select('p.nombre', 'pt.udm', 'pt.requiere_lote')
+      .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+      .where('p.id', Number(l.producto_id))
+      .get();
     if (!reverse && op.tipo !== 'ajuste' && prod?.requiere_lote === 1 && !l.lote_id && !(l.lote || '').trim()) {
       throw new Error(`El producto "${prod.nombre}" requiere especificar un lote.`);
     }
@@ -102,47 +100,41 @@ export function listOperacionesStock({ tipo, estado, contacto_id } = {}) {
 }
 
 export function getOperacionStockById(id) {
-  const operacion = db.prepare(`
-    SELECT os.*,
-           COALESCE(uo.nombre, '') as origen_nombre,
-           COALESCE(ud.nombre, '') as destino_nombre,
-           COALESCE(c.id, vc.id) as contacto_resuelto_id,
-           COALESCE(c.nombre, vc.nombre, '') as contacto_nombre,
-           COALESCE(c.razon_social, vc.razon_social, '') as contacto_razon_social,
-           COALESCE(c.cuit, vc.cuit, '') as contacto_cuit,
-           COALESCE(c.condicion_iva, vc.condicion_iva, '') as contacto_iva,
-           COALESCE(c.direccion, vc.direccion, '') as contacto_direccion,
-           COALESCE(c.localidad, vc.localidad, '') as contacto_localidad,
-           COALESCE(c.provincia, vc.provincia, '') as contacto_provincia,
-           COALESCE(c.codigo_postal, vc.codigo_postal, '') as contacto_codigo_postal,
-           COALESCE(c.telefono, vc.telefono, '') as contacto_telefono,
-           COALESCE(c.email, vc.email, '') as contacto_email,
-           COALESCE(c.observaciones, vc.observaciones, '') as contacto_observaciones
-    FROM operaciones_stock os
-    LEFT JOIN ubicaciones uo ON uo.id = os.ubicacion_origen_id
-    LEFT JOIN ubicaciones ud ON ud.id = os.ubicacion_destino_id
-    LEFT JOIN contactos c ON c.id = os.contacto_id
-    LEFT JOIN ventas v ON os.referencia_tipo = 'venta' AND v.id = os.referencia_id
-    LEFT JOIN contactos vc ON vc.id = v.contacto_id
-    WHERE os.id = ?
-  `).get(Number(id));
+  const operacion = operacionStockRepo.query('os')
+    .select(
+      'os.*',
+      "COALESCE(uo.nombre, '') as origen_nombre",
+      "COALESCE(ud.nombre, '') as destino_nombre",
+      'COALESCE(c.id, vc.id) as contacto_resuelto_id',
+      "COALESCE(c.nombre, vc.nombre, '') as contacto_nombre",
+      "COALESCE(c.razon_social, vc.razon_social, '') as contacto_razon_social",
+      "COALESCE(c.cuit, vc.cuit, '') as contacto_cuit",
+      "COALESCE(c.condicion_iva, vc.condicion_iva, '') as contacto_iva",
+      "COALESCE(c.direccion, vc.direccion, '') as contacto_direccion",
+      "COALESCE(c.localidad, vc.localidad, '') as contacto_localidad",
+      "COALESCE(c.provincia, vc.provincia, '') as contacto_provincia",
+      "COALESCE(c.codigo_postal, vc.codigo_postal, '') as contacto_codigo_postal",
+      "COALESCE(c.telefono, vc.telefono, '') as contacto_telefono",
+      "COALESCE(c.email, vc.email, '') as contacto_email",
+      "COALESCE(c.observaciones, vc.observaciones, '') as contacto_observaciones",
+    )
+    .leftJoin('ubicaciones', 'uo', 'uo.id', 'os.ubicacion_origen_id')
+    .leftJoin('ubicaciones', 'ud', 'ud.id', 'os.ubicacion_destino_id')
+    .leftJoin('contactos', 'c', 'c.id', 'os.contacto_id')
+    .leftJoin('ventas', 'v', 'v.id', 'os.referencia_id')
+    .leftJoin('contactos', 'vc', 'vc.id', 'v.contacto_id')
+    .where('os.id', Number(id))
+    .get();
   if (!operacion) return null;
 
-  const notasRows = db.prepare(`
-    SELECT contenido, created_at, autor_nombre
-    FROM notas_internas
-    WHERE (entidad_tipo = 'operacion_stock' AND entidad_id = ?)
-       OR (? IS NOT NULL AND entidad_tipo = 'contacto' AND entidad_id = ?)
-       OR (? = 'venta' AND ? IS NOT NULL AND entidad_tipo = 'venta' AND entidad_id = ?)
-    ORDER BY id DESC
-  `).all(
-    Number(id),
-    operacion.contacto_resuelto_id || null,
-    operacion.contacto_resuelto_id || null,
-    operacion.referencia_tipo || '',
-    operacion.referencia_id || null,
-    operacion.referencia_id || null,
-  );
+  const notasOp = notaRepo.findWhere({ entidad_tipo: 'operacion_stock', entidad_id: Number(id) });
+  const notasContacto = operacion.contacto_resuelto_id
+    ? notaRepo.findWhere({ entidad_tipo: 'contacto', entidad_id: Number(operacion.contacto_resuelto_id) })
+    : [];
+  const notasVenta = (operacion.referencia_tipo === 'venta' && operacion.referencia_id)
+    ? notaRepo.findWhere({ entidad_tipo: 'venta', entidad_id: Number(operacion.referencia_id) })
+    : [];
+  const notasRows = [...notasOp, ...notasContacto, ...notasVenta].sort((a, b) => Number(b.id) - Number(a.id));
   operacion.notas_internas = notasRows.map(n => n.contenido).filter(Boolean);
 
   const lineas = lineaRepo.query('l')
@@ -245,16 +237,104 @@ export function updateOperacionStockMeta(id, b = {}, user = null) {
   return true;
 }
 
-export function confirmarOperacionStock(id, user = null) {
+export function confirmarOperacionStock(id, b = {}, user = null) {
+  // Soportar firma legacy confirmarOperacionStock(id, user) cuando el 2do arg es user
+  if (b && !user && (b.username !== undefined || b.es_admin !== undefined || b.permisos !== undefined)) {
+    user = b;
+    b = {};
+  }
   const ex = getOperacionStockById(id);
   if (!ex) return false;
   if (ex.operacion.estado !== 'Borrador') {
     throw new Error('Solo se pueden confirmar documentos en estado Borrador');
   }
+
+  const partialMap = new Map();
+  if (Array.isArray(b?.lineas)) {
+    for (const pl of b.lineas) {
+      const key = pl.id ? `id:${pl.id}` : `prod:${pl.producto_id}`;
+      partialMap.set(key, pl);
+    }
+  }
+
   return operacionStockRepo.transaction(() => {
+    const confirmedLines = [];
+    const backorderLines = [];
+
+    for (const orig of ex.lineas) {
+      const match = partialMap.get(`id:${orig.id}`) || partialMap.get(`prod:${orig.producto_id}`) || null;
+      const origQty = Number(orig.cantidad) || 0;
+      const reqQty = match && match.cantidad !== undefined && match.cantidad !== ''
+        ? Math.max(0, Math.min(origQty, Number(match.cantidad) || 0))
+        : origQty;
+      const loteStr = match && match.lote !== undefined ? String(match.lote || '').trim() : (orig.lote_codigo || orig.lote || '');
+
+      if (reqQty > 0) {
+        let resolvedLoteId = orig.lote_id;
+        let resolvedLoteCod = loteStr;
+        if (loteStr !== (orig.lote_codigo || orig.lote || '')) {
+          const loteRow = resolveOrCreateLote({ producto_id: orig.producto_id, lote: loteStr });
+          resolvedLoteId = loteRow?.id || null;
+          resolvedLoteCod = loteRow?.codigo || loteStr;
+        }
+        lineaRepo.update(orig.id, {
+          cantidad: Number(reqQty.toFixed(4)),
+          lote_id: resolvedLoteId,
+          lote: resolvedLoteCod,
+        });
+        confirmedLines.push({
+          ...orig,
+          cantidad: Number(reqQty.toFixed(4)),
+          lote_id: resolvedLoteId,
+          lote: resolvedLoteCod,
+        });
+      } else {
+        lineaRepo.delete(orig.id);
+      }
+
+      const remQty = Number((origQty - reqQty).toFixed(4));
+      if (remQty > 0.0001) {
+        backorderLines.push({
+          producto_id: orig.producto_id,
+          lote_id: orig.lote_id,
+          lote: orig.lote_codigo || orig.lote || '',
+          descripcion: orig.descripcion,
+          cantidad: remQty,
+          udm: orig.udm,
+        });
+      }
+    }
+
+    if (confirmedLines.length === 0) {
+      throw new Error('Debés confirmar una cantidad mayor a 0 en al menos un ítem');
+    }
+
     operacionStockRepo.update(id, { estado: 'Confirmado' }, user);
-    applyOperacionMovements(ex.operacion, ex.lineas, false, user);
-    return true;
+    applyOperacionMovements(ex.operacion, confirmedLines, false, user);
+
+    let backorderId = null;
+    if (backorderLines.length > 0 && b?.generar_backorder !== false) {
+      backorderId = createOperacionStock({
+        fecha: ex.operacion.fecha,
+        tipo: ex.operacion.tipo,
+        ubicacion_origen_id: ex.operacion.ubicacion_origen_id,
+        ubicacion_destino_id: ex.operacion.ubicacion_destino_id,
+        contacto_id: ex.operacion.contacto_id,
+        referencia_tipo: ex.operacion.referencia_tipo,
+        referencia_id: ex.operacion.referencia_id,
+        estado: 'Borrador',
+        motivo: `Saldo pendiente de ${ex.operacion.numero || '#' + id}${ex.operacion.motivo ? ' · ' + ex.operacion.motivo : ''}`,
+        observaciones: ex.operacion.observaciones,
+        envio: ex.operacion.envio,
+        codigo_seguimiento: '',
+        lineas: backorderLines,
+      }, user);
+    }
+
+    if (backorderId) {
+      return { ok: true, backorder_id: backorderId };
+    }
+    return Array.isArray(b?.lineas) ? { ok: true, backorder_id: null } : true;
   });
 }
 

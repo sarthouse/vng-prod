@@ -1,5 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, fmtDate } from '../../lib/format.js';
+import { mountPageView } from '../../lib/engine/index.js';
 
 function currentMonthRange() {
   const now = new Date();
@@ -27,37 +28,37 @@ export async function renderLibrosFiscalesView() {
   };
 
   async function renderShell() {
-    root.innerHTML = `
-      <div class="page-header">
-        <div>
-          <h1>Contabilidad — Libros IVA Digital, Auxiliares y Jurisdicciones</h1>
-          <p class="muted">Localización fiscal Argentina (ARCA): Libro IVA Compras/Ventas + TXT, Percepciones/Retenciones (SICORE/SIFERE), Convenio Multilateral y Padrón IIBB.</p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="tabs-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px;">
-          <button type="button" class="btn ${state.tab === 'libro_iva' ? 'btn-primary' : ''}" data-tab="libro_iva">Libro IVA Digital</button>
-          <button type="button" class="btn ${state.tab === 'auxiliares' ? 'btn-primary' : ''}" data-tab="auxiliares">Auxiliar Percepciones y Retenciones</button>
-          <button type="button" class="btn ${state.tab === 'jurisdicciones' ? 'btn-primary' : ''}" data-tab="jurisdicciones">Facturación por Jurisdicción</button>
-          <button type="button" class="btn ${state.tab === 'padron' ? 'btn-primary' : ''}" data-tab="padron">Padrón Alícuotas IIBB</button>
-        </div>
-        <div id="fiscal-tab-body"><div class="empty-state">Cargando...</div></div>
-      </div>
-    `;
-
-    root.querySelectorAll('[data-tab]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        state.tab = btn.dataset.tab;
-        renderShell();
-      });
+    mountPageView(root, {
+      title: 'Libros IVA',
+      subtitle: 'Libro IVA Compras y Ventas, Percepciones, Retenciones, Convenio Multilateral y Padrón IIBB.',
+      tabs: [
+        {
+          id: 'libro_iva',
+          label: 'Libro IVA',
+          html: '<div class="card"><div class="card-body" data-fiscal-body="libro_iva"><div class="empty-state">Cargando...</div></div></div>',
+          onMount: (p) => renderLibroIvaTab(p.querySelector('[data-fiscal-body="libro_iva"]')),
+        },
+        {
+          id: 'auxiliares',
+          label: 'Percepciones y Retenciones',
+          html: '<div class="card"><div class="card-body" data-fiscal-body="auxiliares"><div class="empty-state">Cargando...</div></div></div>',
+          onMount: (p) => renderAuxiliaresTab(p.querySelector('[data-fiscal-body="auxiliares"]')),
+        },
+        {
+          id: 'jurisdicciones',
+          label: 'Jurisdicciones',
+          html: '<div class="card"><div class="card-body" data-fiscal-body="jurisdicciones"><div class="empty-state">Cargando...</div></div></div>',
+          onMount: (p) => renderJurisdiccionesTab(p.querySelector('[data-fiscal-body="jurisdicciones"]')),
+        },
+        {
+          id: 'padron',
+          label: 'Padrón IIBB',
+          html: '<div class="card"><div class="card-body" data-fiscal-body="padron"><div class="empty-state">Cargando...</div></div></div>',
+          onMount: (p) => renderPadronTab(p.querySelector('[data-fiscal-body="padron"]')),
+        },
+      ],
+      defaultTab: state.tab,
     });
-
-    const body = root.querySelector('#fiscal-tab-body');
-    if (state.tab === 'libro_iva') await renderLibroIvaTab(body);
-    else if (state.tab === 'auxiliares') await renderAuxiliaresTab(body);
-    else if (state.tab === 'jurisdicciones') await renderJurisdiccionesTab(body);
-    else if (state.tab === 'padron') await renderPadronTab(body);
   }
 
   async function renderLibroIvaTab(body) {
@@ -341,48 +342,51 @@ export async function renderLibrosFiscalesView() {
   async function renderPadronTab(body) {
     const items = await api('/api/fiscal/padron');
     body.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:16px;">
         <form id="form-padron-add" class="card" style="margin:0;">
-          <h3 style="margin-top:0;">Agregar / Actualizar CUIT en Padrón</h3>
+          <div class="card-header"><h2>Agregar / Actualizar CUIT</h2></div>
           <div class="form-grid">
-            <div><label>CUIT *</label><input type="text" name="cuit" required placeholder="20-12345678-9" /></div>
-            <div>
-              <label>Jurisdicción *</label>
+            <label><span>CUIT *</span><input type="text" name="cuit" required placeholder="20-12345678-9" /></label>
+            <label>
+              <span>Jurisdicción *</span>
               <select name="jurisdiccion_codigo">
                 ${(jurisdicciones || []).map(j => `<option value="${esc(j.codigo)}" ${j.codigo === '902' ? 'selected' : ''}>${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
               </select>
-            </div>
-            <div>
-              <label>Tipo</label>
+            </label>
+            <label>
+              <span>Tipo</span>
               <select name="tipo">
                 <option value="percepcion">Percepción</option>
                 <option value="retencion">Retención</option>
               </select>
-            </div>
-            <div><label>Alícuota % *</label><input type="number" step="0.01" min="0" max="30" name="alicuota" required value="3.0" /></div>
+            </label>
+            <label><span>Alícuota % *</span><input type="number" step="0.01" min="0" max="30" name="alicuota" required value="3.0" /></label>
+            <div class="full"><button type="submit" class="btn btn-primary">Guardar Alícuota</button></div>
           </div>
-          <div style="margin-top:10px;"><button type="submit" class="btn btn-primary">Guardar Alícuota</button></div>
         </form>
 
         <form id="form-padron-import" class="card" style="margin:0;">
-          <h3 style="margin-top:0;">Importar Padrón ARBA / AGIP (TXT o CSV)</h3>
+          <div class="card-header"><h2>Importar Padrón ARBA / AGIP</h2></div>
           <div class="form-grid">
-            <div>
-              <label>Jurisdicción</label>
+            <label>
+              <span>Jurisdicción</span>
               <select name="jurisdiccion_codigo">
                 ${(jurisdicciones || []).map(j => `<option value="${esc(j.codigo)}" ${j.codigo === '902' ? 'selected' : ''}>${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
               </select>
-            </div>
-            <div>
-              <label>Tipo</label>
+            </label>
+            <label>
+              <span>Tipo</span>
               <select name="tipo">
                 <option value="percepcion">Percepción</option>
                 <option value="retencion">Retención</option>
               </select>
-            </div>
+            </label>
+            <label class="full">
+              <span>Líneas (CUIT;alícuota)</span>
+              <textarea name="contenido" rows="3" placeholder="30-71111111-9;3.5"></textarea>
+            </label>
+            <div class="full"><button type="submit" class="btn">Importar Líneas</button></div>
           </div>
-          <textarea name="contenido" rows="3" placeholder="Pegá líneas tipo CUIT;alicuota (ej: 30-71111111-9;3.5)" style="width:100%;margin-top:8px;"></textarea>
-          <div style="margin-top:8px;"><button type="submit" class="btn">Importar Líneas</button></div>
         </form>
       </div>
 

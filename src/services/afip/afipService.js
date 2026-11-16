@@ -185,6 +185,7 @@ export function setAfipEntorno(entorno) {
 
 export function generarAfipKeys({ cn = 'vanguard' } = {}) {
   const row = getEmpresaAfipRow();
+  const entorno = row?.afip_entorno === 'produccion' ? 'produccion' : 'homologacion';
   const { privateKeyPem, csrPem } = generateKeyAndCsr({
     cuit: row.cuit,
     razonSocial: row.razon_social,
@@ -195,7 +196,20 @@ export function generarAfipKeys({ cn = 'vanguard' } = {}) {
     SET afip_private_key = ?, afip_csr = ?, afip_ta_wsfe = '', afip_ta_padron = '', afip_ta_wscdc = ''
     WHERE id = 1
   `).run(privateKeyPem, csrPem);
+  writeRestrictedAfipFile(`afip_${entorno}.key`, privateKeyPem);
+  writeRestrictedAfipFile(`afip_${entorno}.csr`, csrPem);
   return getAfipStatus();
+}
+
+function writeRestrictedAfipFile(filename, content) {
+  try {
+    const dir = path.join(DB_DIR, 'afip_crts');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(dir, 0o700); } catch { /* Windows ACLs */ }
+    const filePath = path.join(dir, filename);
+    fs.writeFileSync(filePath, String(content || ''), { encoding: 'utf8', mode: 0o600 });
+    try { fs.chmodSync(filePath, 0o600); } catch { /* Windows ACLs */ }
+  } catch { /* no bloquear si el entorno de test no tiene DB_DIR escribible */ }
 }
 
 export function getAfipCsr() {
@@ -208,16 +222,22 @@ export function getAfipCsr() {
 
 export function guardarAfipCertificado(crtPem) {
   const clean = String(crtPem || '').trim();
-  if (!clean.includes('BEGIN CERTIFICATE')) {
-    throw new Error('El contenido no parece un certificado X.509 PEM (.crt) válido');
+  if (!clean || clean.length > 65536) {
+    throw new Error('El archivo de certificado es obligatorio y no puede superar los 64 KB');
+  }
+  if (!/-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----/.test(clean)) {
+    throw new Error('El archivo no es un certificado X.509 PEM válido (.crt / .pem / .cer)');
   }
   // Validar que Node pueda parsearlo
   parseCertificateInfo(clean);
+  const row = getEmpresaAfipRow();
+  const entorno = row?.afip_entorno === 'produccion' ? 'produccion' : 'homologacion';
   db.prepare(`
     UPDATE empresa_config
     SET afip_crt = ?, afip_ta_wsfe = '', afip_ta_padron = '', afip_ta_wscdc = ''
     WHERE id = 1
   `).run(clean);
+  writeRestrictedAfipFile(`afip_${entorno}.crt`, clean);
   return getAfipStatus();
 }
 

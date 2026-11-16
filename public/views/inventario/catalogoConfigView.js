@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { renderHierarchyTree, renderViewSwitcher } from '../../lib/viewEngine.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { renderHierarchyTree, renderViewSwitcher } from '../../lib/engine/index.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 let catViewMode = 'lista';
 
@@ -13,7 +13,7 @@ export async function renderCategoriasView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Inventario — Categorías de Productos</h1>
+        <h1>Categorías</h1>
         <p class="muted">Organizá tus productos en categorías y subcategorías jerárquicas.</p>
       </div>
       <div class="actions">
@@ -23,13 +23,13 @@ export async function renderCategoriasView() {
 
     <div class="card">
       <div class="card-header">
-        <h2>Categorías de Productos</h2>
+        <h2>Categorías</h2>
       </div>
       <form id="form-add-cat" class="toolbar" style="margin-bottom:14px; flex-wrap:wrap; gap:8px;">
         <input type="text" name="nombre" required placeholder="Nueva categoría" style="min-width:220px;" />
         <select name="padre_id" style="min-width:190px;">
           <option value="">Sin categoría padre</option>
-          ${categorias.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
+          ${categorias.map(p => `<option value="${p.id}">${esc(p.display_name || (p.padre_nombre ? `${p.padre_nombre} / ${p.nombre}` : p.nombre))}</option>`).join('')}
         </select>
         <input type="text" name="descripcion" placeholder="Descripción" style="min-width:240px; flex:1;" />
         <button type="submit" class="btn btn-primary">+ Agregar Categoría</button>
@@ -89,7 +89,7 @@ export async function renderCategoriasView() {
                   <select class="inline-edit-cat-padre" data-cat-id="${c.id}" style="min-width:170px;">
                     <option value="">-- Ninguna --</option>
                     ${categorias.filter(p => p.id !== c.id).map(p => `
-                      <option value="${p.id}" ${Number(c.padre_id) === Number(p.id) ? 'selected' : ''}>${esc(p.nombre)}</option>
+                      <option value="${p.id}" ${Number(c.padre_id) === Number(p.id) ? 'selected' : ''}>${esc(p.display_name || (p.padre_nombre ? `${p.padre_nombre} / ${p.nombre}` : p.nombre))}</option>
                     `).join('')}
                   </select>
                 </td>
@@ -182,15 +182,15 @@ export async function renderVariantesView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Inventario — Atributos y Variantes</h1>
-        <p class="muted">Atributos agrupados con valores en badges para clasificar productos y filtrar componentes.</p>
+        <h1>Variantes</h1>
+        <p class="muted">Atributos y valores para clasificar productos y componentes.</p>
       </div>
     </div>
 
     <div class="card">
       <div class="card-header">
         <div>
-          <h2>Atributos y Variantes</h2>
+          <h2>Variantes</h2>
         </div>
         <button type="button" id="btn-seed-talles" class="btn btn-sm">Generar Talles 35–45</button>
       </div>
@@ -325,14 +325,14 @@ export async function renderUnidadesView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Inventario — Unidades de Medida</h1>
+        <h1>Unidades</h1>
         <p class="muted">Unidad base resaltada en azul; las demás muestran su factor de conversión.</p>
       </div>
     </div>
 
     <div class="card">
       <div class="card-header">
-        <h2>Unidades de Medida</h2>
+        <h2>Unidades</h2>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -420,14 +420,14 @@ export async function renderUbicacionesView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Inventario — Ubicaciones de Stock</h1>
-        <p class="muted">Ubicaciones internas, dedicadas (sub-ubicaciones de una interna) y virtuales. Las ubicaciones base están protegidas.</p>
+        <h1>Ubicaciones</h1>
+        <p class="muted">Ubicaciones internas, dedicadas y virtuales.</p>
       </div>
     </div>
 
     <div class="card">
       <div class="card-header">
-        <h2>Ubicaciones de Stock</h2>
+        <h2>Ubicaciones</h2>
       </div>
       <div class="card-body">
         <form id="form-add-ubicacion" class="form-grid">

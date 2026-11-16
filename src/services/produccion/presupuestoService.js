@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { convertUnitFromDb } from '../config/configService.js';
@@ -12,9 +11,11 @@ export const presupuestoRepo = new BaseRepository({
 });
 const presupuestoItemRepo = new BaseRepository({ model: MODELS.presupuesto_items });
 const presupuestoLineaRepo = new BaseRepository({ model: MODELS.presupuesto_lineas });
+const productoRepo = new BaseRepository({ model: MODELS.productos });
+const recetaLineaRepo = new BaseRepository({ model: MODELS.receta_lineas });
 
 export function resolveVariantForPlantilla(targetPlantillaId, sourceCombo = {}) {
-  const candidates = db.prepare('SELECT * FROM productos WHERE plantilla_id = ? AND activo = 1 ORDER BY id ASC').all(targetPlantillaId);
+  const candidates = productoRepo.findWhere({ plantilla_id: Number(targetPlantillaId), activo: 1 }, { orderBy: 'id ASC' });
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0];
   const sourceVals = Object.values(sourceCombo || {}).map(v => String(v).trim().toLowerCase()).filter(Boolean);
@@ -48,7 +49,7 @@ export function computePresupuestoLive(presupuestoId = null) {
     const usedPlantillasOrProds = new Set();
     const receta = getActiveRecetaForPlantilla(row.plantilla_id, row.producto_id);
     if (receta) {
-      const lineas = db.prepare('SELECT * FROM receta_lineas WHERE receta_id = ?').all(receta.id);
+      const lineas = recetaLineaRepo.findWhere({ receta_id: receta.id });
       for (const line of lineas) {
         let prod = prodById.get(line.producto_id);
         if (!prod) continue;

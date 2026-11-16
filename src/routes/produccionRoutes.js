@@ -29,6 +29,14 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
     json(res, 200, { ok: true });
     return true;
   }
+  const ordenIngresoMatch = pathname.match(/^\/api\/ordenes\/(\d+)\/ingresar$/);
+  if (ordenIngresoMatch && req.method === 'POST') {
+    try {
+      const b = await parseBody(req);
+      json(res, 200, prodSvc.registrarIngresoParcialOrden(Number(ordenIngresoMatch[1]), b, user));
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
   const ordenEtapaMatch = pathname.match(/^\/api\/orden-etapas\/(\d+)$/);
   if (ordenEtapaMatch && req.method === 'PUT') {
     try {
@@ -96,6 +104,14 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
   if (recMatch && req.method === 'DELETE') {
     recSvc.deleteReceta(Number(recMatch[1]));
     json(res, 200, { ok: true });
+    return true;
+  }
+  const recCostoMatch = pathname.match(/^\/api\/recetas\/(\d+)\/calcular-costo$/);
+  if (recCostoMatch && req.method === 'POST') {
+    const b = await parseBody(req).catch(() => ({}));
+    const resCosto = recSvc.calcularCostoDesdeReceta(Number(recCostoMatch[1]), { aplicar: b?.aplicar !== false, user });
+    if (!resCosto) json(res, 404, { error: 'Receta no encontrada' });
+    else json(res, 200, resCosto);
     return true;
   }
   const recLinePostMatch = pathname.match(/^\/api\/recetas\/(\d+)\/lineas$/);

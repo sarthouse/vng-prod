@@ -1,6 +1,6 @@
 import { api } from '../../lib/api.js';
 import { esc, fmtMoney, fmtNum, badgeForEstado } from '../../lib/format.js';
-import { renderKpiStrip, renderDataTable } from '../../lib/viewEngine.js';
+import { renderKpiStrip, renderDataTable } from '../../lib/engine/index.js';
 
 export async function renderDashboardView() {
   const root = document.getElementById('app-view');
@@ -11,7 +11,7 @@ export async function renderDashboardView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Dashboard General</h1>
+        <h1>Dashboard</h1>
         <p class="muted">Resumen financiero, operativo y alertas pendientes de confirmación.</p>
       </div>
       <div class="actions">
@@ -59,10 +59,10 @@ export async function renderDashboardView() {
   ]);
 
   const borradorRows = [
-    { tipo: 'Compras Borrador (Abastecimiento / Auto)', cantidad: b.compras || 0, href: '/compras' },
-    { tipo: 'Recepciones de Stock en Borrador', cantidad: b.recepciones || 0, href: '/traslados' },
-    { tipo: 'Entregas a Clientes en Borrador', cantidad: b.entregas || 0, href: '/traslados' },
-    { tipo: 'Remitos de Taller en Borrador', cantidad: b.remitos_taller || 0, href: '/remitos' },
+    { tipo: 'Compras en Borrador', cantidad: b.compras || 0, href: '/compras' },
+    { tipo: 'Recepciones en Borrador', cantidad: b.recepciones || 0, href: '/operaciones-stock' },
+    { tipo: 'Entregas en Borrador', cantidad: b.entregas || 0, href: '/operaciones-stock' },
+    { tipo: 'Traslados en Borrador', cantidad: b.remitos_taller || 0, href: '/operaciones-stock' },
     { tipo: 'Presupuestos de Venta', cantidad: b.presupuestos_venta || 0, href: '/ventas' },
   ].filter(r => r.cantidad > 0);
 

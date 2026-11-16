@@ -5,8 +5,8 @@ import { printRemito } from '../../lib/remitoPrint.js';
 import { printOrdenPago } from '../../lib/tesoreriaPrint.js';
 import { mountCombobox, quickCreateProveedor, quickCreateProducto } from '../../lib/autocomplete.js';
 import { getIvaRatesFromConfig, calcDocumentTotals, renderTaxFooterHtml } from '../../lib/taxHelper.js';
-import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/viewEngine.js';
-import { showConfirmModal, showPromptModal } from '../../lib/modal.js';
+import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
+import { showConfirmModal, showPromptModal } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 
 async function imprimirRemitoCompra(compraId, empresa) {
@@ -261,7 +261,7 @@ export async function renderCompraFormView({ id } = {}) {
     api('/api/metodos-pago?solo_activos=1').catch(() => []),
   ]);
 
-  const ubicacionesActivas = (ubicaciones || []).filter(u => u.activo !== 0);
+  const ubicacionesActivas = (ubicaciones || []).filter(u => u.activa !== 0 && u.activo !== 0);
   const cuentasEgreso = planCuentas.filter(pc => pc.activo !== 0 && pc.imputable !== 0 && pc.tipo === 'egreso');
   const ivaRates = getIvaRatesFromConfig(impuestosConfig);
   const otrosImpuestosConfig = impuestosConfig.filter(ic => ic.tipo !== 'iva');
@@ -782,8 +782,27 @@ export async function renderCompraFormView({ id } = {}) {
               }
             } catch { /* fallback a costo catálogo */ }
             lineas[i].precio_unitario = resolvedCosto;
-            lineas[i].alicuota_iva = Number(p.alicuota_iva ?? defaultIva);
+            lineas[i].alicuota_iva = Number(p.alicuota_iva_compra ?? p.alicuota_iva ?? defaultIva);
             lineas[i].subtotal = Number((lineas[i].cantidad * lineas[i].precio_unitario).toFixed(2));
+            let addedTax = false;
+            if (Array.isArray(p.impuestos_compra_ids) && p.impuestos_compra_ids.length) {
+              const t = calcDocumentTotals(lineas, impuestos, caracter, tipoComprobante);
+              for (const taxId of p.impuestos_compra_ids) {
+                const cfg = impuestosConfig.find(x => Number(x.id) === Number(taxId) && x.tipo !== 'iva');
+                if (cfg && !impuestos.some(x => Number(x.impuesto_id) === Number(cfg.id))) {
+                  const base = cfg.base_calculo === 'total' ? Number((t.neto + t.ivaTotal).toFixed(2)) : cfg.base_calculo === 'fijo' ? 0 : t.neto;
+                  const alic = Number(cfg.alicuota_defecto || 0);
+                  const monto = cfg.base_calculo === 'fijo' ? alic : Number((base * alic / 100).toFixed(2));
+                  impuestos.push({ impuesto_id: cfg.id, nombre: cfg.nombre, tipo: cfg.tipo, base_calculo: cfg.base_calculo, base, alicuota: alic, monto });
+                  addedTax = true;
+                }
+              }
+            }
+            if (addedTax) {
+              syncHeaderMeta();
+              draw();
+              return;
+            }
             const descInp = root.querySelector(`.cl-desc[data-idx="${i}"]`);
             const udmBadge = root.querySelector(`.cl-udm-badge[data-idx="${i}"]`);
             const priceInp = root.querySelector(`.cl-price[data-idx="${i}"]`);
@@ -861,13 +880,13 @@ export async function renderCompraFormView({ id } = {}) {
       });
       root.querySelector('#btn-cmp-sugerir-iibb')?.addEventListener('click', async () => {
         syncHeaderMeta();
-        if (!contactoId) { toast('Seleccioná primero un proveedor', true); return; }
+        if (!proveedorId) { toast('Seleccioná primero un proveedor', true); return; }
         const t = calcDocumentTotals(lineas, impuestos, caracter, tipoComprobante);
         try {
           const res = await api('/api/fiscal/sugerir-percepciones', {
             method: 'POST',
             body: JSON.stringify({
-              contacto_id: Number(contactoId),
+              contacto_id: Number(proveedorId),
               neto: t.neto,
               total: Number((t.neto + t.ivaTotal).toFixed(2)),
               aplica_a: 'compras',

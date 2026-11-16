@@ -1,5 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, fmtNum, badgeForEstado, badgeForTipo, downloadCSV } from '../../lib/format.js';
+import { renderMetaPanel } from '../../lib/metaPanel.js';
+import { mountDetailView } from '../../lib/engine/detailEngine.js';
 
 export async function renderPedidoDetalleView({ id }) {
   const root = document.getElementById('app-view');
@@ -7,38 +9,12 @@ export async function renderPedidoDetalleView({ id }) {
   const { pedido, lineas, snapshot, entregas, pendiente } = detail;
 
   const totalCosto = snapshot.reduce((acc, s) => acc + Number(s.subtotal || 0), 0);
+  const pendTotal = Number(pendiente?.total ?? 0);
   const pendMap = new Map((pendiente?.lineas || []).map(l => [Number(l.producto_id), l]));
 
-  root.innerHTML = `
-    <div class="page-header">
-      <div>
-        <div style="margin-bottom:6px;">
-          <a href="/pedidos" data-link class="muted" style="font-size:0.85rem;">← Volver a Pedidos</a>
-        </div>
-        <h1>Pedido #${pedido.pedido} — ${esc(pedido.plantilla_nombre)} ${badgeForEstado(pedido.estado)}</h1>
-        <p class="muted">
-          ${pedido.contacto_nombre ? `Cliente: <strong>${esc(pedido.contacto_nombre)}</strong> · ` : ''}
-          Fecha pedido: ${esc(pedido.fecha || '-')} · Entrega estimada: ${esc(pedido.fecha_est || '-')}
-        </p>
-      </div>
-      <div class="actions">
-        <a href="/pedidos/nuevo" data-link class="btn">+ Nuevo Pedido</a>
-        <a href="/entregas/nueva?lote=${pedido.pedido}" data-link class="btn">+ Registrar Entrega</a>
-        <a href="/pedidos/${pedido.id}/editar" data-link class="btn btn-primary">Editar Pedido</a>
-      </div>
-    </div>
-
-    <div class="detail-meta">
-      <div class="meta-box"><span>Total Pedido</span><strong>${pedido.cantidad} u.</strong></div>
-      <div class="meta-box"><span>Pendiente de Entrega</span><strong>${pendiente?.total ?? 0} u.</strong></div>
-      <div class="meta-box"><span>Entregas Registradas</span><strong>${entregas.length}</strong></div>
-      <div class="meta-box"><span>Costo Total Snapshot</span><strong>${fmtMoney(totalCosto)}</strong></div>
-    </div>
-
+  const detalleHtml = `
     <div class="card">
-      <div class="card-header">
-        <h2>Detalle del Pedido vs Pendiente</h2>
-      </div>
+      <div class="card-header"><h2>Detalle del Pedido vs Pendiente</h2></div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -60,14 +36,16 @@ export async function renderPedidoDetalleView({ id }) {
                 const p = pendMap.get(Number(l.producto_id));
                 return `<td class="num">${p ? p.pendiente : l.cantidad}</td>`;
               }).join('')}
-              <td class="num"><strong>${pendiente?.total ?? 0}</strong></td>
+              <td class="num"><strong>${pendTotal}</strong></td>
             </tr>
           </tbody>
         </table>
       </div>
       ${pedido.observaciones ? `<p class="muted" style="margin-top:10px; font-size:0.85rem;">Observaciones: ${esc(pedido.observaciones)}</p>` : ''}
     </div>
+  `;
 
+  const snapshotHtml = `
     <div class="card">
       <div class="card-header">
         <div>
@@ -125,7 +103,9 @@ export async function renderPedidoDetalleView({ id }) {
         </div>
       `}
     </div>
+  `;
 
+  const entregasHtml = `
     <div class="card">
       <div class="card-header">
         <h2>Entregas del Pedido</h2>
@@ -162,38 +142,85 @@ export async function renderPedidoDetalleView({ id }) {
     </div>
   `;
 
-  root.querySelectorAll('.snap-check').forEach(cb => {
-    cb.addEventListener('change', async () => {
-      try {
-        await api(`/api/pedido-insumos/${cb.dataset.snapId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ comprado: cb.checked }),
-        });
-        toast(cb.checked ? 'Marcado como comprado' : 'Desmarcado');
-      } catch (err) {
-        cb.checked = !cb.checked;
-        toast(err.message, true);
-      }
-    });
-  });
+  const estadoBadgeClass = pedido.estado === 'Entregado' ? 'badge-ok' : pedido.estado === 'Parcial' ? 'badge-warn' : 'badge-muted';
 
-  root.querySelector('#btn-export-snapshot')?.addEventListener('click', () => {
-    const header = ['Producto', 'Categoria', 'Proveedor', 'Requerido', 'MinimoCompra', 'AComprar', 'UdM', 'PrecioUnitario', 'Subtotal', 'Comprado'];
-    const lines = [header.join(',')];
-    for (const s of snapshot) {
-      lines.push([
-        `"${(s.nombre || '').replace(/"/g, '""')}"`,
-        `"${(s.categoria || '').replace(/"/g, '""')}"`,
-        `"${(s.proveedor_nombre || '').replace(/"/g, '""')}"`,
-        s.cantidad_requerida,
-        s.minimo_compra,
-        s.cantidad_a_comprar,
-        `"${s.udm}"`,
-        s.precio_unitario,
-        s.subtotal,
-        s.comprado ? 'SI' : 'NO',
-      ].join(','));
-    }
-    downloadCSV(lines.join('\n'), `pedido_${pedido.pedido}_insumos.csv`);
+  mountDetailView(root, {
+    breadcrumb: { label: 'Volver a Pedidos', href: '/pedidos' },
+    title: `Pedido #${pedido.pedido} — ${pedido.plantilla_nombre}`,
+    subtitle: `${pedido.contacto_nombre ? `Cliente: <strong>${esc(pedido.contacto_nombre)}</strong> · ` : ''}Fecha pedido: ${esc(pedido.fecha || '-')} · Entrega estimada: ${esc(pedido.fecha_est || '-')}`,
+    badge: { text: pedido.estado || 'Pendiente', className: estadoBadgeClass },
+    actions: [
+      { label: '+ Nuevo Pedido', href: '/pedidos/nuevo' },
+      { label: '+ Registrar Entrega', href: `/entregas/nueva?lote=${pedido.pedido}` },
+      { label: 'Editar Pedido', href: `/pedidos/${pedido.id}/editar`, primary: true },
+    ],
+    steps: [
+      { key: 'Pendiente', label: 'Pendiente' },
+      { key: 'En Producción', label: 'En Producción' },
+      { key: 'Parcial', label: 'Parcial' },
+      { key: 'Entregado', label: 'Entregado' },
+    ],
+    currentStep: pedido.estado,
+    smartButtons: [
+      { label: 'Entregas', count: entregas.length, icon: '🚚', href: '/entregas' },
+      { label: 'Insumos', count: snapshot.length, icon: '📦' },
+    ],
+    kpis: [
+      { label: 'Total Pedido', value: `${pedido.cantidad} u.` },
+      { label: 'Pendiente de Entrega', value: `${pendTotal} u.`, tone: pendTotal > 0 ? 'warn' : 'ok' },
+      { label: 'Entregas Registradas', value: String(entregas.length) },
+      { label: 'Costo Total Snapshot', value: fmtMoney(totalCosto) },
+    ],
+    tabs: [
+      { id: 'detalle', label: 'Detalle vs Pendiente', badge: (lineas || []).length, html: detalleHtml },
+      { id: 'insumos', label: 'Insumos a Comprar', badge: snapshot.length, html: snapshotHtml },
+      { id: 'entregas', label: 'Entregas', badge: entregas.length, html: entregasHtml },
+    ],
+    defaultTab: 'detalle',
+    sidebarHtml: '<div id="pedido-meta-panel"></div>',
+    onMountSidebar: (sidebarEl) => {
+      renderMetaPanel(sidebarEl.querySelector('#pedido-meta-panel'), {
+        entidadTipo: 'pedido',
+        entidadId: id,
+        titulo: `Pedido #${pedido.pedido}`,
+        record: pedido,
+      });
+    },
+    onAfterMount: (container) => {
+      container.querySelectorAll('.snap-check').forEach(cb => {
+        cb.addEventListener('change', async () => {
+          try {
+            await api(`/api/pedido-insumos/${cb.dataset.snapId}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ comprado: cb.checked }),
+            });
+            toast(cb.checked ? 'Marcado como comprado' : 'Desmarcado');
+          } catch (err) {
+            cb.checked = !cb.checked;
+            toast(err.message, true);
+          }
+        });
+      });
+
+      container.querySelector('#btn-export-snapshot')?.addEventListener('click', () => {
+        const header = ['Producto', 'Categoria', 'Proveedor', 'Requerido', 'MinimoCompra', 'AComprar', 'UdM', 'PrecioUnitario', 'Subtotal', 'Comprado'];
+        const lines = [header.join(',')];
+        for (const s of snapshot) {
+          lines.push([
+            `"${(s.nombre || '').replace(/"/g, '""')}"`,
+            `"${(s.categoria || '').replace(/"/g, '""')}"`,
+            `"${(s.proveedor_nombre || '').replace(/"/g, '""')}"`,
+            s.cantidad_requerida,
+            s.minimo_compra,
+            s.cantidad_a_comprar,
+            `"${s.udm}"`,
+            s.precio_unitario,
+            s.subtotal,
+            s.comprado ? 'SI' : 'NO',
+          ].join(','));
+        }
+        downloadCSV(lines.join('\n'), `pedido_${pedido.pedido}_insumos.csv`);
+      });
+    },
   });
 }

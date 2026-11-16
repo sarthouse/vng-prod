@@ -1,9 +1,9 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, renderProvinciaOptions, exportRowsToCSV } from '../../lib/format.js';
 import { navigate } from '../../router.js';
-import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/viewEngine.js';
+import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
 import { printCuentaCorriente, buildCuentaCorrienteMovimientos } from '../../lib/cuentaCorrientePrint.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderContactosView() {
   const root = document.getElementById('app-view');
@@ -51,9 +51,9 @@ export async function renderContactosView() {
   const totalCliSaldo = contactos.reduce((s, c) => s + (c.es_cliente ? Number(c.saldo_cliente || 0) : 0), 0);
   renderKpiStrip(root.querySelector('#con-kpis'), [
     { label: 'Total Contactos', value: String(contactos.length) },
-    { label: 'Clientes / Prov. / Talleres', value: `${contactos.filter(c => c.es_cliente).length} / ${contactos.filter(c => c.es_proveedor).length} / ${contactos.filter(c => c.es_taller).length}` },
-    { label: 'Saldo a Pagar (Prov.)', value: fmtMoney(totalProvSaldo), tone: totalProvSaldo > 0 ? 'accent' : 'default' },
-    { label: 'Saldo a Cobrar (Cli.)', value: fmtMoney(totalCliSaldo), tone: totalCliSaldo > 0 ? 'success' : 'default' },
+    { label: 'Clientes / Proveedores / Talleres', value: `${contactos.filter(c => c.es_cliente).length} / ${contactos.filter(c => c.es_proveedor).length} / ${contactos.filter(c => c.es_taller).length}` },
+    { label: 'Saldo Proveedores', value: fmtMoney(totalProvSaldo), tone: totalProvSaldo > 0 ? 'accent' : 'default' },
+    { label: 'Saldo Clientes', value: fmtMoney(totalCliSaldo), tone: totalCliSaldo > 0 ? 'success' : 'default' },
   ]);
 
   const drawTable = () => {
@@ -131,11 +131,12 @@ export async function renderContactosView() {
     const rows = getFiltered();
     if (!rows.length) { toast('No hay contactos para exportar', true); return; }
     exportRowsToCSV(
-      ['Nombre', 'Razón Social', 'Tipo Doc', 'Documento', 'Condición IVA', 'Cliente', 'Proveedor', 'Taller', 'Teléfono', 'Email', 'Dirección', 'Localidad', 'Provincia', 'Saldo Cliente', 'Saldo Proveedor'],
+      ['nombre', 'razon_social', 'tipo_documento', 'cuit', 'condicion_iva', 'jurisdiccion_codigo', 'es_cliente', 'es_proveedor', 'es_taller', 'telefono', 'email', 'direccion', 'localidad', 'provincia', 'codigo_postal', 'observaciones', 'saldo_cliente', 'saldo_proveedor'],
       rows.map(c => [
-        c.nombre, c.razon_social, c.tipo_documento || 'CUIT', c.cuit, c.condicion_iva,
-        c.es_cliente ? 'Sí' : 'No', c.es_proveedor ? 'Sí' : 'No', c.es_taller ? 'Sí' : 'No',
-        c.telefono, c.email, c.direccion || c.direccion_fiscal, c.localidad, c.provincia,
+        c.nombre, c.razon_social || '', c.tipo_documento || 'CUIT', c.cuit || '', c.condicion_iva || '',
+        c.jurisdiccion_codigo || '', c.es_cliente ? 1 : 0, c.es_proveedor ? 1 : 0, c.es_taller ? 1 : 0,
+        c.telefono || '', c.email || '', c.direccion || c.direccion_fiscal || '', c.localidad || '', c.provincia || '',
+        c.codigo_postal || '', c.observaciones || '',
         Number(c.saldo_cliente || 0), Number(c.saldo_proveedor || 0),
       ]),
       `contactos_${new Date().toISOString().slice(0, 10)}.csv`

@@ -1,6 +1,6 @@
-import { api, toast } from '../../lib/api.js';
+import { api, toast, refreshKPIs } from '../../lib/api.js';
 import { esc, fmtMoney, fmtDate } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/modal.js';
+import { mountPageView, showConfirmModal } from '../../lib/engine/index.js';
 
 function currentMonthRange() {
   const now = new Date();
@@ -24,46 +24,48 @@ export async function renderPosicionIvaView() {
     });
     const d = await api(`/api/fiscal/posicion-iva?${qs.toString()}`);
 
-    root.innerHTML = `
-      <div class="page-header">
-        <div>
-          <h1>Contabilidad — Posición Mensual de IVA (F.2002)</h1>
-          <p class="muted">Cruce automático de Débito Fiscal (Ventas), Crédito Fiscal (Compras) y Percepciones de IVA sufridas.</p>
+    mountPageView(root, {
+      title: 'Posición IVA',
+      subtitle: 'Cruce automático de Débito Fiscal, Crédito Fiscal y Percepciones de IVA.',
+      kpis: [
+        { label: 'Débito Fiscal', value: fmtMoney(d.debito_fiscal) },
+        { label: 'Crédito Fiscal', value: fmtMoney(d.credito_fiscal) },
+        { label: 'Percepciones Sufridas', value: fmtMoney(d.percepciones_iva_sufridas) },
+        {
+          label: d.saldo_a_pagar > 0 ? 'IVA a Pagar' : 'Saldo a Favor',
+          value: fmtMoney(d.saldo_a_pagar > 0 ? d.saldo_a_pagar : d.saldo_libre_a_favor),
+          tone: d.saldo_a_pagar > 0 ? 'danger' : 'ok',
+        },
+      ],
+      bodyHtml: `
+        <div class="card">
+          <form id="form-pos-iva" class="toolbar" style="flex-wrap:wrap;gap:8px;align-items:end;">
+            <div><label style="display:block;font-size:12px;">Desde</label><input type="date" name="desde" value="${esc(state.desde)}" /></div>
+            <div><label style="display:block;font-size:12px;">Hasta</label><input type="date" name="hasta" value="${esc(state.hasta)}" /></div>
+            <div><label style="display:block;font-size:12px;">Saldo Téc. Ant.</label><input type="number" step="0.01" min="0" name="saldoTecAnt" value="${state.saldoTecAnt}" style="width:130px;" /></div>
+            <div><label style="display:block;font-size:12px;">Saldo Libre Ant.</label><input type="number" step="0.01" min="0" name="saldoLibAnt" value="${state.saldoLibAnt}" style="width:130px;" /></div>
+            <button type="submit" class="btn btn-primary">Calcular</button>
+            <button type="button" class="btn" id="btn-contabilizar-iva" style="margin-left:auto;">Contabilizar Liquidación</button>
+          </form>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <tbody>
+                <tr><td>Neto Gravado Ventas</td><td class="num">${fmtMoney(d.ventas_neto)}</td></tr>
+                <tr><td><strong>IVA Débito Fiscal</strong></td><td class="num"><strong>${fmtMoney(d.debito_fiscal)}</strong></td></tr>
+                <tr><td>Neto Gravado Compras</td><td class="num">${fmtMoney(d.compras_neto)}</td></tr>
+                <tr><td>(-) IVA Crédito Fiscal</td><td class="num">${fmtMoney(d.credito_fiscal)}</td></tr>
+                <tr><td>(-) Saldo Técnico Período Anterior</td><td class="num">${fmtMoney(d.saldo_tecnico_anterior)}</td></tr>
+                <tr><td><strong>Saldo Técnico del Período</strong></td><td class="num"><strong>${d.saldo_tecnico_a_pagar > 0 ? `${fmtMoney(d.saldo_tecnico_a_pagar)} (A Pagar)` : `${fmtMoney(d.saldo_tecnico_a_favor)} (A Favor)`}</strong></td></tr>
+                <tr><td>(-) Percepciones de IVA Sufridas</td><td class="num">${fmtMoney(d.percepciones_iva_sufridas)}</td></tr>
+                <tr><td>(-) Saldo de Libre Disponibilidad Anterior</td><td class="num">${fmtMoney(d.saldo_libre_anterior)}</td></tr>
+                <tr><td><strong>Resultado Final F.2002</strong></td><td class="num"><strong>${d.saldo_a_pagar > 0 ? `${fmtMoney(d.saldo_a_pagar)} A PAGAR` : `${fmtMoney(d.saldo_libre_a_favor)} LIBRE DISPONIBILIDAD`}</strong></td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
-
-      <div class="card">
-        <form id="form-pos-iva" class="toolbar" style="margin-bottom:14px;flex-wrap:wrap;gap:8px;align-items:end;">
-          <div><label style="display:block;font-size:12px;">Desde</label><input type="date" name="desde" value="${esc(state.desde)}" /></div>
-          <div><label style="display:block;font-size:12px;">Hasta</label><input type="date" name="hasta" value="${esc(state.hasta)}" /></div>
-          <div><label style="display:block;font-size:12px;">Saldo Téc. Ant.</label><input type="number" step="0.01" min="0" name="saldoTecAnt" value="${state.saldoTecAnt}" style="width:130px;" /></div>
-          <div><label style="display:block;font-size:12px;">Saldo Libre Ant.</label><input type="number" step="0.01" min="0" name="saldoLibAnt" value="${state.saldoLibAnt}" style="width:130px;" /></div>
-          <button type="submit" class="btn btn-primary">Calcular</button>
-          <button type="button" class="btn" id="btn-contabilizar-iva" style="margin-left:auto;">Contabilizar Liquidación (Asiento)</button>
-        </form>
-
-        <div class="kpis" style="margin-bottom:16px;">
-          <div class="kpi-card"><span class="kpi-label">Débito Fiscal (Ventas)</span><strong class="kpi-value">${fmtMoney(d.debito_fiscal)}</strong></div>
-          <div class="kpi-card"><span class="kpi-label">Crédito Fiscal (Compras)</span><strong class="kpi-value">${fmtMoney(d.credito_fiscal)}</strong></div>
-          <div class="kpi-card"><span class="kpi-label">Percepciones IVA Sufridas</span><strong class="kpi-value">${fmtMoney(d.percepciones_iva_sufridas)}</strong></div>
-          <div class="kpi-card"><span class="kpi-label">${d.saldo_a_pagar > 0 ? 'IVA a Pagar' : 'Saldo Libre a Favor'}</span><strong class="kpi-value accent">${fmtMoney(d.saldo_a_pagar > 0 ? d.saldo_a_pagar : d.saldo_libre_a_favor)}</strong></div>
-        </div>
-
-        <table class="data-table">
-          <tbody>
-            <tr><td>Neto Gravado Ventas</td><td class="num">${fmtMoney(d.ventas_neto)}</td></tr>
-            <tr><td><strong>IVA Débito Fiscal</strong></td><td class="num"><strong>${fmtMoney(d.debito_fiscal)}</strong></td></tr>
-            <tr><td>Neto Gravado Compras</td><td class="num">${fmtMoney(d.compras_neto)}</td></tr>
-            <tr><td>(-) IVA Crédito Fiscal</td><td class="num">${fmtMoney(d.credito_fiscal)}</td></tr>
-            <tr><td>(-) Saldo Técnico Período Anterior</td><td class="num">${fmtMoney(d.saldo_tecnico_anterior)}</td></tr>
-            <tr><td><strong>Saldo Técnico del Período</strong></td><td class="num"><strong>${d.saldo_tecnico_a_pagar > 0 ? `${fmtMoney(d.saldo_tecnico_a_pagar)} (A Pagar)` : `${fmtMoney(d.saldo_tecnico_a_favor)} (A Favor)`}</strong></td></tr>
-            <tr><td>(-) Percepciones de IVA Sufridas</td><td class="num">${fmtMoney(d.percepciones_iva_sufridas)}</td></tr>
-            <tr><td>(-) Saldo de Libre Disponibilidad Anterior</td><td class="num">${fmtMoney(d.saldo_libre_anterior)}</td></tr>
-            <tr><td><strong>Resultado Final F.2002</strong></td><td class="num"><strong>${d.saldo_a_pagar > 0 ? `${fmtMoney(d.saldo_a_pagar)} A PAGAR` : `${fmtMoney(d.saldo_libre_a_favor)} LIBRE DISPONIBILIDAD`}</strong></td></tr>
-          </tbody>
-        </table>
-      </div>
-    `;
+      `,
+    });
 
     root.querySelector('#form-pos-iva')?.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -113,8 +115,8 @@ export async function renderConciliacionBancariaView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Tesorería — Conciliación Bancaria</h1>
-          <p class="muted">Importá el extracto bancario (CSV/TXT) y conciliá movimientos contra cobros, pagos y transferencias.</p>
+          <h1>Conciliación</h1>
+          <p class="muted">Importá el extracto bancario y conciliá movimientos contra cobros, pagos y transferencias.</p>
         </div>
       </div>
 
@@ -255,22 +257,22 @@ export async function renderCierresYMonedasView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <h1>Contabilidad — Cierre de Ejercicio y Multimoneda</h1>
-          <p class="muted">Asiento de refundición de cuentas de resultado, bloqueo de períodos cerrados, cuadre de cuentas corrientes y cotizaciones.</p>
+          <h1>Cierres</h1>
+          <p class="muted">Refundición de cuentas de resultado, bloqueo de períodos cerrados, cuadre de cuentas corrientes y cotizaciones.</p>
         </div>
       </div>
 
       ${cuadre ? `
         <div class="card" style="margin-bottom:16px;">
-          <div class="card-header"><h2>Control de Cuadre Contable (Cuentas Corrientes vs. Balance) y Antigüedad de Saldos</h2></div>
+          <div class="card-header"><h2>Cuadre Contable y Antigüedad de Saldos</h2></div>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Rubro / Cuenta</th>
+                  <th>Rubro</th>
                   <th class="num">Saldo Balance</th>
                   <th class="num">Pend. Facturas</th>
-                  <th class="num">Anticipos s/ Imputar</th>
+                  <th class="num">Anticipos</th>
                   <th class="num">Saldo Operativo</th>
                   <th class="num">Diferencia</th>
                   <th>Estado</th>
@@ -283,8 +285,8 @@ export async function renderCierresYMonedasView() {
               </thead>
               <tbody>
                 ${[
-                  { label: 'Clientes (1.1.03)', d: cuadre.clientes },
-                  { label: 'Proveedores (2.1.01)', d: cuadre.proveedores },
+                  { label: 'Clientes', d: cuadre.clientes },
+                  { label: 'Proveedores', d: cuadre.proveedores },
                 ].map(({ label, d }) => `
                   <tr>
                     <td><strong>${esc(label)}</strong></td>
@@ -307,63 +309,67 @@ export async function renderCierresYMonedasView() {
         </div>
       ` : ''}
 
-      <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:16px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;">
         <div class="card">
-          <div class="card-header"><h2>Cierre de Ejercicio (Refundición)</h2></div>
+          <div class="card-header"><h2>Cierre de Ejercicio</h2></div>
           <form id="form-cierre-ej" class="form-grid" style="margin-bottom:12px;">
-            <div><label>Desde *</label><input type="date" name="fecha_desde" required value="${year}-01-01" /></div>
-            <div><label>Hasta *</label><input type="date" name="fecha_hasta" required value="${year}-12-31" /></div>
-            <div class="full"><label>Descripción</label><input type="text" name="descripcion" placeholder="Ejercicio Fiscal ${year}" /></div>
+            <label><span>Desde *</span><input type="date" name="fecha_desde" required value="${year}-01-01" /></label>
+            <label><span>Hasta *</span><input type="date" name="fecha_hasta" required value="${year}-12-31" /></label>
+            <label class="full"><span>Descripción</span><input type="text" name="descripcion" placeholder="Ejercicio Fiscal ${year}" /></label>
             <div class="full" style="display:flex;gap:8px;">
               <button type="button" class="btn" id="btn-preview-cierre">Previsualizar Resultado</button>
               <button type="submit" class="btn btn-primary">Cerrar Período y Refundir</button>
             </div>
           </form>
           <div id="cierre-preview-box" style="margin-bottom:12px;"></div>
-          <table class="data-table">
-            <thead><tr><th>Período</th><th>Descripción</th><th class="num">Resultado</th><th>Asiento</th><th>Estado</th><th>Acciones</th></tr></thead>
-            <tbody>
-              ${cierres.length ? cierres.map(c => `
-                <tr>
-                  <td>${fmtDate(c.fecha_desde)} → ${fmtDate(c.fecha_hasta)}</td>
-                  <td>${esc(c.descripcion)}</td>
-                  <td class="num"><strong>${fmtMoney(c.resultado_neto)}</strong></td>
-                  <td><code>${esc(c.asiento_numero || '-')}</code></td>
-                  <td><span class="badge ${c.estado === 'cerrado' ? 'badge-ok' : 'badge-muted'}">${esc(c.estado)}</span></td>
-                  <td>${c.estado === 'cerrado' ? `<button type="button" class="btn btn-sm" data-reabrir="${c.id}">Reabrir</button>` : '-'}</td>
-                </tr>
-              `).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;">Sin cierres registrados.</td></tr>'}
-            </tbody>
-          </table>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Período</th><th>Descripción</th><th class="num">Resultado</th><th>Asiento</th><th>Estado</th><th>Acciones</th></tr></thead>
+              <tbody>
+                ${cierres.length ? cierres.map(c => `
+                  <tr>
+                    <td>${fmtDate(c.fecha_desde)} → ${fmtDate(c.fecha_hasta)}</td>
+                    <td>${esc(c.descripcion)}</td>
+                    <td class="num"><strong>${fmtMoney(c.resultado_neto)}</strong></td>
+                    <td><code>${esc(c.asiento_numero || '-')}</code></td>
+                    <td><span class="badge ${c.estado === 'cerrado' ? 'badge-ok' : 'badge-muted'}">${esc(c.estado)}</span></td>
+                    <td>${c.estado === 'cerrado' ? `<button type="button" class="btn btn-sm" data-reabrir="${c.id}">Reabrir</button>` : '-'}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;">Sin cierres registrados.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div class="card">
           <div class="card-header"><h2>Cotizaciones Multimoneda</h2></div>
           <form id="form-cotiz" class="form-grid" style="margin-bottom:12px;">
-            <div>
-              <label>Moneda</label>
+            <label>
+              <span>Moneda</span>
               <select name="moneda">
                 <option value="USD">USD — Dólar</option>
                 <option value="EUR">EUR — Euro</option>
               </select>
-            </div>
-            <div><label>Fecha *</label><input type="date" name="fecha" required value="${new Date().toISOString().slice(0, 10)}" /></div>
-            <div><label>Cotización ARS *</label><input type="number" step="0.01" min="0.01" name="cotizacion" required placeholder="1050.00" /></div>
+            </label>
+            <label><span>Fecha *</span><input type="date" name="fecha" required value="${new Date().toISOString().slice(0, 10)}" /></label>
+            <label><span>Cotización ARS *</span><input type="number" step="0.01" min="0.01" name="cotizacion" required placeholder="1050.00" /></label>
             <div style="align-self:end;"><button type="submit" class="btn btn-primary">Guardar</button></div>
           </form>
-          <table class="data-table">
-            <thead><tr><th>Fecha</th><th>Moneda</th><th class="num">Cotización</th><th>Fuente</th></tr></thead>
-            <tbody>
-              ${cotizaciones.length ? cotizaciones.map(c => `
-                <tr>
-                  <td>${fmtDate(c.fecha)}</td>
-                  <td><strong>${esc(c.moneda)}</strong></td>
-                  <td class="num">${fmtMoney(c.cotizacion)}</td>
-                  <td>${esc(c.fuente || 'manual')}</td>
-                </tr>
-              `).join('') : '<tr><td colspan="4" class="muted" style="text-align:center;">Sin cotizaciones cargadas.</td></tr>'}
-            </tbody>
-          </table>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Fecha</th><th>Moneda</th><th class="num">Cotización</th><th>Fuente</th></tr></thead>
+              <tbody>
+                ${cotizaciones.length ? cotizaciones.map(c => `
+                  <tr>
+                    <td>${fmtDate(c.fecha)}</td>
+                    <td><strong>${esc(c.moneda)}</strong></td>
+                    <td class="num">${fmtMoney(c.cotizacion)}</td>
+                    <td>${esc(c.fuente || 'manual')}</td>
+                  </tr>
+                `).join('') : '<tr><td colspan="4" class="muted" style="text-align:center;">Sin cotizaciones cargadas.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     `;
@@ -423,6 +429,7 @@ export async function renderCierresYMonedasView() {
           }),
         });
         toast('Cotización guardada');
+        refreshKPIs();
         render();
       } catch (err) { toast(err.message, true); }
     });

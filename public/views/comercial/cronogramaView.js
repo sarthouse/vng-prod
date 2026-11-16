@@ -1,6 +1,6 @@
 import { api } from '../../lib/api.js';
 import { esc, fmtNum } from '../../lib/format.js';
-import { renderDataTable, renderKpiStrip } from '../../lib/viewEngine.js';
+import { renderDataTable, renderKpiStrip } from '../../lib/engine/index.js';
 
 export async function renderCronogramaView() {
   const root = document.getElementById('app-view');
@@ -15,11 +15,11 @@ export async function renderCronogramaView() {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <h1>Cronograma Óptimo de Compras</h1>
-        <p class="muted">Fechas recomendadas de compra según las etapas de las órdenes activas, lead time por insumo y punto de reorden.</p>
+        <h1>Abastecimiento</h1>
+        <p class="muted">Fechas recomendadas de compra según etapas de órdenes activas, plazos de entrega y stock mínimo.</p>
       </div>
       <div class="actions">
-        <a href="/compras" data-link class="btn btn-primary">+ Registrar Compra</a>
+        <a href="/compras" data-link class="btn btn-primary">+ Nueva Compra</a>
       </div>
     </div>
 
@@ -27,14 +27,14 @@ export async function renderCronogramaView() {
 
     <div class="card">
       <div class="card-header">
-        <h2>Compras Consolidadas por Insumo / Proveedor</h2>
+        <h2>Requerimientos Consolidados</h2>
       </div>
       <div id="mrp-consolidado-table"></div>
     </div>
 
     <div class="card">
       <div class="card-header">
-        <h2>Planificación de Compras por Etapa</h2>
+        <h2>Requerimientos por Etapa</h2>
       </div>
       <div id="mrp-req-table"></div>
     </div>

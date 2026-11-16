@@ -1,6 +1,6 @@
 import { api, toast } from './api.js';
 import { esc, setupFileDropzones } from './format.js';
-import { showConfirmModal } from './modal.js';
+import { showConfirmModal } from './engine/index.js';
 
 function fmtDateTime(val) {
   if (!val) return '—';

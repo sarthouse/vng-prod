@@ -8,6 +8,7 @@ export {
   attachBulkSelection,
   observeTableBulkSelection,
 } from './tableEngine.js';
+export { renderSpreadsheetTable } from './sheetEngine.js';
 export {
   renderKpiStrip,
   renderFilterBar,

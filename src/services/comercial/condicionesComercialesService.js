@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 
@@ -7,6 +6,8 @@ export const metodoPagoRepo = new BaseRepository({ model: MODELS.metodos_pago, d
 export const listaPrecioRepo = new BaseRepository({ model: MODELS.listas_precios, defaultOrder: 'es_default DESC, nombre ASC' });
 export const listaPrecioItemRepo = new BaseRepository({ model: MODELS.lista_precio_items, defaultOrder: 'id ASC' });
 export const productoProveedorRepo = new BaseRepository({ model: MODELS.producto_proveedores, defaultOrder: 'prioridad ASC, id ASC' });
+const productoRepo = new BaseRepository({ model: MODELS.productos });
+const contactoRepo = new BaseRepository({ model: MODELS.contactos });
 
 // ── Términos de Pago ──────────────────────────────────────────────────────────
 
@@ -115,30 +116,30 @@ export function deleteMetodoPago(id) {
 // ── Listas de Precios ─────────────────────────────────────────────────────────
 
 export function listListasPrecios({ solo_activos = false } = {}) {
-  let sql = `
-    SELECT lp.*, (SELECT COUNT(*) FROM lista_precio_items i WHERE i.lista_precio_id = lp.id) as cantidad_items
-    FROM listas_precios lp
-  `;
-  if (solo_activos) sql += ' WHERE lp.activo = 1';
-  sql += ' ORDER BY lp.es_default DESC, lp.nombre ASC';
-  return db.prepare(sql).all();
+  const qb = listaPrecioRepo.query('lp')
+    .select('lp.*', '(SELECT COUNT(*) FROM lista_precio_items i WHERE i.lista_precio_id = lp.id) as cantidad_items')
+    .orderBy('lp.es_default', 'DESC')
+    .orderBy('lp.nombre', 'ASC');
+  if (solo_activos) qb.where('lp.activo', 1);
+  return qb.all();
 }
 
 export function getListaPrecioById(id) {
   const lista = listaPrecioRepo.findById(id);
   if (!lista) return null;
-  const items = db.prepare(`
-    SELECT i.*,
-           COALESCE(p.nombre, '') as producto_nombre,
-           COALESCE(p.sku, '') as sku,
-           COALESCE(p.precio, 0) as precio_catalogo,
-           COALESCE(pt.nombre, '') as plantilla_nombre
-    FROM lista_precio_items i
-    LEFT JOIN productos p ON p.id = i.producto_id
-    LEFT JOIN producto_plantillas pt ON pt.id = i.plantilla_id
-    WHERE i.lista_precio_id = ?
-    ORDER BY i.id ASC
-  `).all(Number(id));
+  const items = listaPrecioItemRepo.query('i')
+    .select(
+      'i.*',
+      "COALESCE(p.nombre, '') as producto_nombre",
+      "COALESCE(p.sku, '') as sku",
+      'COALESCE(p.precio, 0) as precio_catalogo',
+      "COALESCE(pt.nombre, '') as plantilla_nombre"
+    )
+    .leftJoin('productos', 'p', 'p.id', 'i.producto_id')
+    .leftJoin('producto_plantillas', 'pt', 'pt.id', 'i.plantilla_id')
+    .where('i.lista_precio_id', Number(id))
+    .orderBy('i.id', 'ASC')
+    .all();
   return { ...lista, items };
 }
 
@@ -147,7 +148,7 @@ export function createListaPrecio(b = {}) {
   if (!nombre) throw new Error('El nombre de la lista de precios es obligatorio');
   return listaPrecioRepo.transaction(() => {
     const esDefault = b.es_default ? 1 : 0;
-    if (esDefault) db.prepare('UPDATE listas_precios SET es_default = 0').run();
+    if (esDefault) listaPrecioRepo.query().update({ es_default: 0 });
     const id = listaPrecioRepo.create({
       nombre,
       moneda: String(b.moneda || 'ARS').trim().toUpperCase(),
@@ -175,7 +176,7 @@ export function updateListaPrecio(id, b = {}) {
     if (b.activo !== undefined) patch.activo = b.activo ? 1 : 0;
     if (b.es_default !== undefined) {
       patch.es_default = b.es_default ? 1 : 0;
-      if (patch.es_default) db.prepare('UPDATE listas_precios SET es_default = 0 WHERE id != ?').run(Number(id));
+      if (patch.es_default) listaPrecioRepo.query().where('id', '!=', Number(id)).update({ es_default: 0 });
     }
     if (Object.keys(patch).length) listaPrecioRepo.update(id, patch);
     if (Array.isArray(b.items)) replaceListaItems(Number(id), b.items);
@@ -184,7 +185,7 @@ export function updateListaPrecio(id, b = {}) {
 }
 
 function replaceListaItems(listaId, items) {
-  db.prepare('DELETE FROM lista_precio_items WHERE lista_precio_id = ?').run(Number(listaId));
+  listaPrecioItemRepo.query().where('lista_precio_id', Number(listaId)).delete();
   for (const it of items) {
     const prodId = it.producto_id ? Number(it.producto_id) : null;
     const ptId = it.plantilla_id ? Number(it.plantilla_id) : null;
@@ -230,7 +231,7 @@ export function deleteListaPrecio(id) {
 
 export function resolverPrecioLista({ lista_precio_id = null, contacto_id = null, producto_id = null, cantidad = 1, precio_base = null } = {}) {
   const prod = producto_id
-    ? db.prepare('SELECT id, plantilla_id, precio FROM productos WHERE id = ?').get(Number(producto_id))
+    ? productoRepo.query().select('id', 'plantilla_id', 'precio').where('id', Number(producto_id)).get()
     : null;
   const base = precio_base !== null && precio_base !== undefined
     ? Number(precio_base) || 0
@@ -238,14 +239,14 @@ export function resolverPrecioLista({ lista_precio_id = null, contacto_id = null
 
   let lpId = lista_precio_id ? Number(lista_precio_id) : null;
   if (!lpId && contacto_id) {
-    const c = db.prepare('SELECT lista_precio_id FROM contactos WHERE id = ?').get(Number(contacto_id));
+    const c = contactoRepo.query().select('lista_precio_id').where('id', Number(contacto_id)).get();
     if (c?.lista_precio_id) lpId = Number(c.lista_precio_id);
   }
   let lista = lpId
-    ? db.prepare('SELECT * FROM listas_precios WHERE id = ? AND activo = 1').get(lpId)
+    ? listaPrecioRepo.query().where('id', lpId).where('activo', 1).get()
     : null;
   if (!lista) {
-    lista = db.prepare('SELECT * FROM listas_precios WHERE es_default = 1 AND activo = 1 LIMIT 1').get() || null;
+    lista = listaPrecioRepo.query().where('es_default', 1).where('activo', 1).limit(1).get() || null;
   }
   if (!lista) {
     return {
@@ -261,18 +262,25 @@ export function resolverPrecioLista({ lista_precio_id = null, contacto_id = null
   const qty = Math.max(0, Number(cantidad) || 1);
   let regla = null;
   if (prod?.id) {
-    regla = db.prepare(`
-      SELECT * FROM lista_precio_items
-      WHERE lista_precio_id = ? AND producto_id = ? AND cantidad_minima <= ?
-      ORDER BY cantidad_minima DESC, id DESC LIMIT 1
-    `).get(lista.id, prod.id, qty);
+    regla = listaPrecioItemRepo.query()
+      .where('lista_precio_id', lista.id)
+      .where('producto_id', prod.id)
+      .where('cantidad_minima', '<=', qty)
+      .orderBy('cantidad_minima', 'DESC')
+      .orderBy('id', 'DESC')
+      .limit(1)
+      .get();
   }
   if (!regla && prod?.plantilla_id) {
-    regla = db.prepare(`
-      SELECT * FROM lista_precio_items
-      WHERE lista_precio_id = ? AND producto_id IS NULL AND plantilla_id = ? AND cantidad_minima <= ?
-      ORDER BY cantidad_minima DESC, id DESC LIMIT 1
-    `).get(lista.id, prod.plantilla_id, qty);
+    regla = listaPrecioItemRepo.query()
+      .where('lista_precio_id', lista.id)
+      .whereNull('producto_id')
+      .where('plantilla_id', prod.plantilla_id)
+      .where('cantidad_minima', '<=', qty)
+      .orderBy('cantidad_minima', 'DESC')
+      .orderBy('id', 'DESC')
+      .limit(1)
+      .get();
   }
 
   let precioFinal = base;
@@ -308,10 +316,10 @@ export function resolverPrecioLista({ lista_precio_id = null, contacto_id = null
 
 export function getContactoCondiciones(contactoId) {
   if (!contactoId) return null;
-  const c = db.prepare(`
-    SELECT id, nombre, termino_pago_id, termino_pago_compra_id, metodo_pago_id, lista_precio_id
-    FROM contactos WHERE id = ?
-  `).get(Number(contactoId));
+  const c = contactoRepo.query()
+    .select('id', 'nombre', 'termino_pago_id', 'termino_pago_compra_id', 'metodo_pago_id', 'lista_precio_id')
+    .where('id', Number(contactoId))
+    .get();
   if (!c) return null;
   const termino = c.termino_pago_id ? terminoPagoRepo.findById(c.termino_pago_id) : null;
   const terminoCompra = c.termino_pago_compra_id ? terminoPagoRepo.findById(c.termino_pago_compra_id) : null;
@@ -333,24 +341,29 @@ export function getContactoCondiciones(contactoId) {
 // ── Tarifas de Compra por Variante / Plantilla y Proveedor ────────────────────
 
 export function listProductoProveedores({ plantilla_id = null, producto_id = null, contacto_id = null } = {}) {
-  let sql = `
-    SELECT pp.*,
-           COALESCE(c.nombre, '') as proveedor_nombre,
-           COALESCE(p.nombre, '') as producto_nombre,
-           COALESCE(p.sku, '') as sku,
-           COALESCE(pt.nombre, '') as plantilla_nombre
-    FROM producto_proveedores pp
-    JOIN contactos c ON c.id = pp.contacto_id
-    LEFT JOIN productos p ON p.id = pp.producto_id
-    LEFT JOIN producto_plantillas pt ON pt.id = pp.plantilla_id
-    WHERE 1=1
-  `;
-  const params = [];
-  if (plantilla_id) { sql += ' AND (pp.plantilla_id = ? OR p.plantilla_id = ?)'; params.push(Number(plantilla_id), Number(plantilla_id)); }
-  if (producto_id) { sql += ' AND pp.producto_id = ?'; params.push(Number(producto_id)); }
-  if (contacto_id) { sql += ' AND pp.contacto_id = ?'; params.push(Number(contacto_id)); }
-  sql += ' ORDER BY pp.prioridad ASC, pp.cantidad_minima ASC, pp.id ASC';
-  return db.prepare(sql).all(...params);
+  const qb = productoProveedorRepo.query('pp')
+    .select(
+      'pp.*',
+      "COALESCE(c.nombre, '') as proveedor_nombre",
+      "COALESCE(p.nombre, '') as producto_nombre",
+      "COALESCE(p.sku, '') as sku",
+      "COALESCE(pt.nombre, '') as plantilla_nombre",
+      'p.plantilla_id as prod_plantilla_id'
+    )
+    .innerJoin('contactos', 'c', 'c.id', 'pp.contacto_id')
+    .leftJoin('productos', 'p', 'p.id', 'pp.producto_id')
+    .leftJoin('producto_plantillas', 'pt', 'pt.id', 'pp.plantilla_id')
+    .orderBy('pp.prioridad', 'ASC')
+    .orderBy('pp.cantidad_minima', 'ASC')
+    .orderBy('pp.id', 'ASC');
+  if (producto_id) qb.where('pp.producto_id', Number(producto_id));
+  if (contacto_id) qb.where('pp.contacto_id', Number(contacto_id));
+  let rows = qb.all();
+  if (plantilla_id) {
+    const pid = Number(plantilla_id);
+    rows = rows.filter(r => Number(r.plantilla_id) === pid || Number(r.prod_plantilla_id) === pid);
+  }
+  return rows;
 }
 
 export function createProductoProveedor(b = {}) {
@@ -360,7 +373,7 @@ export function createProductoProveedor(b = {}) {
   if (!contactoId) throw new Error('Debe seleccionar un proveedor');
   if (!productoId && !plantillaId) throw new Error('Debe indicar una plantilla o variante');
   if (productoId && !plantillaId) {
-    const p = db.prepare('SELECT plantilla_id FROM productos WHERE id = ?').get(productoId);
+    const p = productoRepo.query().select('plantilla_id').where('id', productoId).get();
     plantillaId = p?.plantilla_id || null;
   }
   return productoProveedorRepo.create({
@@ -383,7 +396,7 @@ export function deleteProductoProveedor(id) {
 
 export function resolverPrecioCompra({ contacto_id = null, producto_id = null, cantidad = 1, precio_base = null } = {}) {
   const prod = producto_id
-    ? db.prepare('SELECT id, plantilla_id, costo FROM productos WHERE id = ?').get(Number(producto_id))
+    ? productoRepo.query().select('id', 'plantilla_id', 'costo').where('id', Number(producto_id)).get()
     : null;
   const base = precio_base !== null && precio_base !== undefined
     ? Number(precio_base) || 0
@@ -392,18 +405,29 @@ export function resolverPrecioCompra({ contacto_id = null, producto_id = null, c
 
   let regla = null;
   if (contacto_id && prod?.id) {
-    regla = db.prepare(`
-      SELECT * FROM producto_proveedores
-      WHERE contacto_id = ? AND producto_id = ? AND activo = 1 AND cantidad_minima <= ?
-      ORDER BY cantidad_minima DESC, prioridad ASC, id DESC LIMIT 1
-    `).get(Number(contacto_id), prod.id, qty);
+    regla = productoProveedorRepo.query()
+      .where('contacto_id', Number(contacto_id))
+      .where('producto_id', prod.id)
+      .where('activo', 1)
+      .where('cantidad_minima', '<=', qty)
+      .orderBy('cantidad_minima', 'DESC')
+      .orderBy('prioridad', 'ASC')
+      .orderBy('id', 'DESC')
+      .limit(1)
+      .get();
   }
   if (!regla && contacto_id && prod?.plantilla_id) {
-    regla = db.prepare(`
-      SELECT * FROM producto_proveedores
-      WHERE contacto_id = ? AND producto_id IS NULL AND plantilla_id = ? AND activo = 1 AND cantidad_minima <= ?
-      ORDER BY cantidad_minima DESC, prioridad ASC, id DESC LIMIT 1
-    `).get(Number(contacto_id), prod.plantilla_id, qty);
+    regla = productoProveedorRepo.query()
+      .where('contacto_id', Number(contacto_id))
+      .whereNull('producto_id')
+      .where('plantilla_id', prod.plantilla_id)
+      .where('activo', 1)
+      .where('cantidad_minima', '<=', qty)
+      .orderBy('cantidad_minima', 'DESC')
+      .orderBy('prioridad', 'ASC')
+      .orderBy('id', 'DESC')
+      .limit(1)
+      .get();
   }
 
   return {

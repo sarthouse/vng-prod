@@ -35,44 +35,44 @@ export async function renderFlujoStockView() {
     const udmLabel = prodSel ? prodSel.udm : 'un.';
 
     const buildFilterToolbar = (prefix) => `
-      <div class="actions" style="flex-wrap:wrap; gap:8px;">
+      <div class="actions sx-f41bf6">
         <div class="pill-group">
           <button type="button" class="pill ${granularidad === 'semana' ? 'active' : ''}" data-fs-gran="semana">Por Semana</button>
           <button type="button" class="pill ${granularidad === 'mes' ? 'active' : ''}" data-fs-gran="mes">Por Mes</button>
         </div>
-        <select class="fs-rol-sel" style="width:auto;">
+        <select class="fs-rol-sel w-auto">
           <option value="" ${filtroRol === '' ? 'selected' : ''}>Todos los productos</option>
           <option value="insumos" ${filtroRol === 'insumos' ? 'selected' : ''}>Insumos</option>
           <option value="fabricados" ${filtroRol === 'fabricados' ? 'selected' : ''}>Fabricados</option>
         </select>
-        <select class="fs-cat-sel" style="width:auto;">
+        <select class="fs-cat-sel w-auto">
           <option value="">Todas las categorías</option>
           ${categorias.map(c => `<option value="${esc(c)}" ${c === filtroCategoria ? 'selected' : ''}>${esc(c)}</option>`).join('')}
         </select>
-        <select class="fs-prod-sel" style="width:auto;min-width:210px;">
+        <select class="fs-prod-sel sx-9cfe42">
           <option value="">-- Todos los productos (${inventario.length}) --</option>
           ${inventario
             .filter(p => !filtroCategoria || p.categoria === filtroCategoria)
             .map(p => `<option value="${p.id}" ${String(p.id) === String(filtroProducto) ? 'selected' : ''}>${esc(p.nombre)} (${esc(p.udm)})</option>`).join('')}
         </select>
-        <select class="fs-hist-sel" style="width:auto;" title="Períodos históricos">
+        <select class="fs-hist-sel w-auto" title="Períodos históricos">
           ${[2, 4, 6, 8].map(n => `<option value="${n}" ${histPeriodos === n ? 'selected' : ''}>${n} ${granularidad === 'semana' ? 'sem.' : 'meses'} hist.</option>`).join('')}
         </select>
-        <select class="fs-proy-sel" style="width:auto;" title="Períodos proyectados">
+        <select class="fs-proy-sel w-auto" title="Períodos proyectados">
           ${[4, 6, 8, 12].map(n => `<option value="${n}" ${proyPeriodos === n ? 'selected' : ''}>+${n} ${granularidad === 'semana' ? 'sem.' : 'meses'} proy.</option>`).join('')}
         </select>
       </div>
     `;
 
     const matrizConceptoHtml = `
-      <div class="card" style="margin-bottom:16px;">
+      <div class="card mb-md">
         <div id="fs-chart-inline"></div>
       </div>
       <div class="card">
         <div class="card-header">
           <div>
             <h2>Matriz de Flujo de Stock por Concepto ${prodSel ? `— ${esc(prodSel.nombre)} (${esc(prodSel.udm)})` : '(Consolidado)'}</h2>
-            <span class="muted" style="font-size:0.82rem;">Hacé clic en cualquier celda subrayada para ver el detalle de Recepciones, Órdenes de Producción o Entregas de ese período.</span>
+            <span class="muted text-sm">Hacé clic en cualquier celda subrayada para ver el detalle de Recepciones, Órdenes de Producción o Entregas de ese período.</span>
           </div>
           ${buildFilterToolbar('concepto')}
         </div>
@@ -89,10 +89,10 @@ export async function renderFlujoStockView() {
         <div class="card-header">
           <div>
             <h2>Proyección de Saldos por Producto (${prodRowsFiltered.length})</h2>
-            <span class="muted" style="font-size:0.82rem;">Muestra el saldo proyectado al cierre de cada ${granularidad === 'semana' ? 'semana' : 'mes'}. En rojo se destacan los períodos con quiebre de stock.</span>
+            <span class="muted text-sm">Muestra el saldo proyectado al cierre de cada ${granularidad === 'semana' ? 'semana' : 'mes'}. En rojo se destacan los períodos con quiebre de stock.</span>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <label class="checkbox-inline" style="margin:0;font-size:12px;">
+          <div class="sx-b830ea">
+            <label class="checkbox-inline sx-b68435">
               <input type="checkbox" id="fs-only-quiebres" ${soloQuiebres ? 'checked' : ''} />
               <span>Solo con alerta / quiebre proyectado</span>
             </label>
@@ -108,11 +108,11 @@ export async function renderFlujoStockView() {
         <div class="card-header">
           <div>
             <h2>Curva de Stock</h2>
-            <span class="muted" style="font-size:0.82rem;">Seleccioná un producto arriba para analizar su curva de reposición, consumos por orden y stock mínimo.</span>
+            <span class="muted text-sm">Seleccioná un producto arriba para analizar su curva de reposición, consumos por orden y stock mínimo.</span>
           </div>
           ${buildFilterToolbar('grafico')}
         </div>
-        <div id="fs-chart-main" style="padding:12px 16px;"></div>
+        <div id="fs-chart-main" class="sx-8e86e5"></div>
       </div>
     `;
 

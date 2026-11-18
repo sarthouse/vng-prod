@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney } from '../../lib/format.js';
-import { mountFormFields, renderDataTable, renderKpiStrip, renderFilterBar } from '../../lib/engine/index.js';
+import { mountFormFields, renderDataTable, renderKpiStrip, renderFilterBar, renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { showConfirmModal, createModal } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 
@@ -60,7 +60,7 @@ export async function renderLibroDiarioView() {
           </div>
         </div>
         <div id="ld-filterbar"></div>
-        <div class="toolbar" style="margin-bottom:0.75rem; padding-top:0;">
+        <div class="toolbar sx-1e3191">
           <input type="date" id="ld-f-desde" value="${esc(desde)}" title="Desde" />
           <input type="date" id="ld-f-hasta" value="${esc(hasta)}" title="Hasta" />
           <button type="button" id="btn-ld-fechas" class="btn btn-sm btn-primary">Aplicar Fechas</button>
@@ -117,20 +117,20 @@ export async function renderLibroDiarioView() {
       const { close } = createModal({
         title: `Asiento ${a.numero || `#${a.id}`}`,
         bodyHtml: `
-          <div class="detail-meta" style="margin-bottom:0.85rem;">
+          <div class="detail-meta sx-04f840">
             <div><span>Fecha</span><strong>${esc(a.fecha)}</strong></div>
             <div><span>Diario</span><strong>${esc(a.diario_codigo || a.tipo_origen)}</strong></div>
             <div><span>Estado</span><strong>${esc(a.estado)}</strong></div>
             <div><span>Origen</span><strong>${esc(a.tipo_origen)}</strong></div>
           </div>
-          <p style="margin-bottom:0.85rem;"><strong>Concepto:</strong> ${esc(a.concepto || '-')}</p>
+          <p class="sx-04f840"><strong>Concepto:</strong> ${esc(a.concepto || '-')}</p>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
                   <th>Cuenta Contable</th>
-                  <th class="num" style="width:130px;">Debe</th>
-                  <th class="num" style="width:130px;">Haber</th>
+                  <th class="num w-130">Debe</th>
+                  <th class="num w-130">Haber</th>
                 </tr>
               </thead>
               <tbody>
@@ -199,7 +199,7 @@ export async function renderLibroDiarioView() {
               label: '',
               align: 'right',
               render: a => `
-                <div class="actions" style="justify-content:flex-end;">
+                <div class="actions justify-end">
                   <button type="button" class="btn btn-sm" data-ld-det="${a.id}">Detalle</button>
                   ${a.estado === 'Confirmado' ? `<button type="button" class="btn btn-sm btn-danger" data-ld-rev="${a.id}">Revertir</button>` : ''}
                 </div>
@@ -296,7 +296,7 @@ export async function renderAsientoNuevoView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/contabilidad" data-link class="muted" style="font-size:0.85rem;">← Volver al Libro Diario</a></div>
+          <div class="mb-xs"><a href="/contabilidad" data-link class="muted text-md">← Volver al Libro Diario</a></div>
           <h1>Nuevo Asiento Contable</h1>
           <p class="muted">Asiento manual de partida doble.</p>
         </div>
@@ -304,41 +304,9 @@ export async function renderAsientoNuevoView() {
 
       <div class="card">
         <form id="form-ld-asiento">
-          <div id="ld-asiento-fields" class="form-grid" style="margin-bottom:0.75rem;"></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>Cuenta Contable</th><th class="num" style="width:140px;">Debe</th><th class="num" style="width:140px;">Haber</th><th style="width:60px;"></th></tr></thead>
-              <tbody>
-                ${asientoLineas.map((l, idx) => `
-                  <tr>
-                    <td>
-                      <select class="ld-cuenta" data-idx="${idx}" required>
-                        <option value="">Elegir cuenta...</option>
-                        ${planCuentas.filter(pc => pc.activo !== 0).map(pc => `<option value="${pc.id}" ${String(l.plan_cuenta_id) === String(pc.id) ? 'selected' : ''}>${esc(pc.codigo)} — ${esc(pc.nombre)} (${esc(pc.tipo)})</option>`).join('')}
-                      </select>
-                    </td>
-                    <td><input type="number" step="0.01" min="0" class="ld-debe num" data-idx="${idx}" value="${l.debe || ''}" placeholder="0.00" /></td>
-                    <td><input type="number" step="0.01" min="0" class="ld-haber num" data-idx="${idx}" value="${l.haber || ''}" placeholder="0.00" /></td>
-                    <td>${asientoLineas.length > 2 ? `<button type="button" class="btn btn-sm btn-danger ld-del" data-idx="${idx}">×</button>` : ''}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td>
-                    <button type="button" id="btn-ld-add-line" class="btn btn-sm">+ Línea</button>
-                    <span id="ld-balance-msg" class="muted" style="margin-left:0.75rem; font-size:0.82rem; color:${diff < 0.01 && sumD > 0 ? 'var(--color-success)' : 'var(--color-accent)'};">
-                      ${diff < 0.01 && sumD > 0 ? 'Balanceado' : `Diferencia: ${fmtMoney(diff)}`}
-                    </span>
-                  </td>
-                  <td class="num"><strong id="ld-sum-debe">${fmtMoney(sumD)}</strong></td>
-                  <td class="num"><strong id="ld-sum-haber">${fmtMoney(sumH)}</strong></td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          <div class="actions" style="margin-top:0.75rem; justify-content:flex-end;">
+          <div id="ld-asiento-fields" class="form-grid sx-402564"></div>
+          <div id="ld-asiento-sheet"></div>
+          <div class="actions sx-852493">
             <a href="/contabilidad" data-link class="btn">Cancelar</a>
             <button type="submit" class="btn btn-primary">Registrar Asiento</button>
           </div>
@@ -375,28 +343,80 @@ export async function renderAsientoNuevoView() {
       }
     };
 
-    root.querySelectorAll('.ld-cuenta').forEach(sel => sel.addEventListener('change', () => {
-      const i = Number(sel.dataset.idx);
-      const pc = planCuentas.find(p => String(p.id) === String(sel.value));
-      asientoLineas[i].plan_cuenta_id = sel.value ? Number(sel.value) : '';
-      asientoLineas[i].cuenta_contable = pc ? `${pc.codigo} ${pc.nombre}` : '';
-    }));
-    root.querySelectorAll('.ld-debe').forEach(inp => inp.addEventListener('input', () => {
-      asientoLineas[Number(inp.dataset.idx)].debe = Number(inp.value) || 0;
-      syncTotals();
-    }));
-    root.querySelectorAll('.ld-haber').forEach(inp => inp.addEventListener('input', () => {
-      asientoLineas[Number(inp.dataset.idx)].haber = Number(inp.value) || 0;
-      syncTotals();
-    }));
-    root.querySelector('#btn-ld-add-line')?.addEventListener('click', () => {
-      asientoLineas.push({ plan_cuenta_id: '', cuenta_contable: '', debe: 0, haber: 0 });
-      draw();
-    });
-    root.querySelectorAll('.ld-del').forEach(btn => btn.addEventListener('click', () => {
-      asientoLineas.splice(Number(btn.dataset.idx), 1);
-      draw();
-    }));
+    const cuentaOpts = planCuentas
+      .filter(pc => pc.activo !== 0)
+      .map(pc => ({ value: String(pc.id), label: `${pc.codigo} — ${pc.nombre} (${pc.tipo})`, raw: pc }));
+
+    const renderAsientoSheet = () => {
+      const sheetHost = root.querySelector('#ld-asiento-sheet');
+      if (!sheetHost) return;
+      const sD = asientoLineas.reduce((s, l) => s + (Number(l.debe) || 0), 0);
+      const sH = asientoLineas.reduce((s, l) => s + (Number(l.haber) || 0), 0);
+      const df = Math.abs(sD - sH);
+      renderSpreadsheetTable(sheetHost, {
+        rows: asientoLineas,
+        compact: true,
+        showDirty: false,
+        addRowLabel: '+ Línea',
+        tfootHtml: `
+          <tr>
+            <td>
+              <span id="ld-balance-msg" class="text-sm" style="color:${df < 0.01 && sD > 0 ? 'var(--color-success)' : 'var(--color-accent)'};">
+                ${df < 0.01 && sD > 0 ? 'Balanceado' : `Diferencia: ${fmtMoney(df)}`}
+              </span>
+            </td>
+            <td class="num"><strong id="ld-sum-debe">${fmtMoney(sD)}</strong></td>
+            <td class="num"><strong id="ld-sum-haber">${fmtMoney(sH)}</strong></td>
+            <td></td>
+          </tr>
+        `,
+        columns: [
+          {
+            key: 'plan_cuenta_id',
+            label: 'Cuenta Contable',
+            type: 'combobox',
+            placeholder: 'Buscar cuenta...',
+            options: cuentaOpts,
+            onPickItem: (l, pc) => {
+              l.plan_cuenta_id = pc?.id ? Number(pc.id) : '';
+              l.cuenta_contable = pc ? `${pc.codigo} ${pc.nombre}` : '';
+            },
+            render: (l) => l.cuenta_contable ? esc(l.cuenta_contable) : '<span class="muted">Elegir cuenta...</span>',
+          },
+          {
+            key: 'debe',
+            label: 'Debe',
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            align: 'right',
+            render: (l) => (Number(l.debe) ? fmtMoney(l.debe) : '<span class="muted">$0,00</span>'),
+            parse: (v) => Math.max(0, Number(v) || 0),
+          },
+          {
+            key: 'haber',
+            label: 'Haber',
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            align: 'right',
+            render: (l) => (Number(l.haber) ? fmtMoney(l.haber) : '<span class="muted">$0,00</span>'),
+            parse: (v) => Math.max(0, Number(v) || 0),
+          },
+        ],
+        onAddRow: () => {
+          asientoLineas.push({ plan_cuenta_id: '', cuenta_contable: '', debe: 0, haber: 0 });
+          renderAsientoSheet();
+        },
+        onDeleteRow: (_row, idx) => {
+          if (asientoLineas.length <= 2) { toast('Un asiento debe tener al menos 2 líneas', true); return; }
+          asientoLineas.splice(idx, 1);
+          renderAsientoSheet();
+        },
+        onCellChange: () => syncTotals(),
+      });
+    };
+    renderAsientoSheet();
     root.querySelector('#form-ld-asiento')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const validLines = asientoLineas.filter(l => (Number(l.debe) > 0 || Number(l.haber) > 0) && (l.plan_cuenta_id || l.cuenta_contable));
@@ -445,7 +465,7 @@ export async function renderLibroMayorView() {
       </div>
 
       <div class="card">
-        <div id="lm-fields" class="form-grid" style="margin-bottom:0.5rem;"></div>
+        <div id="lm-fields" class="form-grid sx-3b2074"></div>
       </div>
 
       <div id="lm-kpis"></div>
@@ -520,17 +540,17 @@ export async function renderBalanceResultadosView() {
       </div>
 
       <div class="card">
-        <div id="br-fields" class="form-grid" style="margin-bottom:0;"></div>
+        <div id="br-fields" class="form-grid mb-0"></div>
       </div>
 
       <div id="br-kpis"></div>
 
-      <div class="dashboard-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:1rem; margin-bottom:1rem;">
-        <div class="card" style="margin-bottom:0;">
+      <div class="dashboard-grid sx-dff70c">
+        <div class="card mb-0">
           <div class="card-header"><h2>Ingresos</h2></div>
           <div id="br-ingresos"></div>
         </div>
-        <div class="card" style="margin-bottom:0;">
+        <div class="card mb-0">
           <div class="card-header"><h2>Costos y Gastos</h2></div>
           <div id="br-egresos"></div>
         </div>
@@ -539,7 +559,7 @@ export async function renderBalanceResultadosView() {
       <div class="card">
         <div class="card-header">
           <h2>Balance de Sumas y Saldos</h2>
-          <span class="muted" style="font-size:0.82rem;">Debe: <strong>${fmtMoney(totDebe)}</strong> · Haber: <strong>${fmtMoney(totHaber)}</strong></span>
+          <span class="muted text-sm">Debe: <strong>${fmtMoney(totDebe)}</strong> · Haber: <strong>${fmtMoney(totHaber)}</strong></span>
         </div>
         <div id="br-balance"></div>
       </div>
@@ -619,15 +639,15 @@ export async function renderPlanCuentasView() {
         <div class="card-header">
           <div>
             <h2>Plantilla de Plan de Cuentas</h2>
-            <span class="muted" style="font-size:0.82rem;">Elegí la estructura contable acorde al régimen fiscal de la empresa.</span>
+            <span class="muted text-sm">Elegí la estructura contable acorde al régimen fiscal de la empresa.</span>
           </div>
         </div>
-        <form id="form-apply-tpl" class="toolbar" style="margin-bottom:0; flex-wrap:wrap; gap:0.75rem;">
-          <select name="plantilla_id" id="pc-tpl-select" style="min-width:290px;">
+        <form id="form-apply-tpl" class="toolbar sx-d731c2">
+          <select name="plantilla_id" id="pc-tpl-select" class="sx-e7fcff">
             ${plantillas.map(t => `<option value="${esc(t.id)}">${esc(t.nombre)} (${t.cantidad_cuentas} cuentas)</option>`).join('')}
           </select>
           <button type="submit" class="btn btn-primary btn-sm">Aplicar Plantilla</button>
-          <span class="muted" id="pc-tpl-desc" style="font-size:0.82rem;">${esc(plantillas[0]?.descripcion || '')}</span>
+          <span class="muted text-sm" id="pc-tpl-desc">${esc(plantillas[0]?.descripcion || '')}</span>
         </form>
       </div>
 
@@ -691,26 +711,62 @@ export async function renderPlanCuentasView() {
       },
     ], formState);
 
-    renderDataTable(root.querySelector('#pc-table'), {
+    renderSpreadsheetTable(root.querySelector('#pc-table'), {
+      rows: planCuentas,
       emptyText: 'No hay cuentas contables.',
+      compact: true,
       columns: [
-        { label: 'Código', render: r => `<strong>${esc(r.codigo)}</strong>` },
-        { label: 'Nombre', key: 'nombre' },
-        { label: 'Tipo', render: r => `<span class="badge badge-muted">${esc(r.tipo)}</span>` },
-        { label: 'Naturaleza', key: 'naturaleza' },
-        { label: 'Estado', render: r => `<span class="badge ${r.activo !== 0 ? 'badge-ok' : 'badge-muted'}">${r.activo !== 0 ? 'Activa' : 'Inactiva'}</span>` },
+        { key: 'codigo', label: 'Código', type: 'text', nowrap: true, render: r => `<strong>${esc(r.codigo)}</strong>` },
+        { key: 'nombre', label: 'Nombre', type: 'text' },
         {
-          label: '',
-          align: 'right',
-          render: r => `
-            <div class="actions" style="justify-content:flex-end;">
-              <button type="button" class="btn btn-sm" data-edit-pc="${r.id}">Editar</button>
-              <button type="button" class="btn btn-sm" data-toggle-pc="${r.id}" data-activo="${r.activo !== 0 ? 1 : 0}">${r.activo !== 0 ? 'Desactivar' : 'Activar'}</button>
-            </div>
-          `,
+          key: 'tipo',
+          label: 'Tipo',
+          type: 'select',
+          options: [
+            { value: 'egreso', label: 'Egreso' },
+            { value: 'ingreso', label: 'Ingreso' },
+            { value: 'activo', label: 'Activo' },
+            { value: 'pasivo', label: 'Pasivo' },
+            { value: 'patrimonio', label: 'Patrimonio' },
+          ],
+          render: r => `<span class="badge badge-muted">${esc(r.tipo)}</span>`,
+        },
+        {
+          key: 'naturaleza',
+          label: 'Naturaleza',
+          type: 'select',
+          options: [
+            { value: 'deudora', label: 'Deudora' },
+            { value: 'acreedora', label: 'Acreedora' },
+          ],
+        },
+        {
+          key: 'activo',
+          label: 'Activa',
+          type: 'checkbox',
+          align: 'center',
+          getValue: r => (r.activo !== 0 ? 1 : 0),
         },
       ],
-      rows: planCuentas,
+      extraActions: r => `<button type="button" class="btn btn-sm" data-edit-pc="${r.id}">Detalle</button>`,
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          await api(`/api/tesoreria/plan-cuentas/${row.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              codigo: key === 'codigo' ? value : row.codigo,
+              nombre: key === 'nombre' ? value : row.nombre,
+              tipo: key === 'tipo' ? value : row.tipo,
+              naturaleza: key === 'naturaleza' ? value : row.naturaleza,
+              activo: key === 'activo' ? Number(value) : (row.activo !== 0 ? 1 : 0),
+            }),
+          });
+          toast('Cuenta contable actualizada');
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
     });
 
     mountFormFields(root.querySelector('#pc-diario-fields'), [
@@ -798,7 +854,7 @@ export async function renderPlanCuentasView() {
           label: '',
           align: 'right',
           render: r => `
-            <div class="actions" style="justify-content:flex-end;">
+            <div class="actions justify-end">
               <button type="button" class="btn btn-sm" data-edit-diario="${r.id}">Editar</button>
               <button type="button" class="btn btn-sm" data-toggle-diario="${r.id}" data-activo="${r.activo !== 0 ? 1 : 0}">${r.activo !== 0 ? 'Desactivar' : 'Activar'}</button>
             </div>

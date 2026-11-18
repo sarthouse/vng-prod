@@ -1,12 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, DB_DIR } from '../../db.js';
+import { DB_DIR } from '../../db.js';
+import { BaseRepository } from '../../core/BaseRepository.js';
+import { MODELS } from '../../db/models.js';
 import {
   generateKeyAndCsr,
   signLoginTicketRequest,
   parseCertificateInfo,
 } from './afipCrypto.js';
 import { validateComprobanteFiscal } from './fiscalRules.js';
+
+const empresaRepo = new BaseRepository({ model: MODELS.empresa_config });
+const ventaRepo = new BaseRepository({ model: MODELS.ventas });
+const ventaLineaRepo = new BaseRepository({ model: MODELS.venta_lineas });
+const puntoVentaRepo = new BaseRepository({ model: MODELS.puntos_venta });
+const contactoRepo = new BaseRepository({ model: MODELS.contactos });
+const compraRepo = new BaseRepository({ model: MODELS.compras });
+const afipXmlLogRepo = new BaseRepository({ model: MODELS.afip_xml_logs });
 
 const ENDPOINTS = {
   homologacion: {
@@ -137,11 +147,13 @@ async function soapPost(url, soapAction, envelopeXml) {
 // ── Lectura / Escritura de configuración AFIP ──────────────────────────────
 
 function getEmpresaAfipRow() {
-  return db.prepare(`
-    SELECT id, razon_social, cuit, condicion_iva,
-           afip_entorno, afip_private_key, afip_csr, afip_crt, afip_ta_wsfe, afip_ta_padron, afip_ta_wscdc
-    FROM empresa_config WHERE id = 1
-  `).get() || {};
+  return empresaRepo.query()
+    .select(
+      'id', 'razon_social', 'cuit', 'condicion_iva',
+      'afip_entorno', 'afip_private_key', 'afip_csr', 'afip_crt', 'afip_ta_wsfe', 'afip_ta_padron', 'afip_ta_wscdc'
+    )
+    .where('id', 1)
+    .get() || {};
 }
 
 function getEntorno(row) {
@@ -175,11 +187,12 @@ export function setAfipEntorno(entorno) {
   if (entorno !== 'homologacion' && entorno !== 'produccion') {
     throw new Error('Entorno AFIP inválido. Debe ser "homologacion" o "produccion"');
   }
-  db.prepare(`
-    UPDATE empresa_config
-    SET afip_entorno = ?, afip_ta_wsfe = '', afip_ta_padron = '', afip_ta_wscdc = ''
-    WHERE id = 1
-  `).run(entorno);
+  empresaRepo.update(1, {
+    afip_entorno: entorno,
+    afip_ta_wsfe: '',
+    afip_ta_padron: '',
+    afip_ta_wscdc: '',
+  });
   return getAfipStatus();
 }
 
@@ -191,11 +204,13 @@ export function generarAfipKeys({ cn = 'vanguard' } = {}) {
     razonSocial: row.razon_social,
     cn,
   });
-  db.prepare(`
-    UPDATE empresa_config
-    SET afip_private_key = ?, afip_csr = ?, afip_ta_wsfe = '', afip_ta_padron = '', afip_ta_wscdc = ''
-    WHERE id = 1
-  `).run(privateKeyPem, csrPem);
+  empresaRepo.update(1, {
+    afip_private_key: privateKeyPem,
+    afip_csr: csrPem,
+    afip_ta_wsfe: '',
+    afip_ta_padron: '',
+    afip_ta_wscdc: '',
+  });
   writeRestrictedAfipFile(`afip_${entorno}.key`, privateKeyPem);
   writeRestrictedAfipFile(`afip_${entorno}.csr`, csrPem);
   return getAfipStatus();
@@ -232,11 +247,12 @@ export function guardarAfipCertificado(crtPem) {
   parseCertificateInfo(clean);
   const row = getEmpresaAfipRow();
   const entorno = row?.afip_entorno === 'produccion' ? 'produccion' : 'homologacion';
-  db.prepare(`
-    UPDATE empresa_config
-    SET afip_crt = ?, afip_ta_wsfe = '', afip_ta_padron = '', afip_ta_wscdc = ''
-    WHERE id = 1
-  `).run(clean);
+  empresaRepo.update(1, {
+    afip_crt: clean,
+    afip_ta_wsfe: '',
+    afip_ta_padron: '',
+    afip_ta_wscdc: '',
+  });
   writeRestrictedAfipFile(`afip_${entorno}.crt`, clean);
   return getAfipStatus();
 }
@@ -317,9 +333,9 @@ export async function getAuthToken(service = 'wsfe') {
     throw new Error('WSAA no devolvió token/sign válidos');
   }
 
-  db.prepare(`UPDATE empresa_config SET ${cacheCol} = ? WHERE id = 1`).run(
-    JSON.stringify({ entorno, token, sign, expirationTime })
-  );
+  empresaRepo.update(1, {
+    [cacheCol]: JSON.stringify({ entorno, token, sign, expirationTime }),
+  });
 
   return { token, sign, cuit: cuitDigits, entorno };
 }
@@ -401,7 +417,7 @@ function fromAfipDate(yyyymmdd) {
 }
 
 export async function emitirFacturaAfip(ventaId) {
-  const venta = db.prepare('SELECT * FROM ventas WHERE id = ?').get(ventaId);
+  const venta = ventaRepo.findById(ventaId);
   if (!venta) throw new Error('Venta no encontrada');
   if (venta.caracter !== 'fiscal') {
     throw new Error('Solo los comprobantes con carácter Fiscal pueden solicitar CAE en AFIP');
@@ -414,7 +430,7 @@ export async function emitirFacturaAfip(ventaId) {
   if (!ptoVtaNum) {
     throw new Error('La venta no tiene un Punto de Venta válido asignado');
   }
-  const pvRow = db.prepare('SELECT * FROM puntos_venta WHERE numero = ?').get(ptoVtaNum);
+  const pvRow = puntoVentaRepo.query().where('numero', ptoVtaNum).get();
   if (!pvRow || !pvRow.es_electronica) {
     throw new Error(`El Punto de Venta ${String(ptoVtaNum).padStart(4, '0')} no está marcado como Facturación Electrónica (WSFE) en Configuración`);
   }
@@ -424,10 +440,10 @@ export async function emitirFacturaAfip(ventaId) {
     throw new Error(`El tipo de comprobante "${venta.tipo_comprobante}" no tiene código AFIP WSFE mapeado`);
   }
 
-  const contacto = db.prepare('SELECT * FROM contactos WHERE id = ?').get(venta.contacto_id);
+  const contacto = contactoRepo.findById(venta.contacto_id);
   if (!contacto) throw new Error('Contacto/cliente no encontrado');
 
-  const empIva = db.prepare('SELECT condicion_iva FROM empresa_config WHERE id = 1').get()?.condicion_iva || '';
+  const empIva = empresaRepo.query().select('condicion_iva').where('id', 1).get()?.condicion_iva || '';
   validateComprobanteFiscal({
     caracter: venta.caracter || 'fiscal',
     tipoComprobante: venta.tipo_comprobante,
@@ -465,7 +481,7 @@ export async function emitirFacturaAfip(ventaId) {
     impNeto = Number((total - impTrib).toFixed(2));
     impIva = 0;
   } else {
-    const lineas = db.prepare('SELECT alicuota_iva, iva_monto, subtotal FROM venta_lineas WHERE venta_id = ?').all(ventaId);
+    const lineas = ventaLineaRepo.query().select('alicuota_iva', 'iva_monto', 'subtotal').where('venta_id', Number(ventaId)).all();
     const porAlic = new Map();
     for (const l of lineas) {
       const rate = Number(l.alicuota_iva || 0);
@@ -507,7 +523,7 @@ export async function emitirFacturaAfip(ventaId) {
   // Comprobante asociado para NC / ND
   let cbtesAsocXml = '';
   if ((venta.clase_documento === 'nota_credito' || venta.clase_documento === 'nota_debito') && venta.comprobante_origen_id) {
-    const orig = db.prepare('SELECT tipo_comprobante, punto_venta, numero, fecha FROM ventas WHERE id = ?').get(venta.comprobante_origen_id);
+    const orig = ventaRepo.query().select('tipo_comprobante', 'punto_venta', 'numero', 'fecha').where('id', Number(venta.comprobante_origen_id)).get();
     if (orig) {
       const origTipo = AFIP_CBTE_TIPO[orig.tipo_comprobante] || cbteTipo;
       const origPv = parseInt(String(orig.punto_venta || ptoVtaNum).replace(/\D/g, ''), 10) || ptoVtaNum;
@@ -607,11 +623,11 @@ export async function emitirFacturaAfip(ventaId) {
     throw new Error(detail);
   }
 
-  db.prepare(`
-    UPDATE ventas
-    SET cae = ?, cae_vto = ?, numero = ?, updated_at = datetime('now', 'localtime')
-    WHERE id = ?
-  `).run(cae, caeFchVto, numeroOficial, ventaId);
+  ventaRepo.update(ventaId, {
+    cae,
+    cae_vto: caeFchVto,
+    numero: numeroOficial,
+  });
 
   return {
     cae,
@@ -826,12 +842,12 @@ export async function constatarComprobanteAfip(params) {
 }
 
 export async function constatarCompraAfip(compraId) {
-  const compra = db.prepare('SELECT * FROM compras WHERE id = ?').get(compraId);
+  const compra = compraRepo.findById(compraId);
   if (!compra) throw new Error('Compra no encontrada');
   if (compra.caracter !== 'fiscal') {
     throw new Error('Solo las compras fiscales pueden constatarse en AFIP (WSCDC)');
   }
-  const prov = db.prepare('SELECT cuit, nombre FROM contactos WHERE id = ?').get(compra.contacto_id);
+  const prov = contactoRepo.query().select('cuit', 'nombre').where('id', Number(compra.contacto_id)).get();
   if (!prov) throw new Error('Proveedor no encontrado');
 
   try {
@@ -847,18 +863,17 @@ export async function constatarCompraAfip(compraId) {
       entidadId: compraId,
     });
     const fechaNow = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    db.prepare(`
-      UPDATE compras
-      SET afip_constatado = 1, afip_constatado_fecha = ?, afip_constatado_obs = ?, updated_at = datetime('now', 'localtime')
-      WHERE id = ?
-    `).run(fechaNow, res.obs_texto || '', compraId);
+    compraRepo.update(compraId, {
+      afip_constatado: 1,
+      afip_constatado_fecha: fechaNow,
+      afip_constatado_obs: res.obs_texto || '',
+    });
     return { ...res, fecha: fechaNow };
   } catch (err) {
-    db.prepare(`
-      UPDATE compras
-      SET afip_constatado = 0, afip_constatado_obs = ?, updated_at = datetime('now', 'localtime')
-      WHERE id = ?
-    `).run(String(err.message || '').slice(0, 500), compraId);
+    compraRepo.update(compraId, {
+      afip_constatado: 0,
+      afip_constatado_obs: String(err.message || '').slice(0, 500),
+    });
     throw err;
   }
 }
@@ -900,46 +915,38 @@ export function archiveAfipXml({
   if (requestXml) fs.writeFileSync(path.join(DB_DIR, reqRel), requestXml, 'utf8');
   if (responseXml) fs.writeFileSync(path.join(DB_DIR, resRel), responseXml, 'utf8');
 
-  const info = db.prepare(`
-    INSERT INTO afip_xml_logs (
-      entorno, servicio, operacion, entidad_tipo, entidad_id, referencia,
-      resultado, cae, archivo_req, archivo_res, request_xml, response_xml
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    envFolder,
+  const id = afipXmlLogRepo.create({
+    entorno: envFolder,
     servicio,
     operacion,
-    entidadTipo || '',
-    entidadId ? Number(entidadId) : null,
-    referencia || '',
-    resultado || '',
-    cae || '',
-    requestXml ? reqRel : '',
-    responseXml ? resRel : '',
-    requestXml || '',
-    responseXml || ''
-  );
+    entidad_tipo: entidadTipo || '',
+    entidad_id: entidadId ? Number(entidadId) : null,
+    referencia: referencia || '',
+    resultado: resultado || '',
+    cae: cae || '',
+    archivo_req: requestXml ? reqRel : '',
+    archivo_res: responseXml ? resRel : '',
+    request_xml: requestXml || '',
+    response_xml: responseXml || '',
+  });
 
-  return { id: Number(info.lastInsertRowid), archivo_req: reqRel, archivo_res: resRel };
+  return { id, archivo_req: reqRel, archivo_res: resRel };
 }
 
 export function listAfipXmlLogs({ entidad_tipo, entidad_id, entorno } = {}) {
-  const where = [];
-  const args = [];
-  if (entidad_tipo) { where.push('entidad_tipo = ?'); args.push(entidad_tipo); }
-  if (entidad_id) { where.push('entidad_id = ?'); args.push(Number(entidad_id)); }
-  if (entorno) { where.push('entorno = ?'); args.push(entorno); }
-  const sqlWhere = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  return db.prepare(`
-    SELECT id, entorno, servicio, operacion, entidad_tipo, entidad_id, referencia,
-           resultado, cae, archivo_req, archivo_res, created_at
-    FROM afip_xml_logs
-    ${sqlWhere}
-    ORDER BY id DESC
-    LIMIT 100
-  `).all(...args);
+  const qb = afipXmlLogRepo.query()
+    .select(
+      'id', 'entorno', 'servicio', 'operacion', 'entidad_tipo', 'entidad_id', 'referencia',
+      'resultado', 'cae', 'archivo_req', 'archivo_res', 'created_at'
+    )
+    .orderBy('id', 'DESC')
+    .limit(100);
+  if (entidad_tipo) qb.where('entidad_tipo', entidad_tipo);
+  if (entidad_id) qb.where('entidad_id', Number(entidad_id));
+  if (entorno) qb.where('entorno', entorno);
+  return qb.all();
 }
 
 export function getAfipXmlLogById(id) {
-  return db.prepare('SELECT * FROM afip_xml_logs WHERE id = ?').get(Number(id));
+  return afipXmlLogRepo.findById(Number(id));
 }

@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/engine/index.js';
+import { showConfirmModal, renderSpreadsheetTable } from '../../lib/engine/index.js';
 
 export async function renderEtapasView() {
   const root = document.getElementById('app-view');
@@ -32,64 +32,91 @@ export async function renderEtapasView() {
       <div class="card-header">
         <h2>Etapas</h2>
       </div>
-      <form id="form-add-etapa" class="toolbar" style="margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-        <input type="number" name="orden" min="1" value="${etapas.length + 1}" placeholder="Orden" style="width:70px;" required />
-        <input type="text" name="nombre" required placeholder="Nombre etapa" style="min-width:170px;" />
-        <input type="text" name="descripcion" placeholder="Descripción" style="min-width:200px;flex:1;" />
-        <input type="number" name="dias_estimados" min="0" value="3" placeholder="Días est." style="width:85px;" required />
-        <input type="number" name="costo_unidad" min="0" step="0.01" value="0" placeholder="Costo/u ($)" style="width:105px;" title="Costo estimado de proceso por unidad" />
-        <select name="taller_id" style="min-width:160px;">${tallerOpts(null)}</select>
-        <select name="plan_cuenta_id" style="min-width:180px;">${cuentaOpts(null)}</select>
-        <select name="depende_de_id" style="min-width:170px;">
+      <form id="form-add-etapa" class="toolbar sx-410c97">
+        <input type="number" name="orden" min="1" value="${etapas.length + 1}" placeholder="Orden" class="w-70" required />
+        <input type="text" name="nombre" required placeholder="Nombre etapa" class="mw-170" />
+        <input type="text" name="descripcion" placeholder="Descripción" class="sx-af01f7" />
+        <input type="number" name="dias_estimados" min="0" value="3" placeholder="Días est." class="w-85" required />
+        <input type="number" name="costo_unidad" min="0" step="0.01" value="0" placeholder="Costo/u ($)" class="sx-9c41f6" title="Costo estimado de proceso por unidad" />
+        <select name="taller_id" class="sx-a629a3">${tallerOpts(null)}</select>
+        <select name="plan_cuenta_id" class="sx-923e95">${cuentaOpts(null)}</select>
+        <select name="depende_de_id" class="mw-170">
           <option value="">-- Sin dependencia --</option>
           ${etapas.map(e => `<option value="${e.id}">Depende de: ${esc(e.nombre)}</option>`).join('')}
         </select>
         <button type="submit" class="btn btn-primary">+ Agregar Etapa</button>
       </form>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Orden</th>
-              <th>Etapa</th>
-              <th>Descripción</th>
-              <th class="num">Días Est.</th>
-              <th class="num">Costo / Unidad</th>
-              <th>Taller</th>
-              <th>Cuenta Contable</th>
-              <th>Depende de</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${etapas.length ? etapas.map(et => `
-              <tr>
-                <td><input type="number" min="1" class="input-sm" data-etapa-orden="${et.id}" value="${et.orden}" style="width:65px;" /></td>
-                <td><input type="text" class="input-sm" data-etapa-nombre="${et.id}" value="${esc(et.nombre)}" style="min-width:150px;" /></td>
-                <td><input type="text" class="input-sm" data-etapa-desc="${et.id}" value="${esc(et.descripcion || '')}" placeholder="Sin descripción" style="min-width:180px;" /></td>
-                <td class="num"><input type="number" min="0" class="input-sm" data-etapa-dias="${et.id}" value="${et.dias_estimados}" style="width:70px;text-align:right;" /> días</td>
-                <td class="num"><input type="number" min="0" step="0.01" class="input-sm" data-etapa-costo="${et.id}" value="${Number(et.costo_unidad || 0)}" style="width:95px;text-align:right;" /></td>
-                <td><select class="input-sm" data-etapa-taller="${et.id}" style="min-width:140px;">${tallerOpts(et.taller_id)}</select></td>
-                <td><select class="input-sm" data-etapa-cta="${et.id}" style="min-width:170px;">${cuentaOpts(et.plan_cuenta_id)}</select></td>
-                <td>
-                  <select class="input-sm" data-etapa-dep="${et.id}" style="min-width:150px;">
-                    <option value="">-- Ninguna --</option>
-                    ${etapas.filter(o => o.id !== et.id).map(o => `<option value="${o.id}" ${Number(et.depende_de_id) === Number(o.id) ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}
-                  </select>
-                </td>
-                <td>
-                  <div class="actions">
-                    <button type="button" class="btn btn-sm" data-save-etapa="${et.id}">Guardar</button>
-                    <button type="button" class="btn btn-sm btn-danger" data-del-etapa="${et.id}">Eliminar</button>
-                  </div>
-                </td>
-              </tr>
-            `).join('') : '<tr><td colspan="9" class="muted" style="text-align:center;">Sin etapas configuradas.</td></tr>'}
-          </tbody>
-        </table>
-      </div>
+      <div id="etapas-sheet-host"></div>
     </div>
   `;
+
+  renderSpreadsheetTable(root.querySelector('#etapas-sheet-host'), {
+    rows: etapas,
+    emptyText: 'Sin etapas configuradas.',
+    compact: true,
+    columns: [
+      { key: 'orden', label: 'Orden', type: 'number', min: 1, step: 1, align: 'right', parse: (v) => Math.max(1, Number(v) || 1) },
+      { key: 'nombre', label: 'Etapa', type: 'text', parse: (v) => String(v || '').trim() },
+      { key: 'descripcion', label: 'Descripción', type: 'text', render: (et) => et.descripcion ? esc(et.descripcion) : '<span class="muted">Sin descripción</span>' },
+      { key: 'dias_estimados', label: 'Días Est.', type: 'number', min: 0, step: 1, align: 'right', nowrap: true, render: (et) => `${et.dias_estimados} días`, parse: (v) => Math.max(0, Number(v) || 0) },
+      { key: 'costo_unidad', label: 'Costo / u.', type: 'number', min: 0, step: 0.01, align: 'right', nowrap: true, parse: (v) => Math.max(0, Number(v) || 0) },
+      {
+        key: 'taller_id',
+        label: 'Taller',
+        type: 'select',
+        options: [{ value: '', label: '-- Sin taller --' }, ...talleres.map(t => ({ value: String(t.id), label: t.nombre }))],
+        getValue: (et) => (et.taller_id ? String(et.taller_id) : ''),
+        parse: (v) => (v ? Number(v) : null),
+      },
+      {
+        key: 'plan_cuenta_id',
+        label: 'Cuenta Contable',
+        type: 'select',
+        options: [{ value: '', label: '-- Cuenta por defecto --' }, ...cuentasEgreso.map(c => ({ value: String(c.id), label: `${c.codigo} · ${c.nombre}` }))],
+        getValue: (et) => (et.plan_cuenta_id ? String(et.plan_cuenta_id) : ''),
+        parse: (v) => (v ? Number(v) : null),
+      },
+      {
+        key: 'depende_de_id',
+        label: 'Depende de',
+        type: 'select',
+        options: (et) => [{ value: '', label: '-- Ninguna --' }, ...etapas.filter(o => o.id !== et.id).map(o => ({ value: String(o.id), label: o.nombre }))],
+        getValue: (et) => (et.depende_de_id ? String(et.depende_de_id) : ''),
+        parse: (v) => (v ? Number(v) : null),
+      },
+    ],
+    onDeleteRow: async (et) => {
+      if (!(await showConfirmModal('¿Eliminar esta etapa de la plantilla?'))) return;
+      try {
+        await api(`/api/etapas/${et.id}`, { method: 'DELETE' });
+        toast('Etapa eliminada');
+        await renderEtapasView();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    },
+    onCellChange: async ({ row, key, value }) => {
+      try {
+        await api(`/api/etapas/${row.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            orden: key === 'orden' ? value : (Number(row.orden) || 1),
+            nombre: key === 'nombre' ? value : row.nombre,
+            descripcion: key === 'descripcion' ? value : (row.descripcion || ''),
+            dias_estimados: key === 'dias_estimados' ? value : (Number(row.dias_estimados) || 0),
+            costo_unidad: key === 'costo_unidad' ? value : (Number(row.costo_unidad) || 0),
+            taller_id: key === 'taller_id' ? value : (row.taller_id || null),
+            plan_cuenta_id: key === 'plan_cuenta_id' ? value : (row.plan_cuenta_id || null),
+            depende_de_id: key === 'depende_de_id' ? value : (row.depende_de_id || null),
+          }),
+        });
+        toast('Etapa actualizada');
+      } catch (err) {
+        toast(err.message, true);
+        throw err;
+      }
+    },
+  });
 
   root.querySelector('#form-add-etapa').addEventListener('submit', async (e) => {
     e.preventDefault();

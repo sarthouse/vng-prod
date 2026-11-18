@@ -1,7 +1,8 @@
-import { api, toast } from '../../lib/api.js';
+import { api, toast, refreshKPIs } from '../../lib/api.js';
 import { esc, fmtMoney, fmtNum, badgeForEstado, badgeForTipo, downloadCSV } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { mountDetailView } from '../../lib/engine/detailEngine.js';
+import { navigate } from '../../router.js';
 
 export async function renderPedidoDetalleView({ id }) {
   const root = document.getElementById('app-view');
@@ -41,7 +42,7 @@ export async function renderPedidoDetalleView({ id }) {
           </tbody>
         </table>
       </div>
-      ${pedido.observaciones ? `<p class="muted" style="margin-top:10px; font-size:0.85rem;">Observaciones: ${esc(pedido.observaciones)}</p>` : ''}
+      ${pedido.observaciones ? `<p class="muted sx-404273">Observaciones: ${esc(pedido.observaciones)}</p>` : ''}
     </div>
   `;
 
@@ -152,7 +153,29 @@ export async function renderPedidoDetalleView({ id }) {
     actions: [
       { label: '+ Nuevo Pedido', href: '/pedidos/nuevo' },
       { label: '+ Registrar Entrega', href: `/entregas/nueva?lote=${pedido.pedido}` },
-      { label: 'Editar Pedido', href: `/pedidos/${pedido.id}/editar`, primary: true },
+      { label: 'Editar Pedido', href: `/pedidos/${pedido.id}/editar` },
+      ...(pedido.plantilla_id && pedido.estado !== 'Cancelado' ? [{
+        label: 'Lanzar Orden de Producción',
+        primary: true,
+        onClick: async () => {
+          try {
+            const res = await api('/api/ordenes', {
+              method: 'POST',
+              body: JSON.stringify({
+                plantilla_id: pedido.plantilla_id,
+                pedido_id: pedido.id,
+                receta_id: pedido.receta_id || null,
+                notas: `Generada desde Pedido #${pedido.pedido}`,
+              }),
+            });
+            await refreshKPIs();
+            toast('Orden de producción creada');
+            navigate(`/ordenes/${res.id}`);
+          } catch (err) {
+            toast(err.message, true);
+          }
+        },
+      }] : []),
     ],
     steps: [
       { key: 'Pendiente', label: 'Pendiente' },
@@ -162,8 +185,8 @@ export async function renderPedidoDetalleView({ id }) {
     ],
     currentStep: pedido.estado,
     smartButtons: [
-      { label: 'Entregas', count: entregas.length, icon: '🚚', href: '/entregas' },
-      { label: 'Insumos', count: snapshot.length, icon: '📦' },
+      { label: 'Entregas', count: entregas.length, href: '/entregas' },
+      { label: 'Insumos', count: snapshot.length },
     ],
     kpis: [
       { label: 'Total Pedido', value: `${pedido.cantidad} u.` },

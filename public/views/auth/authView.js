@@ -36,7 +36,7 @@ export async function renderAuthView(container, onAuthSuccess) {
 
   function dbFooterHtml() {
     return `
-      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border,#e2e8f0);display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;color:var(--muted,#64748b)">
+      <div class="sx-980e9f">
         <span>Base activa: <strong>${esc(currentDb)}.sqlite</strong></span>
         <button type="button" class="btn btn-sm btn-secondary" id="btn-open-db-mgr">Cambiar / Gestionar DB</button>
       </div>
@@ -58,16 +58,16 @@ export async function renderAuthView(container, onAuthSuccess) {
   function draw() {
     if (mode === 'setup') {
       container.innerHTML = `
-        <div style="max-width:440px;margin:36px auto">
+        <div class="sx-c239b5">
           <div class="card">
             <div class="card-body">
-              <div style="text-align:center;margin-bottom:20px">
-                <div style="margin-bottom:8px"><img src="/favicon.svg" alt="VNG" width="52" height="52" style="display:inline-block;border-radius:12px" /></div>
-                <h2 style="margin:0">Configuración Inicial</h2>
-                <p class="muted" style="margin:6px 0 0">Creá la primera cuenta de Administrador para esta base de datos.</p>
+              <div class="sx-c3f2e8">
+                <div class="mb-sm"><img src="/favicon.svg" alt="VNG" width="52" height="52" class="sx-8a9ab5" /></div>
+                <h2 class="m-0">Configuración Inicial</h2>
+                <p class="muted sx-0f9ed7">Creá la primera cuenta de Administrador para esta base de datos.</p>
               </div>
 
-              <form id="auth-setup-form" class="form-grid" style="grid-template-columns:1fr;gap:12px">
+              <form id="auth-setup-form" class="form-grid grid-1col">
                 <label class="full">
                   <span>Usuario *</span>
                   <input type="text" id="setup-username" required minlength="3" autocomplete="username" placeholder="Ej: admin" />
@@ -84,7 +84,7 @@ export async function renderAuthView(container, onAuthSuccess) {
                   <span>Contraseña *</span>
                   <input type="password" id="setup-password" required minlength="4" autocomplete="new-password" placeholder="••••••••" />
                 </label>
-                <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px">Crear Administrador y Entrar</button>
+                <button type="submit" class="btn btn-primary sx-f585b4">Crear Administrador y Entrar</button>
               </form>
               ${dbFooterHtml()}
             </div>
@@ -116,28 +116,28 @@ export async function renderAuthView(container, onAuthSuccess) {
 
     if (mode === 'forgot') {
       container.innerHTML = `
-        <div style="max-width:420px;margin:36px auto">
+        <div class="auth-card">
           <div class="card">
             <div class="card-body">
-              <div style="text-align:center;margin-bottom:18px">
-                <div style="margin-bottom:8px"><img src="/favicon.svg" alt="VNG" width="52" height="52" style="display:inline-block;border-radius:12px" /></div>
-                <h2 style="margin:0">Recuperar Contraseña</h2>
-                <p class="muted" style="margin:6px 0 0">Ingresá tu usuario o email. El enlace se imprimirá en la consola del servidor.</p>
+              <div class="sx-b7ff7c">
+                <div class="mb-sm"><img src="/favicon.svg" alt="VNG" width="52" height="52" class="sx-8a9ab5" /></div>
+                <h2 class="m-0">Recuperar Contraseña</h2>
+                <p class="muted sx-0f9ed7">Ingresá tu usuario o email. El enlace se imprimirá en la consola del servidor.</p>
               </div>
 
               ${forgotSentMsg ? `
-                <div style="padding:12px;border-radius:8px;background:#ecfdf5;color:#065f46;font-size:13px;margin-bottom:14px">
+                <div class="sx-c11955">
                   ${esc(forgotSentMsg)}
                 </div>
               ` : ''}
 
-              <form id="auth-forgot-form" class="form-grid" style="grid-template-columns:1fr;gap:12px">
+              <form id="auth-forgot-form" class="form-grid grid-1col">
                 <label class="full">
                   <span>Usuario o Email</span>
                   <input type="text" id="forgot-identifier" required placeholder="Usuario o correo@empresa.com" />
                 </label>
-                <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Enviar enlace de recuperación</button>
-                <button type="button" class="btn btn-secondary" id="btn-back-login" style="width:100%;justify-content:center">Volver al Login</button>
+                <button type="submit" class="btn btn-primary flex-center-full">Enviar enlace de recuperación</button>
+                <button type="button" class="btn btn-secondary flex-center-full" id="btn-back-login">Volver al Login</button>
               </form>
               ${dbFooterHtml()}
             </div>
@@ -171,16 +171,16 @@ export async function renderAuthView(container, onAuthSuccess) {
 
     if (mode === 'reset') {
       container.innerHTML = `
-        <div style="max-width:420px;margin:36px auto">
+        <div class="auth-card">
           <div class="card">
             <div class="card-body">
-              <div style="text-align:center;margin-bottom:18px">
-                <div style="margin-bottom:8px"><img src="/favicon.svg" alt="VNG" width="52" height="52" style="display:inline-block;border-radius:12px" /></div>
-                <h2 style="margin:0">Restablecer Contraseña</h2>
-                <p class="muted" style="margin:6px 0 0">Elegí tu nueva contraseña para ingresar.</p>
+              <div class="sx-b7ff7c">
+                <div class="mb-sm"><img src="/favicon.svg" alt="VNG" width="52" height="52" class="sx-8a9ab5" /></div>
+                <h2 class="m-0">Restablecer Contraseña</h2>
+                <p class="muted sx-0f9ed7">Elegí tu nueva contraseña para ingresar.</p>
               </div>
 
-              <form id="auth-reset-form" class="form-grid" style="grid-template-columns:1fr;gap:12px">
+              <form id="auth-reset-form" class="form-grid grid-1col">
                 <label class="full">
                   <span>Nueva Contraseña *</span>
                   <input type="password" id="reset-pass-1" required minlength="4" autocomplete="new-password" placeholder="••••••••" />
@@ -189,8 +189,8 @@ export async function renderAuthView(container, onAuthSuccess) {
                   <span>Confirmar Contraseña *</span>
                   <input type="password" id="reset-pass-2" required minlength="4" autocomplete="new-password" placeholder="••••••••" />
                 </label>
-                <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Guardar Nueva Contraseña</button>
-                <button type="button" class="btn btn-secondary" id="btn-reset-to-login" style="width:100%;justify-content:center">Ir al Login</button>
+                <button type="submit" class="btn btn-primary flex-center-full">Guardar Nueva Contraseña</button>
+                <button type="button" class="btn btn-secondary flex-center-full" id="btn-reset-to-login">Ir al Login</button>
               </form>
               ${dbFooterHtml()}
             </div>
@@ -230,28 +230,28 @@ export async function renderAuthView(container, onAuthSuccess) {
     }
 
     container.innerHTML = `
-      <div style="max-width:420px;margin:36px auto">
+      <div class="auth-card">
         <div class="card">
           <div class="card-body">
-            <div style="text-align:center;margin-bottom:20px">
-              <div style="margin-bottom:8px"><img src="/favicon.svg" alt="VNG" width="52" height="52" style="display:inline-block;border-radius:12px" /></div>
-              <h2 style="margin:0">Vanguard Production</h2>
-              <p class="muted" style="margin:4px 0 0;font-size:12px">Gestión de Producción · v0.1.0</p>
-              <p class="muted" style="margin:6px 0 0">Iniciá sesión o creá una cuenta para continuar</p>
+            <div class="sx-c3f2e8">
+              <div class="mb-sm"><img src="/favicon.svg" alt="VNG" width="52" height="52" class="sx-8a9ab5" /></div>
+              <h2 class="m-0">Vanguard Production</h2>
+              <p class="muted sx-537dcb">Gestión de Producción · v0.1.0</p>
+              <p class="muted sx-0f9ed7">Iniciá sesión o creá una cuenta para continuar</p>
             </div>
 
-            <div style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--border,#e2e8f0);padding-bottom:12px">
-              <button type="button" class="btn ${mode === 'login' ? 'btn-primary' : 'btn-secondary'}" id="auth-tab-login" style="flex:1;justify-content:center">Iniciar Sesión</button>
-              <button type="button" class="btn ${mode === 'register' ? 'btn-primary' : 'btn-secondary'}" id="auth-tab-register" style="flex:1;justify-content:center">Registrarse</button>
+            <div class="sx-be29ac">
+              <button type="button" class="btn ${mode === 'login' ? 'btn-primary' : 'btn-secondary'} sx-4b99fd" id="auth-tab-login">Iniciar Sesión</button>
+              <button type="button" class="btn ${mode === 'register' ? 'btn-primary' : 'btn-secondary'} sx-4b99fd" id="auth-tab-register">Registrarse</button>
             </div>
 
             ${mode === 'login' && registerPendingMsg ? `
-              <div style="padding:12px;border-radius:8px;background:#ecfdf5;color:#065f46;font-size:13px;margin-bottom:14px">
+              <div class="sx-c11955">
                 ${esc(registerPendingMsg)}
               </div>
             ` : ''}
 
-            <form id="auth-form" class="form-grid" style="grid-template-columns:1fr;gap:12px">
+            <form id="auth-form" class="form-grid grid-1col">
               <label class="full">
                 <span>Usuario *</span>
                 <input type="text" id="auth-username" required autocomplete="username" placeholder="Tu usuario" />
@@ -270,19 +270,19 @@ export async function renderAuthView(container, onAuthSuccess) {
                 <span>Contraseña *</span>
                 <input type="password" id="auth-password" required autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" placeholder="••••••••" />
               </label>
-              <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px">
+              <button type="submit" class="btn btn-primary sx-f585b4">
                 ${mode === 'login' ? 'Entrar' : 'Crear Cuenta'}
               </button>
             </form>
 
             ${mode === 'login' ? `
-              <div style="text-align:center;margin-top:12px">
-                <button type="button" id="btn-forgot-pass" style="background:none;border:none;color:var(--color-primary,#2563eb);cursor:pointer;font-size:13px;text-decoration:underline">
+              <div class="sx-d6c6d5">
+                <button type="button" id="btn-forgot-pass" class="sx-89cc90">
                   ¿Olvidaste tu contraseña?
                 </button>
               </div>
             ` : `
-              <div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:#f8fafc;font-size:12px;color:var(--muted,#64748b)">
+              <div class="sx-b26cd7">
                 Las cuentas nuevas quedan <strong>pendientes de habilitación</strong> por un administrador en Configuración → Usuarios y Permisos.
               </div>
             `}

@@ -117,8 +117,8 @@ export function showPromptModal(message, {
     createModal({
       title,
       bodyHtml: `
-        <p class="ve-modal-msg" style="margin-bottom:10px;">${esc(message)}</p>
-        <input type="text" class="ve-modal-input" value="${esc(defaultValue)}" placeholder="${esc(placeholder)}" style="width:100%;" />
+        <p class="ve-modal-msg sx-a7409f">${esc(message)}</p>
+        <input type="text" class="ve-modal-input sx-6d5673" value="${esc(defaultValue)}" placeholder="${esc(placeholder)}" />
       `,
       footerHtml: `
         <button type="button" class="btn" data-ve-cancel>${esc(cancelText)}</button>
@@ -178,7 +178,7 @@ export function showFormModal({
     createModal({
       title,
       size: resolvedSize,
-      bodyHtml: `<form id="${formId}" class="form-grid" style="margin-bottom:0;"></form>`,
+      bodyHtml: `<form id="${formId}" class="form-grid mb-0"></form>`,
       footerHtml: `
         <button type="button" class="btn" data-ve-cancel>${esc(cancelText)}</button>
         <button type="submit" form="${formId}" class="btn btn-primary" data-ve-submit>${esc(submitText)}</button>
@@ -196,7 +196,7 @@ export function showFormModal({
           resolve(null);
         });
 
-        const firstInput = form.querySelector('input:not([type="hidden"]), select, textarea');
+        const firstInput = form.querySelector('input:not([type="hidden"]), select:not(.select-sr-hidden), textarea');
         firstInput?.focus();
 
         let submitting = false;

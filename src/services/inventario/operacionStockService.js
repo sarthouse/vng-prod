@@ -1,7 +1,7 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { registrarMovimientoStock, resolveOrCreateLote } from './inventarioService.js';
-import { convertUnitFromDb } from '../config/configService.js';
+import { convertUnitFromDb, resolveNumeroDocumento } from '../config/configService.js';
 
 export const operacionStockRepo = new BaseRepository({
   model: MODELS.operaciones_stock,
@@ -175,8 +175,8 @@ export function createOperacionStock(b, user = null) {
   if (!lineas.length) throw new Error('Debe agregar al menos un ítem con cantidad mayor a 0');
 
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
-  const rawNum = (b.numero || '').trim();
-  const numero = rawNum || nextOperacionNumero(tipo);
+  const seqTipo = (tipo === 'traslado' || tipo === 'remito_taller') ? 'remito' : 'operacion_stock';
+  const numero = resolveNumeroDocumento(seqTipo, b.numero, b.punto_venta);
 
   return operacionStockRepo.transaction(() => {
     const id = operacionStockRepo.create({

@@ -26,7 +26,7 @@ export async function renderTesoreriaCuentasView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/tesoreria" data-link class="muted" style="font-size:0.85rem;">← Volver a Tesorería</a></div>
+          <div class="mb-xs"><a href="/tesoreria" data-link class="muted text-md">← Volver a Tesorería</a></div>
           <h1>Cuentas y Transferencias</h1>
         </div>
         <div class="actions">
@@ -38,11 +38,11 @@ export async function renderTesoreriaCuentasView() {
         <div class="card-header">
           <div>
             <h2>Cuentas de Tesorería</h2>
-            <span class="muted" style="font-size:0.82rem;">Los saldos iniciales generan un asiento de apertura; los arqueos o diferencias generan un asiento de ajuste sin alterar el historial.</span>
+            <span class="muted text-sm">Los saldos iniciales generan un asiento de apertura; los arqueos o diferencias generan un asiento de ajuste sin alterar el historial.</span>
           </div>
         </div>
 
-        <form id="form-add-cuenta" class="form-grid" style="margin-bottom:1rem;">
+        <form id="form-add-cuenta" class="form-grid mb-1r">
           <label><span>Nombre de Cuenta *</span><input type="text" name="nombre" placeholder="Ej: Banco Galicia CC / Caja Chica" required /></label>
           <label><span>Tipo</span>
             <select name="tipo">
@@ -60,12 +60,12 @@ export async function renderTesoreriaCuentasView() {
               ${planActivoImputable.map(pc => `<option value="${pc.id}" ${planCajaDef && pc.id === planCajaDef.id ? 'selected' : ''}>${esc(pc.codigo)} — ${esc(pc.nombre)}</option>`).join('')}
             </select>
           </label>
-          <label style="grid-column: span 2;"><span>Contrapartida Contable (si saldo inicial ≠ 0)</span>
+          <label class="sx-a74d27"><span>Contrapartida Contable (si saldo inicial ≠ 0)</span>
             <select name="plan_cuenta_contrapartida_id">
               ${planActivas.map(pc => `<option value="${pc.id}" ${planCapital && pc.id === planCapital.id ? 'selected' : ''}>${esc(pc.codigo)} — ${esc(pc.nombre)} (${esc(pc.tipo)})</option>`).join('')}
             </select>
           </label>
-          <div style="display:flex; align-items:flex-end;">
+          <div class="flex-end">
             <button type="submit" class="btn btn-primary">+ Agregar Cuenta</button>
           </div>
         </form>
@@ -107,11 +107,11 @@ export async function renderTesoreriaCuentasView() {
       </div>
 
       ${ctaAjuste ? `
-        <div class="card" style="border-left: 4px solid var(--color-primary, #2563eb);">
+        <div class="card sx-064e67">
           <div class="card-header">
             <div>
               <h2>Ajustar Saldo / Arqueo — ${esc(ctaAjuste.nombre)}</h2>
-              <span class="muted" style="font-size:0.82rem;">Saldo actual en sistema: <strong>${fmtMoney(ctaAjuste.saldo_actual)}</strong>. Se generará un asiento contable por la diferencia.</span>
+              <span class="muted text-sm">Saldo actual en sistema: <strong>${fmtMoney(ctaAjuste.saldo_actual)}</strong>. Se generará un asiento contable por la diferencia.</span>
             </div>
             <button type="button" id="btn-cancel-ajuste" class="btn btn-sm">Cancelar</button>
           </div>
@@ -125,7 +125,7 @@ export async function renderTesoreriaCuentasView() {
                 ${planActivas.map(pc => `<option value="${pc.id}">${esc(pc.codigo)} — ${esc(pc.nombre)} (${esc(pc.tipo)})</option>`).join('')}
               </select>
             </label>
-            <div style="display:flex; align-items:flex-end;">
+            <div class="flex-end">
               <button type="submit" class="btn btn-primary">Confirmar Ajuste Contable</button>
             </div>
           </form>
@@ -136,10 +136,10 @@ export async function renderTesoreriaCuentasView() {
         <div class="card-header">
           <div>
             <h2>Transferencia entre Cuentas</h2>
-            <span class="muted" style="font-size:0.82rem;">Registra el movimiento entre cajas/bancos con asiento contable automático en partida doble.</span>
+            <span class="muted text-sm">Registra el movimiento entre cajas/bancos con asiento contable automático en partida doble.</span>
           </div>
         </div>
-        <form id="form-transferencia" class="toolbar" style="margin-bottom:0; flex-wrap:wrap; gap:0.5rem;">
+        <form id="form-transferencia" class="toolbar sx-22bb5c">
           <input type="date" name="fecha" required value="${new Date().toISOString().slice(0, 10)}" />
           <select name="cuenta_origen_id" required>
             <option value="">Cuenta origen...</option>
@@ -150,8 +150,8 @@ export async function renderTesoreriaCuentasView() {
             <option value="">Cuenta destino...</option>
             ${cuentasActivas.map(c => `<option value="${c.id}">${esc(c.nombre)} (${fmtMoney(c.saldo_actual)})</option>`).join('')}
           </select>
-          <input type="number" step="0.01" min="0.01" name="monto" placeholder="Monto" required style="width:130px;" />
-          <input type="text" name="concepto" placeholder="Concepto (ej: Depósito recaudación)" style="min-width:220px;" />
+          <input type="number" step="0.01" min="0.01" name="monto" placeholder="Monto" required class="w-130" />
+          <input type="text" name="concepto" placeholder="Concepto (ej: Depósito recaudación)" class="mw-220" />
           <button type="submit" class="btn btn-primary btn-sm">Transferir</button>
         </form>
       </div>

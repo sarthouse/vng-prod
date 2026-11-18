@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { getLibroIva, getLibroAuxiliar } from '../afip/libroIvaService.js';
@@ -7,6 +6,9 @@ import { defaultAsientoService } from './asientoService.js';
 const cotizRepo = new BaseRepository({ model: MODELS.cotizaciones_moneda });
 const extractoRepo = new BaseRepository({ model: MODELS.extracto_movimientos });
 const cierreRepo = new BaseRepository({ model: MODELS.cierres_ejercicio });
+const cobroRepo = new BaseRepository({ model: MODELS.cobros });
+const pagoRepo = new BaseRepository({ model: MODELS.pagos });
+const asientoLineaRepo = new BaseRepository({ model: MODELS.asiento_lineas });
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. POSICIÓN MENSUAL DE IVA (F.2002)
@@ -119,19 +121,16 @@ export function contabilizarPosicionIva({ fecha, desde, hasta, saldo_tecnico_ant
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function listExtractoMovimientos({ cuenta_id, estado, desde, hasta } = {}) {
-  const where = ['1=1'];
-  const args = [];
-  if (cuenta_id) { where.push('e.cuenta_id = ?'); args.push(Number(cuenta_id)); }
-  if (estado) { where.push('e.estado = ?'); args.push(estado); }
-  if (desde) { where.push('e.fecha >= ?'); args.push(desde); }
-  if (hasta) { where.push('e.fecha <= ?'); args.push(hasta); }
-  return db.prepare(`
-    SELECT e.*, c.nombre AS cuenta_nombre
-    FROM extracto_movimientos e
-    JOIN cuentas c ON c.id = e.cuenta_id
-    WHERE ${where.join(' AND ')}
-    ORDER BY e.fecha DESC, e.id DESC
-  `).all(...args);
+  const qb = extractoRepo.query('e')
+    .select('e.*', 'c.nombre AS cuenta_nombre')
+    .innerJoin('cuentas', 'c', 'c.id', 'e.cuenta_id')
+    .orderBy('e.fecha', 'DESC')
+    .orderBy('e.id', 'DESC');
+  if (cuenta_id) qb.where('e.cuenta_id', Number(cuenta_id));
+  if (estado) qb.where('e.estado', estado);
+  if (desde) qb.where('e.fecha', '>=', desde);
+  if (hasta) qb.where('e.fecha', '<=', hasta);
+  return qb.all();
 }
 
 export function importarExtractoCsv({ cuenta_id, contenido } = {}) {
@@ -183,27 +182,32 @@ export function importarExtractoCsv({ cuenta_id, contenido } = {}) {
 
 export function listMovimientosSistemaCuenta(cuenta_id) {
   const ctaId = Number(cuenta_id);
-  const cobros = db.prepare(`
-    SELECT 'cobro' AS entidad_tipo, c.id AS entidad_id, c.fecha, c.numero, c.concepto, c.monto AS monto
-    FROM cobros c
-    WHERE c.cuenta_id = ? AND c.estado = 'Confirmado'
-      AND NOT EXISTS (SELECT 1 FROM extracto_movimientos e WHERE e.entidad_tipo = 'cobro' AND e.entidad_id = c.id AND e.estado = 'conciliado')
-  `).all(ctaId);
+  const conciliados = new Set(
+    extractoRepo.findWhere({ estado: 'conciliado' })
+      .map(e => `${e.entidad_tipo}:${e.entidad_id}`)
+  );
 
-  const pagos = db.prepare(`
-    SELECT 'pago' AS entidad_tipo, p.id AS entidad_id, p.fecha, p.numero, p.concepto, -p.monto AS monto
-    FROM pagos p
-    WHERE p.cuenta_id = ? AND p.estado = 'Confirmado'
-      AND NOT EXISTS (SELECT 1 FROM extracto_movimientos e WHERE e.entidad_tipo = 'pago' AND e.entidad_id = p.id AND e.estado = 'conciliado')
-  `).all(ctaId);
+  const cobros = cobroRepo.query('c')
+    .select("'cobro' AS entidad_tipo", 'c.id AS entidad_id', 'c.fecha', 'c.numero', 'c.concepto', 'c.monto AS monto')
+    .where('c.cuenta_id', ctaId)
+    .where('c.estado', 'Confirmado')
+    .all()
+    .filter(r => !conciliados.has(`cobro:${r.entidad_id}`));
 
-  const asientosCta = db.prepare(`
-    SELECT 'asiento_linea' AS entidad_tipo, al.id AS entidad_id, a.fecha, a.numero, a.concepto, (al.debe - al.haber) AS monto
-    FROM asiento_lineas al
-    JOIN asientos a ON a.id = al.asiento_id
-    WHERE al.cuenta_id = ? AND a.tipo_origen IN ('transferencia', 'ajuste_saldo', 'cheque_deposito', 'cheque_debito')
-      AND NOT EXISTS (SELECT 1 FROM extracto_movimientos e WHERE e.entidad_tipo = 'asiento_linea' AND e.entidad_id = al.id AND e.estado = 'conciliado')
-  `).all(ctaId);
+  const pagos = pagoRepo.query('p')
+    .select("'pago' AS entidad_tipo", 'p.id AS entidad_id', 'p.fecha', 'p.numero', 'p.concepto', '-p.monto AS monto')
+    .where('p.cuenta_id', ctaId)
+    .where('p.estado', 'Confirmado')
+    .all()
+    .filter(r => !conciliados.has(`pago:${r.entidad_id}`));
+
+  const asientosCta = asientoLineaRepo.query('al')
+    .select("'asiento_linea' AS entidad_tipo", 'al.id AS entidad_id', 'a.fecha', 'a.numero', 'a.concepto', '(al.debe - al.haber) AS monto')
+    .innerJoin('asientos', 'a', 'a.id', 'al.asiento_id')
+    .where('al.cuenta_id', ctaId)
+    .whereIn('a.tipo_origen', ['transferencia', 'ajuste_saldo', 'cheque_deposito', 'cheque_debito'])
+    .all()
+    .filter(r => !conciliados.has(`asiento_linea:${r.entidad_id}`));
 
   return [...cobros, ...pagos, ...asientosCta].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
 }
@@ -271,10 +275,9 @@ export function desconciliarExtractoItem(extractoId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function listCotizaciones({ moneda } = {}) {
-  if (moneda) {
-    return db.prepare('SELECT * FROM cotizaciones_moneda WHERE moneda = ? ORDER BY fecha DESC, id DESC LIMIT 100').all(moneda.toUpperCase());
-  }
-  return db.prepare('SELECT * FROM cotizaciones_moneda ORDER BY fecha DESC, id DESC LIMIT 100').all();
+  const qb = cotizRepo.query().orderBy('fecha', 'DESC').orderBy('id', 'DESC').limit(100);
+  if (moneda) qb.where('moneda', moneda.toUpperCase());
+  return qb.all();
 }
 
 export function upsertCotizacion({ moneda = 'USD', fecha, cotizacion, fuente = 'manual' }) {
@@ -282,7 +285,7 @@ export function upsertCotizacion({ moneda = 'USD', fecha, cotizacion, fuente = '
   const fch = fecha || new Date().toISOString().slice(0, 10);
   const val = Number(cotizacion);
   if (!Number.isFinite(val) || val <= 0) throw new Error('La cotización debe ser mayor a 0');
-  const existing = db.prepare('SELECT id FROM cotizaciones_moneda WHERE moneda = ? AND fecha = ?').get(mon, fch);
+  const existing = cotizRepo.query().select('id').where('moneda', mon).where('fecha', fch).get();
   if (existing) {
     cotizRepo.update(existing.id, { cotizacion: val, fuente });
     return existing.id;
@@ -294,7 +297,14 @@ export function getCotizacionVigente(moneda = 'ARS', fecha = '') {
   const mon = String(moneda || 'ARS').toUpperCase().trim();
   if (mon === 'ARS' || mon === 'PES') return 1;
   const fch = fecha || new Date().toISOString().slice(0, 10);
-  const row = db.prepare('SELECT cotizacion FROM cotizaciones_moneda WHERE moneda = ? AND fecha <= ? ORDER BY fecha DESC, id DESC LIMIT 1').get(mon, fch);
+  const row = cotizRepo.query()
+    .select('cotizacion')
+    .where('moneda', mon)
+    .where('fecha', '<=', fch)
+    .orderBy('fecha', 'DESC')
+    .orderBy('id', 'DESC')
+    .limit(1)
+    .get();
   return row ? Number(row.cotizacion) : 1;
 }
 
@@ -304,39 +314,48 @@ export function getCotizacionVigente(moneda = 'ARS', fecha = '') {
 
 export function assertFechaAbierta(fecha) {
   if (!fecha) return;
-  const closed = db.prepare(
-    "SELECT id, descripcion, fecha_desde, fecha_hasta FROM cierres_ejercicio WHERE estado = 'cerrado' AND ? >= fecha_desde AND ? <= fecha_hasta LIMIT 1"
-  ).get(fecha, fecha);
+  const closed = cierreRepo.query()
+    .select('id', 'descripcion', 'fecha_desde', 'fecha_hasta')
+    .where('estado', 'cerrado')
+    .where('fecha_desde', '<=', fecha)
+    .where('fecha_hasta', '>=', fecha)
+    .limit(1)
+    .get();
   if (closed) {
     throw new Error(`El período ${closed.fecha_desde} a ${closed.fecha_hasta} está cerrado (${closed.descripcion || 'Cierre de ejercicio'}). Reabrilo para registrar movimientos.`);
   }
 }
 
 export function listCierresEjercicio() {
-  return db.prepare(`
-    SELECT ce.*, a.numero AS asiento_numero
-    FROM cierres_ejercicio ce
-    LEFT JOIN asientos a ON a.id = ce.asiento_id
-    ORDER BY ce.fecha_hasta DESC, ce.id DESC
-  `).all();
+  return cierreRepo.query('ce')
+    .select('ce.*', 'a.numero AS asiento_numero')
+    .leftJoin('asientos', 'a', 'a.id', 'ce.asiento_id')
+    .orderBy('ce.fecha_hasta', 'DESC')
+    .orderBy('ce.id', 'DESC')
+    .all();
 }
 
 export function previewCierreEjercicio({ fecha_desde, fecha_hasta }) {
   if (!fecha_desde || !fecha_hasta) throw new Error('Indicá fecha_desde y fecha_hasta');
-  const cuentasRes = db.prepare(`
-    SELECT pc.id, pc.codigo, pc.nombre, pc.tipo,
-           COALESCE(SUM(al.debe), 0) AS total_debe,
-           COALESCE(SUM(al.haber), 0) AS total_haber
-    FROM asiento_lineas al
-    JOIN asientos a ON a.id = al.asiento_id
-    JOIN plan_cuentas pc ON pc.id = al.plan_cuenta_id
-    WHERE LOWER(a.estado) = 'confirmado'
-      AND a.tipo_origen != 'cierre_ejercicio'
-      AND a.fecha >= ? AND a.fecha <= ?
-      AND pc.tipo IN ('ingreso', 'egreso')
-    GROUP BY pc.id, pc.codigo, pc.nombre, pc.tipo
-    ORDER BY pc.codigo ASC
-  `).all(fecha_desde, fecha_hasta);
+  const cuentasRes = asientoLineaRepo.query('al')
+    .select(
+      'pc.id',
+      'pc.codigo',
+      'pc.nombre',
+      'pc.tipo',
+      'COALESCE(SUM(al.debe), 0) AS total_debe',
+      'COALESCE(SUM(al.haber), 0) AS total_haber'
+    )
+    .innerJoin('asientos', 'a', 'a.id', 'al.asiento_id')
+    .innerJoin('plan_cuentas', 'pc', 'pc.id', 'al.plan_cuenta_id')
+    .whereIn('a.estado', ['Confirmado', 'confirmado'])
+    .where('a.tipo_origen', '!=', 'cierre_ejercicio')
+    .where('a.fecha', '>=', fecha_desde)
+    .where('a.fecha', '<=', fecha_hasta)
+    .whereIn('pc.tipo', ['ingreso', 'egreso'])
+    .groupBy('pc.id', 'pc.codigo', 'pc.nombre', 'pc.tipo')
+    .orderBy('pc.codigo', 'ASC')
+    .all();
 
   let totalIngresos = 0;
   let totalEgresos = 0;

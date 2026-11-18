@@ -6,6 +6,9 @@ import { generateRemitoPdf } from '../services/print/remitoPdfService.js';
 import { generateVentaPdf } from '../services/print/ventaPdfService.js';
 import { generatePresupuestoPdf } from '../services/print/presupuestoPdfService.js';
 import { generateOrdenPdf } from '../services/print/ordenPdfService.js';
+import { generateCuentaCorrientePdf } from '../services/print/cuentaCorrientePdfService.js';
+import { generateExistenciasPdf } from '../services/print/existenciasPdfService.js';
+import { generateTesoreriaPdf } from '../services/print/tesoreriaPdfService.js';
 import { handlePublicAuthRoutes, handleAdminAuthRoutes } from './authRoutes.js';
 import { handleDbRoutes } from './dbRoutes.js';
 import { handleMetaRoutes } from './metaRoutes.js';
@@ -17,6 +20,7 @@ import { handleVentasRoutes } from './ventasRoutes.js';
 import { handleTesoreriaRoutes } from './tesoreriaRoutes.js';
 import { handleContactosRoutes } from './contactosRoutes.js';
 import { handleFiscalRoutes } from './fiscalRoutes.js';
+import { handleTareaRoutes } from './tareaRoutes.js';
 
 export { json };
 
@@ -132,15 +136,15 @@ export async function handleApi(req, res, pathname) {
     if (deny(isWrite ? 'produccion.editar' : 'produccion.ver')) return;
   }
 
-  if (pathname === '/api/print/remito-pdf' && req.method === 'POST') {
+  const handlePdfPrint = async (generatorFn, getFilename) => {
     try {
       const body = await parseBody(req);
       const emp = body.empresa || getConfig()?.empresa || {};
-      const pdfBuf = generateRemitoPdf(body, emp);
-      const safeName = String(body.numero || 'remito').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      const pdfBuf = generatorFn(body, emp);
+      const safeName = String(getFilename(body) || 'documento').replace(/[^a-zA-Z0-9_.-]+/g, '_');
       res.writeHead(200, {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Remito_${safeName}.pdf"`,
+        'Content-Disposition': `inline; filename="${safeName}"`,
         'Content-Length': pdfBuf.length,
         'Cache-Control': 'no-store',
       });
@@ -148,60 +152,34 @@ export async function handleApi(req, res, pathname) {
     } catch (e) {
       json(res, 400, { error: e.message });
     }
+  };
+
+  if (pathname === '/api/print/remito-pdf' && req.method === 'POST') {
+    await handlePdfPrint(generateRemitoPdf, b => `Remito_${b.numero || 'remito'}.pdf`);
     return;
   }
   if (pathname === '/api/print/venta-pdf' && req.method === 'POST') {
-    try {
-      const body = await parseBody(req);
-      const emp = body.empresa || getConfig()?.empresa || {};
-      const pdfBuf = generateVentaPdf(body, emp);
-      const safeName = String(body.venta?.numero || body.venta?.id || 'comprobante').replace(/[^a-zA-Z0-9_-]+/g, '_');
-      res.writeHead(200, {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Comprobante_${safeName}.pdf"`,
-        'Content-Length': pdfBuf.length,
-        'Cache-Control': 'no-store',
-      });
-      res.end(pdfBuf);
-    } catch (e) {
-      json(res, 400, { error: e.message });
-    }
+    await handlePdfPrint(generateVentaPdf, b => `Comprobante_${b.venta?.numero || b.venta?.id || 'comprobante'}.pdf`);
     return;
   }
   if (pathname === '/api/print/presupuesto-pdf' && req.method === 'POST') {
-    try {
-      const body = await parseBody(req);
-      const emp = body.empresa || getConfig()?.empresa || {};
-      const pdfBuf = generatePresupuestoPdf(body.presupuesto || body, emp);
-      const safeName = String(body.presupuesto?.id || body.id || 'presupuesto').replace(/[^a-zA-Z0-9_-]+/g, '_');
-      res.writeHead(200, {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Presupuesto_${safeName}.pdf"`,
-        'Content-Length': pdfBuf.length,
-        'Cache-Control': 'no-store',
-      });
-      res.end(pdfBuf);
-    } catch (e) {
-      json(res, 400, { error: e.message });
-    }
+    await handlePdfPrint((b, emp) => generatePresupuestoPdf(b.presupuesto || b, emp), b => `Presupuesto_${b.presupuesto?.id || b.id || 'presupuesto'}.pdf`);
     return;
   }
   if (pathname === '/api/print/orden-pdf' && req.method === 'POST') {
-    try {
-      const body = await parseBody(req);
-      const emp = body.empresa || getConfig()?.empresa || {};
-      const pdfBuf = generateOrdenPdf(body, emp);
-      const safeName = String(body.orden?.codigo || body.codigo || body.id || 'orden').replace(/[^a-zA-Z0-9_-]+/g, '_');
-      res.writeHead(200, {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="Orden_${safeName}.pdf"`,
-        'Content-Length': pdfBuf.length,
-        'Cache-Control': 'no-store',
-      });
-      res.end(pdfBuf);
-    } catch (e) {
-      json(res, 400, { error: e.message });
-    }
+    await handlePdfPrint(generateOrdenPdf, b => `Orden_${b.orden?.codigo || b.codigo || b.id || 'orden'}.pdf`);
+    return;
+  }
+  if (pathname === '/api/print/cuenta-corriente-pdf' && req.method === 'POST') {
+    await handlePdfPrint(generateCuentaCorrientePdf, b => `CuentaCorriente_${b.contacto?.nombre || b.contacto?.id || 'contacto'}.pdf`);
+    return;
+  }
+  if (pathname === '/api/print/existencias-pdf' && req.method === 'POST') {
+    await handlePdfPrint(generateExistenciasPdf, () => `Existencias_${new Date().toISOString().slice(0, 10)}.pdf`);
+    return;
+  }
+  if (pathname === '/api/print/tesoreria-pdf' && req.method === 'POST') {
+    await handlePdfPrint(generateTesoreriaPdf, b => `${b.letra || 'TES'}_${b.doc?.numero || b.doc?.id || 'comprobante'}.pdf`);
     return;
   }
 
@@ -215,6 +193,7 @@ export async function handleApi(req, res, pathname) {
   if (await handleTesoreriaRoutes(req, res, pathname, user)) return;
   if (await handleContactosRoutes(req, res, pathname)) return;
   if (await handleFiscalRoutes(req, res, pathname)) return;
+  if (await handleTareaRoutes(req, res, pathname, user)) return;
 
   return json(res, 404, { error: 'Endpoint no encontrado' });
 }

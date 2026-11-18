@@ -2,6 +2,9 @@
  * Plantillas de Plan de Cuentas para Argentina
  * separadas según la condición fiscal y operatoria de la empresa.
  */
+import { BaseRepository } from '../../core/BaseRepository.js';
+import { MODELS } from '../../db/models.js';
+
 export const PLAN_CUENTAS_TEMPLATES = {
   monotributo: {
     id: 'monotributo',
@@ -89,47 +92,46 @@ export function applyPlanCuentasTemplate(db, templateId) {
   const tpl = PLAN_CUENTAS_TEMPLATES[templateId];
   if (!tpl) throw new Error('Plantilla de plan de cuentas no encontrada');
 
+  const planCuentaRepo = new BaseRepository({ model: MODELS.plan_cuentas, db });
   const tplCodes = new Set(tpl.cuentas.map(c => c.codigo));
   let creadas = 0;
   let actualizadas = 0;
   let desactivadas = 0;
 
-  db.exec('BEGIN');
-  try {
-    const findStmt = db.prepare('SELECT id FROM plan_cuentas WHERE codigo = ?');
-    const insStmt = db.prepare(`
-      INSERT INTO plan_cuentas (codigo, nombre, tipo, naturaleza, imputable, activo)
-      VALUES (?, ?, ?, ?, ?, 1)
-    `);
-    const updStmt = db.prepare(`
-      UPDATE plan_cuentas SET nombre = ?, tipo = ?, naturaleza = ?, imputable = ?, activo = 1 WHERE id = ?
-    `);
-
+  return planCuentaRepo.transaction(() => {
     for (const c of tpl.cuentas) {
-      const ex = findStmt.get(c.codigo);
+      const ex = planCuentaRepo.query().select('id').where('codigo', c.codigo).get();
       if (ex) {
-        updStmt.run(c.nombre, c.tipo, c.naturaleza, c.imputable ?? 1, ex.id);
+        planCuentaRepo.update(ex.id, {
+          nombre: c.nombre,
+          tipo: c.tipo,
+          naturaleza: c.naturaleza,
+          imputable: c.imputable ?? 1,
+          activo: 1,
+        });
         actualizadas += 1;
       } else {
-        insStmt.run(c.codigo, c.nombre, c.tipo, c.naturaleza, c.imputable ?? 1);
+        planCuentaRepo.create({
+          codigo: c.codigo,
+          nombre: c.nombre,
+          tipo: c.tipo,
+          naturaleza: c.naturaleza,
+          imputable: c.imputable ?? 1,
+          activo: 1,
+        });
         creadas += 1;
       }
     }
 
     // Desactivar cuentas que no pertenecen a la plantilla (sin borrar para no romper asientos históricos)
-    const all = db.prepare('SELECT id, codigo, activo FROM plan_cuentas').all();
-    const deactStmt = db.prepare('UPDATE plan_cuentas SET activo = 0 WHERE id = ?');
+    const all = planCuentaRepo.query().select('id', 'codigo', 'activo').all();
     for (const row of all) {
       if (!tplCodes.has(row.codigo) && row.activo !== 0) {
-        deactStmt.run(row.id);
+        planCuentaRepo.update(row.id, { activo: 0 });
         desactivadas += 1;
       }
     }
 
-    db.exec('COMMIT');
     return { plantilla: tpl.id, creadas, actualizadas, desactivadas };
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+  });
 }

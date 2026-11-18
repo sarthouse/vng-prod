@@ -199,10 +199,13 @@ export function renderDataTable(container, {
   emptyText = 'Sin registros.',
   selectable = true,
   sortable = true,
-  pageSize = 100,
+  paginate = true,
+  pageSize = 25,
+  pageSizeOptions = [25, 50, 100, 0],
   getRowId,
   bulkActions = [],
   exportFilename = 'seleccion.csv',
+  tableKey = '',
 } = {}) {
   if (!container) return;
   if (!rows.length) {
@@ -210,10 +213,25 @@ export function renderDataTable(container, {
     return;
   }
 
+  const prefKey = `ve_table_prefs:${tableKey || `${window.location.pathname}:${container.id || 'default'}`}`;
+  const loadPrefs = () => {
+    try {
+      const raw = localStorage.getItem(prefKey);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  };
+  const savePrefs = (prefs) => {
+    try { localStorage.setItem(prefKey, JSON.stringify(prefs)); } catch {}
+  };
+  const prefs = loadPrefs();
+  const hiddenCols = new Set(Array.isArray(prefs.hiddenCols) ? prefs.hiddenCols : []);
+  let isCompact = Boolean(prefs.compact);
+  const getColId = (c, idx) => String(c.key || c.label || `col_${idx}`);
+
   let sortColIdx = container.__veSortColIdx ?? -1;
   let sortDir = container.__veSortDir ?? 1;
-  let currentPage = 1;
-  let currentPageSize = container.__vePageSize ?? pageSize;
+  let currentPage = container.__vePage ?? 1;
+  let currentPageSize = container.__vePageSize !== undefined ? container.__vePageSize : pageSize;
 
   const resolveId = typeof getRowId === 'function' ? getRowId : (r, i) => (r?.id !== undefined && r?.id !== null ? r.id : i);
 
@@ -225,6 +243,12 @@ export function renderDataTable(container, {
   };
 
   const drawTable = () => {
+    const visibleColumns = columns.filter((c, idx) => {
+      const isAction = !c.label || c.label.toLowerCase() === 'acciones';
+      return isAction || !hiddenCols.has(getColId(c, idx));
+    });
+    const activeColumns = visibleColumns.length ? visibleColumns : columns;
+
     const orderedRows = [...rows];
     if (sortable && sortColIdx >= 0 && sortColIdx < columns.length) {
       const col = columns[sortColIdx];
@@ -232,24 +256,53 @@ export function renderDataTable(container, {
     }
 
     const totalRows = orderedRows.length;
-    const totalPages = currentPageSize > 0 ? Math.max(1, Math.ceil(totalRows / currentPageSize)) : 1;
+    const effectiveSize = paginate ? Number(currentPageSize || 0) : 0;
+    const totalPages = effectiveSize > 0 ? Math.max(1, Math.ceil(totalRows / effectiveSize)) : 1;
     if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+    container.__vePage = currentPage;
 
-    const visibleRows = currentPageSize > 0 && totalRows > currentPageSize
-      ? orderedRows.slice((currentPage - 1) * currentPageSize, currentPage * currentPageSize)
+    const startIdx = effectiveSize > 0 ? (currentPage - 1) * effectiveSize : 0;
+    const visibleRows = effectiveSize > 0 && totalRows > effectiveSize
+      ? orderedRows.slice(startIdx, startIdx + effectiveSize)
       : orderedRows;
+    const fromNum = totalRows === 0 ? 0 : startIdx + 1;
+    const toNum = startIdx + visibleRows.length;
+    const showPager = paginate && totalRows > Math.min(...pageSizeOptions.filter(n => n > 0), pageSize || 25);
 
     const idList = visibleRows.map((r, i) => String(resolveId(r, i)));
-    const hasFooter = columns.some(c => typeof c.sum === 'function' || c.footer !== undefined);
+    const hasFooter = activeColumns.some(c => typeof c.sum === 'function' || c.footer !== undefined);
+    const toggleableCols = columns
+      .map((c, idx) => ({ c, idx, id: getColId(c, idx) }))
+      .filter(({ c }) => c.label && c.label.toLowerCase() !== 'acciones');
 
     container.innerHTML = `
+      <div class="ve-table-toolbar">
+        <button type="button" class="btn btn-sm secondary" data-ve-density title="Alternar densidad de filas">
+          Densidad: ${isCompact ? 'Compacta' : 'Normal'}
+        </button>
+        ${toggleableCols.length > 1 ? `
+          <div class="ve-col-picker">
+            <button type="button" class="btn btn-sm secondary" data-ve-col-toggle>Columnas ▾</button>
+            <div class="ve-col-menu" data-ve-col-menu hidden>
+              ${toggleableCols.map(({ c, id }) => `
+                <label class="ve-col-option">
+                  <input type="checkbox" data-ve-col-id="${esc(id)}" ${!hiddenCols.has(id) ? 'checked' : ''} />
+                  <span>${esc(c.label)}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
       ${selectable ? renderBulkBarHtml(bulkActions) : ''}
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table ${isCompact ? 've-table-compact' : ''}">
           <thead>
             <tr>
               ${selectable ? '<th class="bulk-col"><input type="checkbox" class="bulk-check" data-bulk-all title="Seleccionar todos" /></th>' : ''}
-              ${columns.map((c, idx) => {
+              ${activeColumns.map((c) => {
+                const idx = columns.indexOf(c);
                 const isActionCol = !c.label || c.label.toLowerCase() === 'acciones' || c.sortable === false;
                 const canSort = sortable && !isActionCol;
                 const activeSort = sortColIdx === idx;
@@ -267,9 +320,13 @@ export function renderDataTable(container, {
             ${visibleRows.map((r, i) => `
               <tr data-row-id="${esc(idList[i])}">
                 ${selectable ? `<td class="bulk-col"><input type="checkbox" class="bulk-check" data-bulk-row="${esc(idList[i])}" /></td>` : ''}
-                ${columns.map(c => {
+                ${activeColumns.map(c => {
                   const content = c.render ? c.render(r) : esc(r[c.key] ?? '');
-                  return `<td class="${c.align === 'right' ? 'num' : ''}">${content}</td>`;
+                  const tdCls = [
+                    c.align === 'right' ? 'num' : '',
+                    c.nowrap ? 'nowrap' : '',
+                  ].filter(Boolean).join(' ');
+                  return `<td class="${tdCls}">${content}</td>`;
                 }).join('')}
               </tr>
             `).join('')}
@@ -278,7 +335,7 @@ export function renderDataTable(container, {
             <tfoot>
               <tr>
                 ${selectable ? '<td class="bulk-col"></td>' : ''}
-                ${columns.map((c, idx) => {
+                ${activeColumns.map((c, idx) => {
                   const content = typeof c.sum === 'function'
                     ? c.sum(orderedRows)
                     : (c.footer !== undefined ? c.footer : (idx === 0 ? 'Totales' : ''));
@@ -289,9 +346,14 @@ export function renderDataTable(container, {
           ` : ''}
         </table>
       </div>
-      ${totalRows > 50 ? `
+      ${showPager ? `
         <div class="ve-table-pager">
-          <span class="muted">Mostrando ${visibleRows.length} de ${totalRows} registros</span>
+          <div class="sx-72fafc">
+            <span class="muted">Mostrando ${fromNum}–${toNum} de ${totalRows} registros</span>
+            <select class="input-sm sx-83b5ce" data-ve-page-size title="Registros por página">
+              ${pageSizeOptions.map(opt => `<option value="${opt}" ${Number(currentPageSize) === Number(opt) ? 'selected' : ''}>${opt === 0 ? 'Todos' : `${opt} / pág.`}</option>`).join('')}
+            </select>
+          </div>
           ${totalPages > 1 ? `
             <div class="ve-pager-controls">
               <button type="button" class="btn btn-sm" data-ve-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Anterior</button>
@@ -329,11 +391,40 @@ export function renderDataTable(container, {
       });
     });
 
+    container.querySelector('[data-ve-page-size]')?.addEventListener('change', (e) => {
+      currentPageSize = Number(e.target.value);
+      container.__vePageSize = currentPageSize;
+      currentPage = 1;
+      drawTable();
+    });
     container.querySelector('[data-ve-page="prev"]')?.addEventListener('click', () => {
       if (currentPage > 1) { currentPage--; drawTable(); }
     });
     container.querySelector('[data-ve-page="next"]')?.addEventListener('click', () => {
       if (currentPage < totalPages) { currentPage++; drawTable(); }
+    });
+
+    container.querySelector('[data-ve-density]')?.addEventListener('click', () => {
+      isCompact = !isCompact;
+      savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
+      drawTable();
+    });
+
+    const colToggle = container.querySelector('[data-ve-col-toggle]');
+    const colMenu = container.querySelector('[data-ve-col-menu]');
+    colToggle?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (colMenu) colMenu.hidden = !colMenu.hidden;
+    });
+    colMenu?.addEventListener('click', (e) => e.stopPropagation());
+    colMenu?.querySelectorAll('[data-ve-col-id]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.veColId;
+        if (cb.checked) hiddenCols.delete(id);
+        else hiddenCols.add(id);
+        savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
+        drawTable();
+      });
     });
   };
 
@@ -428,6 +519,103 @@ export function attachBulkSelection(container, {
     bulkActions,
     exportFilename,
   });
+
+  attachTableToolbar(table);
+}
+
+function attachTableToolbar(table) {
+  if (!table || table.dataset.veToolbarBound === '1') return;
+  const tableWrap = table.closest('.table-wrap') || table;
+  const parent = tableWrap.parentNode;
+  if (!parent || parent.querySelector(':scope > .ve-table-toolbar')) {
+    table.dataset.veToolbarBound = '1';
+    return;
+  }
+  const headTr = table.querySelector('thead tr');
+  if (!headTr) return;
+  table.dataset.veToolbarBound = '1';
+
+  const ths = Array.from(headTr.children);
+  const toggleable = ths
+    .map((th, idx) => ({ idx, label: (th.textContent || '').replace(/[▲▼]/g, '').trim(), isBulk: th.classList.contains('bulk-col') }))
+    .filter(c => !c.isBulk && c.label && c.label.toLowerCase() !== 'acciones');
+
+  const firstLabel = toggleable.slice(0, 3).map(c => c.label).join('|');
+  const prefKey = `ve_table_prefs:${window.location.pathname}:${table.id || firstLabel || 'manual'}`;
+  const loadPrefs = () => {
+    try { return JSON.parse(localStorage.getItem(prefKey) || '{}'); } catch { return {}; }
+  };
+  const savePrefs = (p) => {
+    try { localStorage.setItem(prefKey, JSON.stringify(p)); } catch {}
+  };
+
+  const prefs = loadPrefs();
+  const hiddenCols = new Set(Array.isArray(prefs.hiddenCols) ? prefs.hiddenCols : []);
+  let isCompact = Boolean(prefs.compact);
+
+  const applyPrefs = () => {
+    table.classList.toggle('ve-table-compact', isCompact);
+    const allRows = table.querySelectorAll('thead tr, tbody tr');
+    allRows.forEach(tr => {
+      const cells = Array.from(tr.children);
+      if (cells.length === 1 && cells[0].hasAttribute('colspan')) return;
+      toggleable.forEach(({ idx, label }) => {
+        const cell = cells[idx];
+        if (cell) cell.classList.toggle('ve-col-hidden', hiddenCols.has(label));
+      });
+    });
+  };
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 've-table-toolbar';
+  toolbar.innerHTML = `
+    <button type="button" class="btn btn-sm secondary" data-ve-density title="Alternar densidad de filas">
+      Densidad: ${isCompact ? 'Compacta' : 'Normal'}
+    </button>
+    ${toggleable.length > 1 ? `
+      <div class="ve-col-picker">
+        <button type="button" class="btn btn-sm secondary" data-ve-col-toggle>Columnas ▾</button>
+        <div class="ve-col-menu" data-ve-col-menu hidden>
+          ${toggleable.map(({ label }) => `
+            <label class="ve-col-option">
+              <input type="checkbox" data-ve-col-id="${esc(label)}" ${!hiddenCols.has(label) ? 'checked' : ''} />
+              <span>${esc(label)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+
+  const bulkBar = parent.querySelector(':scope > [data-bulk-bar]');
+  parent.insertBefore(toolbar, bulkBar || tableWrap);
+
+  const densityBtn = toolbar.querySelector('[data-ve-density]');
+  densityBtn?.addEventListener('click', () => {
+    isCompact = !isCompact;
+    densityBtn.textContent = `Densidad: ${isCompact ? 'Compacta' : 'Normal'}`;
+    savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
+    applyPrefs();
+  });
+
+  const colToggle = toolbar.querySelector('[data-ve-col-toggle]');
+  const colMenu = toolbar.querySelector('[data-ve-col-menu]');
+  colToggle?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (colMenu) colMenu.hidden = !colMenu.hidden;
+  });
+  colMenu?.addEventListener('click', (e) => e.stopPropagation());
+  colMenu?.querySelectorAll('[data-ve-col-id]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.veColId;
+      if (cb.checked) hiddenCols.delete(id);
+      else hiddenCols.add(id);
+      savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
+      applyPrefs();
+    });
+  });
+
+  applyPrefs();
 }
 
 /**

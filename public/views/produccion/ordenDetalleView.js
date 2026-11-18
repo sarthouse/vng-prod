@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtNum, fmtMoney, badgeForTipo } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { openPdfFromEndpoint } from '../../lib/remitoPrint.js';
+import { openPdfFromEndpoint } from '../../lib/print/index.js';
 import { mountDetailView, createModal, renderGanttChart } from '../../lib/engine/index.js';
 
 export async function renderOrdenDetalleView({ id }) {
@@ -28,7 +28,7 @@ export async function renderOrdenDetalleView({ id }) {
       <div class="card-header">
         <div>
           <h2>Cantidades de la Orden</h2>
-          <span class="muted" style="font-size:0.82rem;">Podés registrar ingresos parciales de producto terminado a medida que salen del taller o completar todo al cierre.</span>
+          <span class="muted text-sm">Podés registrar ingresos parciales de producto terminado a medida que salen del taller o completar todo al cierre.</span>
         </div>
       </div>
       <div class="table-wrap">
@@ -48,8 +48,8 @@ export async function renderOrdenDetalleView({ id }) {
             </tr>
             <tr>
               <td><strong>Ingresado</strong></td>
-              ${(lineas || []).map(l => `<td class="num" style="color:#15803d;">${fmtNum(l.cantidad_ingresada || 0)}</td>`).join('')}
-              <td class="num"><strong style="color:#15803d;">${fmtNum(orden.cantidad_ingresada || 0)}</strong></td>
+              ${(lineas || []).map(l => `<td class="num text-success">${fmtNum(l.cantidad_ingresada || 0)}</td>`).join('')}
+              <td class="num"><strong class="text-success">${fmtNum(orden.cantidad_ingresada || 0)}</strong></td>
             </tr>
             <tr>
               <td><strong>Pendiente</strong></td>
@@ -89,39 +89,39 @@ export async function renderOrdenDetalleView({ id }) {
               <tr>
                 <td>
                   <strong>${e.orden_num}. ${esc(e.nombre)}</strong>
-                  ${e.descripcion ? `<div class="muted" style="font-size:11px;">${esc(e.descripcion)}</div>` : ''}
-                  ${e.depende_de_nombre ? `<div class="muted" style="font-size:11px;">Depende de: ${esc(e.depende_de_nombre)}</div>` : ''}
+                  ${e.descripcion ? `<div class="muted text-2xs">${esc(e.descripcion)}</div>` : ''}
+                  ${e.depende_de_nombre ? `<div class="muted text-2xs">Depende de: ${esc(e.depende_de_nombre)}</div>` : ''}
                 </td>
                 <td>
                   <select class="etapa-taller input-sm" data-etapa-id="${e.id}">
                     <option value="">-- Sin taller --</option>
                     ${talleres.map(t => `<option value="${t.id}" ${String(t.id) === String(e.taller_id || '') ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}
                   </select>
-                  <select class="etapa-cta input-sm" data-etapa-id="${e.id}" style="margin-top:4px;">
+                  <select class="etapa-cta input-sm sx-a18ac8" data-etapa-id="${e.id}">
                     <option value="">-- Cuenta por defecto --</option>
                     ${cuentasEgreso.map(c => `<option value="${c.id}" ${String(c.id) === String(e.plan_cuenta_id || '') ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('')}
                   </select>
-                  ${e.compra_id ? `<div style="margin-top:4px;"><a href="/compras/${e.compra_id}" data-link class="badge badge-ok">Compra ${esc(e.compra_numero || '#' + e.compra_id)}</a></div>` : ''}
+                  ${e.compra_id ? `<div class="sx-a18ac8"><a href="/compras/${e.compra_id}" data-link class="badge badge-ok">Compra ${esc(e.compra_numero || '#' + e.compra_id)}</a></div>` : ''}
                 </td>
                 <td>
-                  <div style="display:flex;flex-direction:column;gap:4px;">
+                  <div class="sx-fb7434">
                     <input type="date" class="etapa-ini input-sm" data-etapa-id="${e.id}" value="${esc(e.fecha_inicio_est || '')}" title="Inicio estimado" />
                     <input type="date" class="etapa-fin input-sm" data-etapa-id="${e.id}" value="${esc(e.fecha_fin_est || '')}" title="Fin estimado" />
                   </div>
                 </td>
                 <td>
-                  <div style="display:flex;gap:4px;align-items:center;font-size:12px;">
-                    <input type="number" min="0" step="1" class="etapa-prod input-sm" data-etapa-id="${e.id}" value="${prod}" style="width:62px;" title="Unidades producidas" />
+                  <div class="sx-21d0a1">
+                    <input type="number" min="0" step="1" class="etapa-prod input-sm sx-08ea68" data-etapa-id="${e.id}" value="${prod}" title="Unidades producidas" />
                     <span>/ ${obj}</span>
                   </div>
-                  <div style="display:flex;gap:4px;align-items:center;font-size:11px;margin-top:4px;">
+                  <div class="sx-b52730">
                     <span class="muted">Merma:</span>
-                    <input type="number" min="0" step="1" class="etapa-merma input-sm" data-etapa-id="${e.id}" value="${merma}" style="width:55px;" title="Unidades con falla / merma" />
+                    <input type="number" min="0" step="1" class="etapa-merma input-sm sx-15f78b" data-etapa-id="${e.id}" value="${merma}" title="Unidades con falla / merma" />
                   </div>
                 </td>
                 <td class="num">
-                  <div class="muted" style="font-size:11px;">Est: ${fmtMoney(e.costo_estimado || 0)}</div>
-                  <input type="number" min="0" step="0.01" class="etapa-costo-real input-sm" data-etapa-id="${e.id}" value="${Number(e.costo_real ?? e.costo_estimado ?? 0)}" style="width:88px;text-align:right;margin-top:3px;" title="Costo real de la etapa" />
+                  <div class="muted text-2xs">Est: ${fmtMoney(e.costo_estimado || 0)}</div>
+                  <input type="number" min="0" step="0.01" class="etapa-costo-real input-sm sx-7ccd26" data-etapa-id="${e.id}" value="${Number(e.costo_real ?? e.costo_estimado ?? 0)}" title="Costo real de la etapa" />
                 </td>
                 <td>
                   ${bloqueada
@@ -142,11 +142,11 @@ export async function renderOrdenDetalleView({ id }) {
         </table>
       </div>
     </div>
-    <div class="card" style="margin-top:14px;">
+    <div class="card sx-553a64">
       <div class="card-header">
         <div>
           <h2>Cronograma Gantt de Etapas</h2>
-          <span class="muted" style="font-size:0.82rem;">Secuencia temporal estimada y real por etapa y taller asignado.</span>
+          <span class="muted text-sm">Secuencia temporal estimada y real por etapa y taller asignado.</span>
         </div>
       </div>
       <div id="orden-det-gantt"></div>
@@ -226,7 +226,7 @@ export async function renderOrdenDetalleView({ id }) {
   const vinculadosHtml = (opsOrden.length || comprasOrden.length) ? `
     <div class="card">
       <div class="card-header"><h2>Documentos Vinculados</h2></div>
-      <div class="actions" style="flex-wrap:wrap;gap:8px;padding:12px 16px;">
+      <div class="actions sx-30973c">
         ${opsOrden.map(o => `<a href="/operaciones-stock/${o.id}" data-link class="btn btn-sm">Operación: ${esc(o.numero)} (${esc(o.estado)})</a>`).join('')}
         ${comprasOrden.map(c => `<a href="/compras/${c.id}" data-link class="btn btn-sm">Compra: ${esc(c.numero || '#' + c.id)} — ${esc(c.proveedor_nombre)} (${esc(c.estado)})</a>`).join('')}
       </div>
@@ -265,7 +265,7 @@ export async function renderOrdenDetalleView({ id }) {
                 <label><span>Lote</span><input type="text" id="mod-ing-lote" value="${esc(orden.codigo)}" /></label>
                 <label class="full"><span>Observación</span><input type="text" id="mod-ing-nota" placeholder="Ej: 1ra tanda recibida de taller..." /></label>
               </div>
-              <div class="table-wrap" style="margin-top:10px;">
+              <div class="table-wrap sx-5371db">
                 <table class="data-table no-bulk">
                   <thead>
                     <tr>
@@ -284,7 +284,7 @@ export async function renderOrdenDetalleView({ id }) {
                         <td class="num muted">${fmtNum(l.cantidad_ingresada || 0)}</td>
                         <td class="num"><strong>${fmtNum(l.cantidad_pendiente ?? l.cantidad)}</strong></td>
                         <td class="num">
-                          <input type="number" step="1" min="0" max="${l.cantidad_pendiente ?? l.cantidad}" class="mod-ing-qty num" data-pid="${l.producto_id}" value="${l.cantidad_pendiente ?? l.cantidad}" style="width:95px;text-align:right;font-weight:600;" />
+                          <input type="number" step="1" min="0" max="${l.cantidad_pendiente ?? l.cantidad}" class="mod-ing-qty num sx-3e7d9e" data-pid="${l.producto_id}" value="${l.cantidad_pendiente ?? l.cantidad}" />
                         </td>
                       </tr>
                     `).join('')}
@@ -332,8 +332,8 @@ export async function renderOrdenDetalleView({ id }) {
     ],
     currentStep: orden.estado,
     smartButtons: [
-      { label: 'Operaciones', count: opsOrden.length, icon: '📦', href: '/operaciones-stock' },
-      { label: 'Compras', count: comprasOrden.length, icon: '🧾', href: '/compras' },
+      { label: 'Operaciones', count: opsOrden.length, href: '/operaciones-stock' },
+      { label: 'Compras', count: comprasOrden.length, href: '/compras' },
     ],
     kpis: [
       { label: 'Planificado / Ingresado', value: `${fmtNum(orden.cantidad || 0)} / ${fmtNum(orden.cantidad_ingresada || 0)}`, hint: `Pendiente: ${fmtNum(orden.cantidad_pendiente ?? orden.cantidad ?? 0)}` },
@@ -374,7 +374,7 @@ export async function renderOrdenDetalleView({ id }) {
           }],
           labelRender: (op) => `
             <div><strong>${esc(op.codigo)}</strong> · ${esc(op.plantilla_nombre)}</div>
-            <div class="muted" style="font-size:11px;">${esc(op.fecha_inicio)} → ${esc(op.fecha_objetivo || '-')} · ${op.cantidad || 0} u.</div>
+            <div class="muted text-2xs">${esc(op.fecha_inicio)} → ${esc(op.fecha_objetivo || '-')} · ${op.cantidad || 0} u.</div>
           `,
         });
       }

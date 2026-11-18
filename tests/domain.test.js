@@ -18,6 +18,7 @@ import * as importSvc from '../src/services/config/importService.js';
 import * as configSvc from '../src/services/config/configService.js';
 import * as compraSvc from '../src/services/comercial/compraService.js';
 import * as asientoSvc from '../src/services/finanzas/asientoService.js';
+import { buildRecetaFichaPdf } from '../src/services/print/recetaPdfService.js';
 import { BaseRepository } from '../src/core/BaseRepository.js';
 
 const TEST_DB = 'test_suite_domain';
@@ -342,6 +343,34 @@ describe('Flujo integral OOP & Partida Doble (Base limpia)', () => {
         assert.equal(hist[1].precio_anterior, 200);
         assert.equal(hist[1].precio_nuevo, 250);
         assert.equal(hist[1].usuario, 'tester');
+    });
+  });
+
+  it('genera ficha tecnica PDF con texto enriquecido e imagenes de producto y etapas', () => {
+    runWithDatabase(TEST_DB, () => {
+      const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const pltId = prodSvc.createPlantilla({
+        codigo: 'FT-01',
+        nombre: 'Bota Ficha PDF',
+        se_fabrica: true,
+        imagen_data: tinyPng,
+      });
+      const recId = recetaSvc.createReceta({
+        plantilla_id: pltId,
+        nombre: 'Receta Ficha PDF',
+        activa: true,
+        ficha_tecnica_html: '<h3>Corte</h3><p>Usar <strong>cuero vacuno</strong> 1.8mm.</p><ul><li>Hilo encerado #40</li></ul>',
+      });
+      const recDet = recetaSvc.getRecetaById(recId);
+      assert.equal(recDet.receta.plantilla_imagen, tinyPng);
+      if (recDet.etapas[0]) {
+        recetaSvc.updateRecetaEtapa(recDet.etapas[0].id, { imagen_data: tinyPng });
+      }
+      const pdfConCostos = buildRecetaFichaPdf(recId, { conCostos: true });
+      const pdfSinCostos = buildRecetaFichaPdf(recId, { conCostos: false });
+      assert.ok(Buffer.isBuffer(pdfConCostos) && pdfConCostos.subarray(0, 8).toString('latin1').startsWith('%PDF-1.4'));
+      assert.ok(pdfConCostos.toString('latin1').includes('/Subtype /Image'));
+      assert.ok(Buffer.isBuffer(pdfSinCostos) && pdfSinCostos.toString('latin1').includes('Variantes'));
     });
   });
 });

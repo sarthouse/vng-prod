@@ -74,33 +74,33 @@ export async function renderLibrosFiscalesView() {
     const expQs = new URLSearchParams({ tipo: state.tipoIva, desde: state.desde, hasta: state.hasta });
 
     body.innerHTML = `
-      <form id="form-iva-filtros" class="toolbar" style="margin-bottom:14px;flex-wrap:wrap;gap:8px;align-items:end;">
+      <form id="form-iva-filtros" class="toolbar sx-ceeb8f">
         <div>
-          <label style="display:block;font-size:12px;">Libro</label>
-          <select name="tipoIva" style="width:160px;">
+          <label class="block-label">Libro</label>
+          <select name="tipoIva" class="w-160">
             <option value="ventas" ${state.tipoIva === 'ventas' ? 'selected' : ''}>Libro IVA Ventas</option>
             <option value="compras" ${state.tipoIva === 'compras' ? 'selected' : ''}>Libro IVA Compras</option>
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Desde</label>
+          <label class="block-label">Desde</label>
           <input type="date" name="desde" value="${esc(state.desde)}" />
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Hasta</label>
+          <label class="block-label">Hasta</label>
           <input type="date" name="hasta" value="${esc(state.hasta)}" />
         </div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:6px;">
+        <label class="sx-0bada7">
           <input type="checkbox" name="incluirNoFiscales" ${state.incluirNoFiscales ? 'checked' : ''} /> Incluir no fiscales (X)
         </label>
         <button type="submit" class="btn btn-primary">Filtrar</button>
-        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+        <div class="sx-e8caa4">
           <a class="btn" href="/api/fiscal/libro-iva/export?${expQs.toString()}&archivo=cbte" target="_blank" rel="noopener">TXT Comprobantes (ARCA)</a>
           <a class="btn" href="/api/fiscal/libro-iva/export?${expQs.toString()}&archivo=alicuotas" target="_blank" rel="noopener">TXT Alícuotas (ARCA)</a>
         </div>
       </form>
 
-      <div class="kpis" style="margin-bottom:14px;">
+      <div class="kpis mb-lg">
         <div class="kpi-card"><span class="kpi-label">Comprobantes</span><strong class="kpi-value">${t.cantidad || 0}</strong></div>
         <div class="kpi-card"><span class="kpi-label">Neto Gravado</span><strong class="kpi-value">${fmtMoney((t.neto_21 || 0) + (t.neto_10_5 || 0) + (t.neto_27 || 0) + (t.neto_otros || 0))}</strong></div>
         <div class="kpi-card"><span class="kpi-label">IVA Liquidado</span><strong class="kpi-value">${fmtMoney((t.iva_21 || 0) + (t.iva_10_5 || 0) + (t.iva_27 || 0) + (t.iva_otros || 0))}</strong></div>
@@ -145,7 +145,7 @@ export async function renderLibrosFiscalesView() {
                 <td class="num">${fmtMoney((r.percepciones_iva || 0) + (r.percepciones_iibb || 0) + (r.otros_impuestos || 0))}</td>
                 <td class="num"><strong>${fmtMoney(r.total)}</strong></td>
               </tr>
-            `).join('') : '<tr><td colspan="13" class="muted" style="text-align:center;">Sin comprobantes fiscales en el período.</td></tr>'}
+            `).join('') : '<tr><td colspan="13" class="muted text-center">Sin comprobantes fiscales en el período.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -175,38 +175,38 @@ export async function renderLibrosFiscalesView() {
     const expQs = new URLSearchParams({ categoria: state.categoriaAux, desde: state.desde, hasta: state.hasta });
 
     body.innerHTML = `
-      <form id="form-aux-filtros" class="toolbar" style="margin-bottom:14px;flex-wrap:wrap;gap:8px;align-items:end;">
+      <form id="form-aux-filtros" class="toolbar sx-ceeb8f">
         <div>
-          <label style="display:block;font-size:12px;">Libro Auxiliar</label>
-          <select name="categoriaAux" style="width:190px;">
+          <label class="block-label">Libro Auxiliar</label>
+          <select name="categoriaAux" class="sx-66ee75">
             <option value="percepciones" ${state.categoriaAux === 'percepciones' ? 'selected' : ''}>Percepciones</option>
             <option value="retenciones" ${state.categoriaAux === 'retenciones' ? 'selected' : ''}>Retenciones</option>
             <option value="todas" ${state.categoriaAux === 'todas' ? 'selected' : ''}>Todas</option>
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Jurisdicción</label>
-          <select name="jurAux" style="width:200px;">
+          <label class="block-label">Jurisdicción</label>
+          <select name="jurAux" class="sx-8f7787">
             <option value="">-- Todas --</option>
             ${(jurisdicciones || []).map(j => `<option value="${esc(j.codigo)}" ${state.jurAux === j.codigo ? 'selected' : ''}>${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Desde</label>
+          <label class="block-label">Desde</label>
           <input type="date" name="desde" value="${esc(state.desde)}" />
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Hasta</label>
+          <label class="block-label">Hasta</label>
           <input type="date" name="hasta" value="${esc(state.hasta)}" />
         </div>
         <button type="submit" class="btn btn-primary">Filtrar</button>
-        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+        <div class="sx-e8caa4">
           <a class="btn" href="/api/fiscal/libros-auxiliares/sicore?${expQs.toString()}" target="_blank" rel="noopener">Exportar SICORE (.txt)</a>
           <a class="btn" href="/api/fiscal/libros-auxiliares/sifere?${expQs.toString()}" target="_blank" rel="noopener">Exportar SIFERE (.txt)</a>
         </div>
       </form>
 
-      <div class="kpis" style="margin-bottom:14px;">
+      <div class="kpis mb-lg">
         <div class="kpi-card"><span class="kpi-label">Registros</span><strong class="kpi-value">${rows.length}</strong></div>
         <div class="kpi-card"><span class="kpi-label">Total Período</span><strong class="kpi-value accent">${fmtMoney(data.total || 0)}</strong></div>
         ${resumen.slice(0, 4).map(r => `
@@ -250,7 +250,7 @@ export async function renderLibrosFiscalesView() {
                   ${r.origen === 'pago' ? `<a class="btn btn-sm" href="/api/tesoreria/pagos/${r.documento_id}/retencion/${r.id}/pdf" target="_blank" rel="noopener">Cert. PDF</a>` : '-'}
                 </td>
               </tr>
-            `).join('') : '<tr><td colspan="12" class="muted" style="text-align:center;">Sin percepciones ni retenciones en el período.</td></tr>'}
+            `).join('') : '<tr><td colspan="12" class="muted text-center">Sin percepciones ni retenciones en el período.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -273,26 +273,26 @@ export async function renderLibrosFiscalesView() {
     const rows = data.rows || [];
 
     body.innerHTML = `
-      <form id="form-jur-filtros" class="toolbar" style="margin-bottom:14px;flex-wrap:wrap;gap:8px;align-items:end;">
+      <form id="form-jur-filtros" class="toolbar sx-ceeb8f">
         <div>
-          <label style="display:block;font-size:12px;">Operaciones</label>
-          <select name="tipoJur" style="width:160px;">
+          <label class="block-label">Operaciones</label>
+          <select name="tipoJur" class="w-160">
             <option value="ventas" ${state.tipoJur === 'ventas' ? 'selected' : ''}>Ventas</option>
             <option value="compras" ${state.tipoJur === 'compras' ? 'selected' : ''}>Compras</option>
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Desde</label>
+          <label class="block-label">Desde</label>
           <input type="date" name="desde" value="${esc(state.desde)}" />
         </div>
         <div>
-          <label style="display:block;font-size:12px;">Hasta</label>
+          <label class="block-label">Hasta</label>
           <input type="date" name="hasta" value="${esc(state.hasta)}" />
         </div>
         <button type="submit" class="btn btn-primary">Filtrar</button>
       </form>
 
-      <div class="kpis" style="margin-bottom:14px;">
+      <div class="kpis mb-lg">
         <div class="kpi-card"><span class="kpi-label">Jurisdicciones con actividad</span><strong class="kpi-value">${rows.length}</strong></div>
         <div class="kpi-card"><span class="kpi-label">Total Período</span><strong class="kpi-value accent">${fmtMoney(data.total || 0)}</strong></div>
       </div>
@@ -323,7 +323,7 @@ export async function renderLibrosFiscalesView() {
                 <td class="num"><strong>${fmtMoney(r.total)}</strong></td>
                 <td class="num">${Number(r.porcentaje || 0).toFixed(2)}%</td>
               </tr>
-            `).join('') : '<tr><td colspan="8" class="muted" style="text-align:center;">Sin operaciones en el período.</td></tr>'}
+            `).join('') : '<tr><td colspan="8" class="muted text-center">Sin operaciones en el período.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -342,8 +342,8 @@ export async function renderLibrosFiscalesView() {
   async function renderPadronTab(body) {
     const items = await api('/api/fiscal/padron');
     body.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:16px;">
-        <form id="form-padron-add" class="card" style="margin:0;">
+      <div class="sx-ec06b9">
+        <form id="form-padron-add" class="card m-0">
           <div class="card-header"><h2>Agregar / Actualizar CUIT</h2></div>
           <div class="form-grid">
             <label><span>CUIT *</span><input type="text" name="cuit" required placeholder="20-12345678-9" /></label>
@@ -365,7 +365,7 @@ export async function renderLibrosFiscalesView() {
           </div>
         </form>
 
-        <form id="form-padron-import" class="card" style="margin:0;">
+        <form id="form-padron-import" class="card m-0">
           <div class="card-header"><h2>Importar Padrón ARBA / AGIP</h2></div>
           <div class="form-grid">
             <label>
@@ -412,7 +412,7 @@ export async function renderLibrosFiscalesView() {
                 <td>${esc(p.origen || 'manual')}</td>
                 <td><button type="button" class="btn btn-sm btn-danger" data-del-padron="${p.id}">Eliminar</button></td>
               </tr>
-            `).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;">Sin registros en el padrón de alícuotas.</td></tr>'}
+            `).join('') : '<tr><td colspan="6" class="muted text-center">Sin registros en el padrón de alícuotas.</td></tr>'}
           </tbody>
         </table>
       </div>

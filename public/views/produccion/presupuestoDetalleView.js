@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { exportRowsToCSV, esc, fmtMoney, fmtNum } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { openPdfFromEndpoint } from '../../lib/remitoPrint.js';
+import { openPdfFromEndpoint } from '../../lib/print/index.js';
 import { mountDetailView } from '../../lib/engine/detailEngine.js';
 
 export async function renderPresupuestoDetalleView(container, params) {
@@ -48,7 +48,7 @@ export async function renderPresupuestoDetalleView(container, params) {
           </tfoot>
         </table>
       </div>
-      ${p.observaciones ? `<p class="muted" style="margin-top:10px; font-size:0.85rem;">Observaciones: ${esc(p.observaciones)}</p>` : ''}
+      ${p.observaciones ? `<p class="muted sx-404273">Observaciones: ${esc(p.observaciones)}</p>` : ''}
     </div>
   `;
 
@@ -91,7 +91,7 @@ export async function renderPresupuestoDetalleView(container, params) {
       },
     ],
     smartButtons: [
-      { label: 'Insumos', count: (p.items || []).length, icon: '📦' },
+      { label: 'Insumos', count: (p.items || []).length },
     ],
     kpis: [
       { label: 'Fecha', value: esc(p.fecha) },

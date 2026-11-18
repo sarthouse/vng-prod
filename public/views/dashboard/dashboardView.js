@@ -23,15 +23,15 @@ export async function renderDashboardView() {
 
     <div id="dash-kpis"></div>
 
-    <div class="dashboard-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:1rem; margin-bottom:1rem;">
-      <div class="card" style="margin-bottom:0;">
+    <div class="dashboard-grid sx-dff70c">
+      <div class="card mb-0">
         <div class="card-header">
           <h2>Borradores Pendientes</h2>
         </div>
         <div id="dash-borradores"></div>
       </div>
 
-      <div class="card" style="margin-bottom:0;">
+      <div class="card mb-0">
         <div class="card-header">
           <h2>Alertas de Stock Bajo Mínimo (${(d.stock_bajo_minimo || []).length})</h2>
           <a href="/inventario" data-link class="btn btn-sm">Ver inventario</a>
@@ -79,7 +79,7 @@ export async function renderDashboardView() {
     emptyText: 'Todos los productos están por encima del stock mínimo.',
     columns: [
       { label: 'Producto', render: r => `<a href="/plantillas/${r.plantilla_id}" data-link class="link-primary">${esc(r.nombre)}</a>` },
-      { label: 'Actual', align: 'right', render: r => `<strong style="color:var(--color-accent);">${fmtNum(r.stock)} ${esc(r.udm)}</strong>` },
+      { label: 'Actual', align: 'right', render: r => `<strong class="text-accent">${fmtNum(r.stock)} ${esc(r.udm)}</strong>` },
       { label: 'Mínimo', align: 'right', render: r => `${fmtNum(r.stock_minimo)}` },
     ],
     rows: d.stock_bajo_minimo || [],

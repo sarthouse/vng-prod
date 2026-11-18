@@ -1,7 +1,7 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { anularOperacionStock, createOperacionStock, deleteOperacionStock, operacionStockRepo } from '../inventario/operacionStockService.js';
-import { getNextNumeroDocumento } from '../config/configService.js';
+import { getNextNumeroDocumento, resolveNumeroDocumento } from '../config/configService.js';
 import { defaultAsientoService } from '../finanzas/asientoService.js';
 import { crearImputacion, getFacturaImputado } from '../finanzas/imputacionService.js';
 import { calcularFechaVencimiento, getContactoCondiciones, resolverPrecioCompra } from './condicionesComercialesService.js';
@@ -180,9 +180,9 @@ export function createCompra(b, user = null) {
   const fechaVencimiento = (b.fecha_vencimiento || '').trim() || (terminoPagoId ? calcularFechaVencimiento(fecha, terminoPagoId) : '');
   const seqCode = claseDocumento === 'nota_credito' ? 'nc_compra' : claseDocumento === 'nota_debito' ? 'nd_compra' : 'compra';
   const rawNum = (b.numero || '').trim();
-  const numero = (caracter === 'interno' && (!rawNum || rawNum.endsWith('-')))
-    ? getNextNumeroDocumento(seqCode, b.punto_venta).numero
-    : (rawNum || (caracter === 'interno' ? getNextNumeroDocumento(seqCode, b.punto_venta).numero : ''));
+  const numero = caracter === 'interno'
+    ? resolveNumeroDocumento(seqCode, rawNum, b.punto_venta)
+    : rawNum;
   if (caracter === 'fiscal' && estado === 'Confirmado' && !numero) {
     throw new Error('Ingresá el número de comprobante del proveedor');
   }

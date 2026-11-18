@@ -93,7 +93,7 @@ export async function renderRecetasView() {
           align: 'right',
           render: r => `
             <strong>${fmtMoney(r.costo_total_unidad ?? 0)}</strong>
-            <div class="muted" style="font-size:0.75rem;">Mat: ${fmtMoney(r.costo_materiales ?? 0)} · Proc: ${fmtMoney(r.costo_procesos ?? 0)}</div>
+            <div class="muted text-xs">Mat: ${fmtMoney(r.costo_materiales ?? 0)} · Proc: ${fmtMoney(r.costo_procesos ?? 0)}</div>
           `,
         },
         {
@@ -203,7 +203,7 @@ export async function renderRecetaNuevaView() {
           <span>Referencia / Código</span>
           <input type="text" name="referencia" placeholder="Ej: BOM-001" />
         </label>
-        <label class="checkbox-field" style="align-self:end; padding-bottom:8px;">
+        <label class="checkbox-field sx-b2a07a">
           <input type="checkbox" name="activa" checked />
           <span>Marcar como receta activa del producto</span>
         </label>

@@ -1,7 +1,8 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, fmtNum } from '../../lib/format.js';
+import { esc, fmtMoney, fmtNum, compressImageToDataUrl, mountRichEditor } from '../../lib/format.js';
 import { navigate } from '../../router.js';
 import { mountCombobox, mountMultiSelect, quickCreateProveedor, quickCreateCategoria } from '../../lib/autocomplete.js';
+import { renderMetaPanel } from '../../lib/metaPanel.js';
 
 export async function renderPlantillaFormView({ id } = {}) {
   const root = document.getElementById('app-view');
@@ -85,8 +86,8 @@ export async function renderPlantillaFormView({ id } = {}) {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;">
-            <a href="/productos" data-link class="muted" style="font-size:0.85rem;">← Volver a Productos</a>
+          <div class="mb-xs">
+            <a href="/productos" data-link class="muted text-md">← Volver a Productos</a>
           </div>
           <h1>${isEdit ? `Plantilla: ${esc(pt.nombre)}` : 'Nueva Plantilla de Producto'}</h1>
           <p class="muted">Configurá datos maestros, roles, atributos de variantes y precios/stock.</p>
@@ -170,27 +171,27 @@ export async function renderPlantillaFormView({ id } = {}) {
             <span>Peso Unitario (kg)</span>
             <input type="number" step="0.001" min="0" name="peso_kg" value="${Number(pt.peso_kg || 0)}" />
           </label>
-          <div class="full" style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding:4px 0;">
-            <label class="checkbox-inline" style="margin:0;white-space:nowrap;">
+          <div class="full sx-473234">
+            <label class="checkbox-inline nowrap-m0">
               <input type="checkbox" name="se_fabrica" id="pt-se-fabrica" ${pt.se_fabrica ? 'checked' : ''} />
               <span>Se fabrica</span>
             </label>
-            <label class="checkbox-inline" style="margin:0;white-space:nowrap;">
+            <label class="checkbox-inline nowrap-m0">
               <input type="checkbox" name="se_compra" id="pt-se-compra" ${pt.se_compra ? 'checked' : ''} />
               <span>Se compra</span>
             </label>
-            <label class="checkbox-inline" style="margin:0;white-space:nowrap;">
+            <label class="checkbox-inline nowrap-m0">
               <input type="checkbox" name="se_vende" id="pt-se-vende" ${pt.se_vende !== 0 ? 'checked' : ''} />
               <span>Se vende</span>
             </label>
-            <label class="checkbox-inline" style="margin:0;white-space:nowrap;">
+            <label class="checkbox-inline nowrap-m0">
               <input type="checkbox" name="requiere_lote" id="pt-req-lote" ${pt.requiere_lote ? 'checked' : ''} />
               <span>Requiere lote</span>
             </label>
           </div>
 
           ${!isEdit ? `
-            <div class="full form-row-3">
+            <div class="full form-row-2">
               <label>
                 <span>Costo Inicial</span>
                 <input type="number" step="0.01" min="0" name="costo" value="0" />
@@ -199,23 +200,28 @@ export async function renderPlantillaFormView({ id } = {}) {
                 <span>Precio Inicial</span>
                 <input type="number" step="0.01" min="0" name="precio" value="0" />
               </label>
-              <label>
-                <span>Stock Inicial</span>
-                <input type="number" step="0.01" min="0" name="stock" value="0" />
-              </label>
             </div>
           ` : ''}
 
-          <label class="full">
-            <span>Descripción</span>
-            <textarea name="descripcion" rows="2" placeholder="Detalles técnicos, materiales, observaciones...">${esc(pt.descripcion || '')}</textarea>
-          </label>
+          <div class="full">
+            <span class="field-title">Descripción</span>
+            <div id="plt-descripcion-editor"></div>
+          </div>
 
           <div class="full">
-            <span style="display:block;font-size:12px;font-weight:600;color:var(--color-secondary);margin-bottom:6px;">
+            <span class="field-title">Imagen del Producto</span>
+            <div class="sx-b830ea">
+              <img id="pt-img-preview" src="${esc(pt.imagen_data || '')}" class="img-thumb ${pt.imagen_data ? '' : 'hidden'}" alt="Imagen producto" />
+              <input type="file" id="pt-img-file" accept="image/jpeg,image/png,image/webp" />
+              <button type="button" id="btn-pt-img-clear" class="btn btn-sm ${pt.imagen_data ? '' : 'hidden'}">Quitar</button>
+            </div>
+          </div>
+
+          <div class="full">
+            <span class="field-title">
               Atributos de Variantes (generan productos individuales al guardar)
             </span>
-            <div id="pt-attrs-box" style="display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg);"></div>
+            <div id="pt-attrs-box" class="sx-76c454"></div>
           </div>
 
           <div class="full modal-footer">
@@ -228,8 +234,11 @@ export async function renderPlantillaFormView({ id } = {}) {
       ${isEdit ? `
         <div class="card">
           <div class="card-header">
-            <h2>Productos / Variantes</h2>
-            <span class="muted" style="font-size:0.82rem;">Cada variante tiene su propio SKU, costo de compra, precio de venta y stock real.</span>
+            <div>
+              <h2>Productos / Variantes</h2>
+              <span class="muted text-sm">El stock físico es solo lectura (calculado desde Operaciones de Stock y quants por ubicación/lote).</span>
+            </div>
+            <a href="/operaciones-stock" data-link class="btn btn-sm">Operar Stock</a>
           </div>
           <div class="table-wrap">
             <table class="data-table no-bulk">
@@ -241,7 +250,7 @@ export async function renderPlantillaFormView({ id } = {}) {
                   <th class="num">Costo</th>
                   <th class="num">Precio Venta</th>
                   <th class="num">Mín. Compra</th>
-                  <th class="num">Stock</th>
+                  <th class="num">Stock Físico</th>
                   <th class="num">Stock Mín.</th>
                   <th>Acciones</th>
                 </tr>
@@ -250,13 +259,13 @@ export async function renderPlantillaFormView({ id } = {}) {
                 ${variantes.map(v => `
                   <tr data-prod-row="${v.id}">
                     <td><strong>${esc(v.nombre)}</strong></td>
-                    <td><input type="text" class="pv-sku" value="${esc(v.sku || '')}" style="width:120px;" /></td>
-                    <td><input type="text" class="pv-barcode" value="${esc(v.codigo_barras || '')}" placeholder="EAN / UPC" style="width:130px;" /></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="pv-costo" value="${Number(v.costo || 0)}" style="width:105px;text-align:right;" /></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="pv-precio" value="${Number(v.precio || 0)}" style="width:105px;text-align:right;" /></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="pv-min" value="${Number(v.minimo_compra || 0)}" style="width:90px;text-align:right;" /></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="pv-stock" value="${Number(v.stock || 0)}" style="width:90px;text-align:right;" /></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="pv-stock-min" value="${Number(v.stock_minimo || 0)}" style="width:90px;text-align:right;" /></td>
+                    <td><input type="text" class="pv-sku w-120" value="${esc(v.sku || '')}" /></td>
+                    <td><input type="text" class="pv-barcode w-130" value="${esc(v.codigo_barras || '')}" placeholder="EAN / UPC" /></td>
+                    <td class="num"><input type="number" step="0.01" min="0" class="pv-costo sx-0ebbbc" value="${Number(v.costo || 0)}" /></td>
+                    <td class="num"><input type="number" step="0.01" min="0" class="pv-precio sx-0ebbbc" value="${Number(v.precio || 0)}" /></td>
+                    <td class="num"><input type="number" step="0.01" min="0" class="pv-min w-90-num" value="${Number(v.minimo_compra || 0)}" /></td>
+                    <td class="num"><strong>${fmtNum(v.stock || 0)}</strong> <span class="muted sx-978ebc">${esc(pt.udm || '')}</span></td>
+                    <td class="num"><input type="number" step="0.01" min="0" class="pv-stock-min w-90-num" value="${Number(v.stock_minimo || 0)}" /></td>
                     <td><button type="button" class="btn btn-sm btn-primary" data-save-prod="${v.id}">Guardar</button></td>
                   </tr>
                 `).join('')}
@@ -299,15 +308,17 @@ export async function renderPlantillaFormView({ id } = {}) {
             </div>
           `}
         </div>
+      ` : ''}
 
+      ${isEdit && pt.se_compra ? `
         <div class="card">
           <div class="card-header">
             <div>
               <h2>Tarifas de Compra por Proveedor</h2>
-              <span class="muted" style="font-size:0.82rem;">Costos, códigos de proveedor, cantidades mínimas y plazos por variante o plantilla.</span>
+              <span class="muted text-sm">Costos, códigos de proveedor, cantidades mínimas y plazos por variante o plantilla.</span>
             </div>
           </div>
-          <form id="form-pt-prov-tarifa" class="form-grid" style="margin-bottom:12px;">
+          <form id="form-pt-prov-tarifa" class="form-grid mb-md">
             <label>
               <span>Proveedor *</span>
               <select name="contacto_id" required>
@@ -316,17 +327,14 @@ export async function renderPlantillaFormView({ id } = {}) {
               </select>
             </label>
             <label>
-              <span>Variante (opcional)</span>
-              <select name="producto_id">
-                <option value="">-- Toda la plantilla --</option>
-                ${(variantes || []).map(v => `<option value="${v.id}">${esc(v.nombre)}${v.sku ? ` [${esc(v.sku)}]` : ''}</option>`).join('')}
-              </select>
+              <span>Variantes (vacío = toda la plantilla)</span>
+              <div id="pt-tarifa-vars-ms"></div>
             </label>
             <label><span>Cód. Proveedor</span><input type="text" name="codigo_proveedor" placeholder="SKU prov." /></label>
             <label><span>Costo Unitario *</span><input type="number" step="0.01" min="0" name="precio" required placeholder="0.00" /></label>
             <label><span>Cant. Mínima</span><input type="number" step="1" min="1" name="cantidad_minima" value="1" /></label>
             <label><span>Plazo (días)</span><input type="number" step="1" min="0" name="lead_time_dias" value="0" /></label>
-            <div class="actions" style="align-self:end;">
+            <div class="actions self-end">
               <button type="submit" class="btn btn-primary">+ Agregar Tarifa</button>
             </div>
           </form>
@@ -351,7 +359,9 @@ export async function renderPlantillaFormView({ id } = {}) {
             </table>
           </div>
         </div>
+      ` : ''}
 
+      ${isEdit && pt.se_vende !== 0 ? `
         <div class="card">
           <div class="card-header">
             <h2>Reglas Rápidas en Listas de Precios</h2>
@@ -365,21 +375,22 @@ export async function renderPlantillaFormView({ id } = {}) {
               </select>
             </label>
             <label>
-              <span>Variante (opcional)</span>
-              <select name="producto_id">
-                <option value="">-- Toda la plantilla --</option>
-                ${(variantes || []).map(v => `<option value="${v.id}">${esc(v.nombre)}${v.sku ? ` [${esc(v.sku)}]` : ''}</option>`).join('')}
-              </select>
+              <span>Variantes (vacío = toda la plantilla)</span>
+              <div id="pt-lp-vars-ms"></div>
             </label>
             <label><span>Precio Fijo</span><input type="number" step="0.01" min="0" name="precio_fijo" placeholder="Opcional" /></label>
             <label><span>Descuento (%)</span><input type="number" step="0.01" name="descuento_pct" value="0" /></label>
             <label><span>Cant. Mínima</span><input type="number" step="1" min="1" name="cantidad_minima" value="1" /></label>
-            <div class="actions" style="align-self:end;">
+            <div class="actions self-end">
               <button type="submit" class="btn btn-primary">+ Agregar a Lista</button>
             </div>
           </form>
         </div>
+      ` : ''}
 
+      ${isEdit ? `<div id="plantilla-meta-panel" class="sx-8e8697"></div>` : ''}
+
+      ${isEdit ? `
         <div class="card">
           <div class="card-header">
             <h2>Historial de Costos y Precios</h2>
@@ -422,48 +433,56 @@ export async function renderPlantillaFormView({ id } = {}) {
       ` : ''}
     `;
 
+    const attrMultiSelects = new Map();
     const syncSelectedAttrsFromDom = () => {
       selectedAttrMap.clear();
-      root.querySelectorAll('.pt-attr-cb:checked').forEach(cb => {
-        const attr = cb.dataset.attr;
-        if (!selectedAttrMap.has(attr)) selectedAttrMap.set(attr, new Set());
-        selectedAttrMap.get(attr).add(cb.dataset.val);
-      });
+      for (const [attr, ms] of attrMultiSelects.entries()) {
+        const vals = ms.getValues();
+        if (vals.length) selectedAttrMap.set(attr, new Set(vals));
+      }
     };
 
     const renderAttrsBox = () => {
       const box = root.querySelector('#pt-attrs-box');
       if (!box) return;
+      for (const ms of attrMultiSelects.values()) ms.destroy?.();
+      attrMultiSelects.clear();
+
       const attrsHtml = globalAttrMap.size === 0
-        ? `<div class="muted" style="font-size:12px;">Todavía no hay atributos cargados. Agregá uno abajo.</div>`
-        : Array.from(globalAttrMap.entries()).map(([attr, vals]) => {
-            const chosen = selectedAttrMap.get(attr) || new Set();
-            return `
-              <div>
-                <strong style="font-size:12px;margin-right:8px;">${esc(attr)}:</strong>
-                <div style="display:inline-flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
-                  ${vals.map(v => `
-                    <label class="checkbox-pill">
-                      <input type="checkbox" class="pt-attr-cb" data-attr="${esc(attr)}" data-val="${esc(v)}" ${chosen.has(v) ? 'checked' : ''} />
-                      <span>${esc(v)}</span>
-                    </label>
-                  `).join('')}
-                </div>
-              </div>
-            `;
-          }).join('');
+        ? `<div class="muted sx-6b9c17">Todavía no hay atributos cargados. Agregá uno abajo.</div>`
+        : Array.from(globalAttrMap.keys()).map((attr, idx) => `
+            <div class="sx-72fafc">
+              <strong class="sx-205997">${esc(attr)}:</strong>
+              <div class="pt-attr-ms sx-7b62ef" data-attr-idx="${idx}"></div>
+            </div>
+          `).join('');
 
       box.innerHTML = `
         ${attrsHtml}
-        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-top:8px;border-top:1px dashed var(--color-border);">
-          <input type="text" id="pt-new-attr" list="pt-attr-list" placeholder="Atributo" style="width:180px;" />
+        <div class="sx-59f2d8">
+          <input type="text" id="pt-new-attr" list="pt-attr-list" placeholder="Atributo" class="sx-1dfda9" />
           <datalist id="pt-attr-list">
             ${Array.from(globalAttrMap.keys()).map(a => `<option value="${esc(a)}"></option>`).join('')}
           </datalist>
-          <input type="text" id="pt-new-vals" placeholder="Valores separados por coma" style="flex:1;min-width:220px;" />
+          <input type="text" id="pt-new-vals" placeholder="Valores separados por coma" class="sx-39cc94" />
           <button type="button" id="btn-pt-add-attr" class="btn btn-sm">+ Agregar Atributo / Valores</button>
         </div>
       `;
+
+      Array.from(globalAttrMap.entries()).forEach(([attr, vals], idx) => {
+        const el = box.querySelector(`.pt-attr-ms[data-attr-idx="${idx}"]`);
+        const chosen = Array.from(selectedAttrMap.get(attr) || []);
+        const ms = mountMultiSelect(el, {
+          values: chosen,
+          placeholder: `Seleccionar ${attr}...`,
+          items: vals.map(v => ({ value: v, label: v })),
+          onChange: (nextVals) => {
+            if (nextVals.length) selectedAttrMap.set(attr, new Set(nextVals));
+            else selectedAttrMap.delete(attr);
+          },
+        });
+        attrMultiSelects.set(attr, ms);
+      });
 
       const addAttrValues = async () => {
         const attr = box.querySelector('#pt-new-attr')?.value.trim();
@@ -502,9 +521,10 @@ export async function renderPlantillaFormView({ id } = {}) {
       });
     };
 
+    document.querySelectorAll('.combo-menu').forEach(m => {
+      if (!m.__comboInput || !document.body.contains(m.__comboInput)) m.remove();
+    });
     renderAttrsBox();
-
-    document.querySelectorAll('.combo-menu').forEach(m => m.remove());
     mountCombobox(root.querySelector('#pt-cat-combo'), {
       name: 'categoria',
       required: true,
@@ -523,6 +543,11 @@ export async function renderPlantillaFormView({ id } = {}) {
         }
         return created;
       },
+    });
+
+    const descEditor = mountRichEditor(root.querySelector('#plt-descripcion-editor'), {
+      value: pt.descripcion || '',
+      placeholder: 'Detalles técnicos, materiales, links, imágenes, videos o archivos...',
     });
 
     const msVenta = mountMultiSelect(root.querySelector('#pt-imp-venta-multi'), {
@@ -546,6 +571,7 @@ export async function renderPlantillaFormView({ id } = {}) {
       value: pt.proveedor_id || '',
       placeholder: 'Buscar o crear proveedor...',
       items: proveedores.map(p => ({ value: String(p.id), label: p.nombre, sublabel: p.cuit || '', raw: p })),
+      getDetailUrl: (it) => `/contactos/${it.value}`,
       onSelect: (it) => { pt.proveedor_id = it ? it.value : ''; },
       onCreate: async (q) => {
         const created = await quickCreateProveedor(q);
@@ -557,16 +583,35 @@ export async function renderPlantillaFormView({ id } = {}) {
       },
     });
 
+    root.querySelector('#pt-img-file')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const dataUrl = await compressImageToDataUrl(file);
+        pt.imagen_data = dataUrl;
+        const prev = root.querySelector('#pt-img-preview');
+        const clr = root.querySelector('#btn-pt-img-clear');
+        if (prev) { prev.src = dataUrl; prev.classList.remove('hidden'); }
+        if (clr) clr.classList.remove('hidden');
+      } catch (err) { toast(err.message, true); }
+    });
+    root.querySelector('#btn-pt-img-clear')?.addEventListener('click', () => {
+      pt.imagen_data = '';
+      const prev = root.querySelector('#pt-img-preview');
+      const clr = root.querySelector('#btn-pt-img-clear');
+      const f = root.querySelector('#pt-img-file');
+      if (prev) { prev.src = ''; prev.classList.add('hidden'); }
+      if (clr) clr.classList.add('hidden');
+      if (f) f.value = '';
+    });
+
     root.querySelector('#form-plantilla').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const attrMap = new Map();
-      root.querySelectorAll('.pt-attr-cb:checked').forEach(cb => {
-        const attr = cb.dataset.attr;
-        if (!attrMap.has(attr)) attrMap.set(attr, []);
-        attrMap.get(attr).push(cb.dataset.val);
-      });
-      const atributos = Array.from(attrMap.entries()).map(([atributo, valores]) => ({ atributo, valores }));
+      syncSelectedAttrsFromDom();
+      const atributos = Array.from(selectedAttrMap.entries())
+        .map(([atributo, vals]) => ({ atributo, valores: Array.from(vals) }))
+        .filter(a => a.valores.length > 0);
 
       const impVentaIds = msVenta.getValues().map(Number).filter(n => n > 0);
       const impCompraIds = msCompra.getValues().map(Number).filter(n => n > 0);
@@ -576,7 +621,7 @@ export async function renderPlantillaFormView({ id } = {}) {
       const payload = {
         codigo: fd.get('codigo'),
         nombre: fd.get('nombre'),
-        descripcion: fd.get('descripcion'),
+        descripcion: descEditor ? descEditor.getHtml() : '',
         tipo: fd.get('tipo'),
         categoria: fd.get('categoria'),
         udm: fd.get('udm'),
@@ -594,12 +639,12 @@ export async function renderPlantillaFormView({ id } = {}) {
         cuenta_compra_id: fd.get('cuenta_compra_id') ? Number(fd.get('cuenta_compra_id')) : null,
         moneda: fd.get('moneda') || 'ARS',
         peso_kg: Math.max(0, Number(fd.get('peso_kg')) || 0),
+        imagen_data: pt.imagen_data || '',
         atributos,
       };
       if (!isEdit) {
         payload.costo = Number(fd.get('costo')) || 0;
         payload.precio = Number(fd.get('precio')) || 0;
-        payload.stock = Number(fd.get('stock')) || 0;
       }
 
       try {
@@ -629,7 +674,6 @@ export async function renderPlantillaFormView({ id } = {}) {
               costo: Number(row.querySelector('.pv-costo').value) || 0,
               precio: Number(row.querySelector('.pv-precio').value) || 0,
               minimo_compra: Number(row.querySelector('.pv-min').value) || 0,
-              stock: Number(row.querySelector('.pv-stock').value) || 0,
               stock_minimo: Number(row.querySelector('.pv-stock-min').value) || 0,
             }),
           });
@@ -640,23 +684,40 @@ export async function renderPlantillaFormView({ id } = {}) {
       });
     });
 
+    const varianteItems = (variantes || []).map(v => ({
+      value: String(v.id),
+      label: `${v.nombre}${v.sku ? ` [${v.sku}]` : ''}`,
+    }));
+    const msTarifaVars = isEdit ? mountMultiSelect(root.querySelector('#pt-tarifa-vars-ms'), {
+      placeholder: '-- Toda la plantilla (o elegir variantes) --',
+      items: varianteItems,
+    }) : null;
+    const msLpVars = isEdit ? mountMultiSelect(root.querySelector('#pt-lp-vars-ms'), {
+      placeholder: '-- Toda la plantilla (o elegir variantes) --',
+      items: varianteItems,
+    }) : null;
+
     root.querySelector('#form-pt-prov-tarifa')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const selectedVars = msTarifaVars ? msTarifaVars.getValues().map(Number).filter(n => n > 0) : [];
+      const targets = selectedVars.length ? selectedVars : [null];
       try {
-        await api('/api/producto-proveedores', {
-          method: 'POST',
-          body: {
-            plantilla_id: Number(id),
-            producto_id: fd.get('producto_id') ? Number(fd.get('producto_id')) : null,
-            contacto_id: Number(fd.get('contacto_id')),
-            codigo_proveedor: fd.get('codigo_proveedor') || '',
-            precio: Number(fd.get('precio') || 0),
-            cantidad_minima: Number(fd.get('cantidad_minima') || 1),
-            lead_time_dias: Number(fd.get('lead_time_dias') || 0),
-          },
-        });
-        toast('Tarifa de proveedor agregada');
+        for (const prodId of targets) {
+          await api('/api/producto-proveedores', {
+            method: 'POST',
+            body: {
+              plantilla_id: Number(id),
+              producto_id: prodId,
+              contacto_id: Number(fd.get('contacto_id')),
+              codigo_proveedor: fd.get('codigo_proveedor') || '',
+              precio: Number(fd.get('precio') || 0),
+              cantidad_minima: Number(fd.get('cantidad_minima') || 1),
+              lead_time_dias: Number(fd.get('lead_time_dias') || 0),
+            },
+          });
+        }
+        toast(targets.length > 1 ? `${targets.length} tarifas de proveedor agregadas` : 'Tarifa de proveedor agregada');
         await renderPlantillaFormView({ id });
       } catch (err) { toast(err.message, true); }
     });
@@ -672,21 +733,33 @@ export async function renderPlantillaFormView({ id } = {}) {
       const fd = new FormData(e.target);
       const lpId = fd.get('lista_precio_id');
       if (!lpId) return;
+      const selectedVars = msLpVars ? msLpVars.getValues().map(Number).filter(n => n > 0) : [];
+      const targets = selectedVars.length ? selectedVars : [null];
       try {
-        await api(`/api/listas-precios/${lpId}/items`, {
-          method: 'POST',
-          body: {
-            plantilla_id: fd.get('producto_id') ? null : Number(id),
-            producto_id: fd.get('producto_id') ? Number(fd.get('producto_id')) : null,
-            precio_fijo: fd.get('precio_fijo') || null,
-            descuento_pct: Number(fd.get('descuento_pct') || 0),
-            cantidad_minima: Number(fd.get('cantidad_minima') || 1),
-          },
-        });
-        toast('Regla agregada a la lista de precios');
-        e.target.reset();
+        for (const prodId of targets) {
+          await api(`/api/listas-precios/${lpId}/items`, {
+            method: 'POST',
+            body: {
+              plantilla_id: prodId ? null : Number(id),
+              producto_id: prodId,
+              precio_fijo: fd.get('precio_fijo') || null,
+              descuento_pct: Number(fd.get('descuento_pct') || 0),
+              cantidad_minima: Number(fd.get('cantidad_minima') || 1),
+            },
+          });
+        }
+        toast(targets.length > 1 ? `${targets.length} reglas agregadas a la lista de precios` : 'Regla agregada a la lista de precios');
+        await renderPlantillaFormView({ id });
       } catch (err) { toast(err.message, true); }
     });
+
+    if (isEdit) {
+      renderMetaPanel(root.querySelector('#plantilla-meta-panel'), {
+        entidadTipo: 'plantilla',
+        entidadId: id,
+        titulo: existing?.nombre ? `Producto ${existing.nombre}` : 'Producto',
+      });
+    }
   };
 
   render();

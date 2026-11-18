@@ -1,6 +1,8 @@
 import { api, toast, refreshKPIs } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
 import { navigate } from '../../router.js';
+import { mountCombobox, quickCreateCliente } from '../../lib/autocomplete.js';
+import { renderSpreadsheetTable } from '../../lib/engine/index.js';
 
 export async function renderPedidoFormView({ id } = {}) {
   const root = document.getElementById('app-view');
@@ -36,8 +38,8 @@ export async function renderPedidoFormView({ id } = {}) {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;">
-            <a href="${isEdit ? `/pedidos/${id}` : '/pedidos'}" data-link class="muted" style="font-size:0.85rem;">← Volver</a>
+          <div class="mb-xs">
+            <a href="${isEdit ? `/pedidos/${id}` : '/pedidos'}" data-link class="muted text-md">← Volver</a>
           </div>
           <h1>${isEdit ? `Editar Pedido #${pedido.pedido}` : 'Nuevo Pedido de Producción'}</h1>
           <p class="muted">${isEdit ? 'Editá cantidades, fechas o estado.' : 'Al registrar el pedido se guarda un snapshot de los insumos de la receta.'}</p>
@@ -56,10 +58,7 @@ export async function renderPedidoFormView({ id } = {}) {
 
           <label>
             <span>Cliente</span>
-            <select name="contacto_id">
-              <option value="">-- Sin cliente / Stock interno --</option>
-              ${contactos.map(c => `<option value="${c.id}" ${String(c.id) === String(pedido.contacto_id || '') ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
-            </select>
+            <div id="pedido-cli-combo"></div>
           </label>
 
           ${!isEdit ? `
@@ -92,20 +91,10 @@ export async function renderPedidoFormView({ id } = {}) {
           </label>
 
           <div class="full">
-            <span style="display:block; font-size:0.82rem; font-weight:600; color:var(--color-secondary); margin-bottom:6px;">
+            <span class="sx-999b07">
               Cantidades por Variante
             </span>
-            <div class="sizes-grid">
-              ${variantes.length
-                ? variantes.map(v => `
-                    <label class="size-box">
-                      <span title="${esc(v.nombre)}">${esc(v.combinacion || v.sku || v.nombre)}</span>
-                      <input type="number" min="0" class="pedido-var-qty" data-producto-id="${v.id}" value="${existingQtyMap.get(v.id) || 0}" />
-                    </label>
-                  `).join('')
-                : `<div class="muted">Este producto no tiene variantes activas.</div>`
-              }
-            </div>
+            <div id="pedido-var-sheet"></div>
           </div>
 
           <label class="full">
@@ -121,6 +110,55 @@ export async function renderPedidoFormView({ id } = {}) {
       </div>
     `;
 
+    mountCombobox(root.querySelector('#pedido-cli-combo'), {
+      name: 'contacto_id',
+      value: pedido.contacto_id ? String(pedido.contacto_id) : '',
+      placeholder: 'Buscar o crear cliente (opcional)...',
+      items: contactos.map(c => ({ value: String(c.id), label: c.nombre, sublabel: c.cuit || c.localidad || '', raw: c })),
+      getDetailUrl: (it) => `/contactos/${it.value}`,
+      onSelect: (it) => {
+        pedido.contacto_id = it ? String(it.value) : '';
+      },
+      onCreate: async (q) => {
+        const created = await quickCreateCliente(q);
+        if (created) {
+          contactos.push(created.raw);
+          pedido.contacto_id = created.value;
+        }
+        return created;
+      },
+    });
+
+    const pedidoVarRows = variantes.map(v => ({
+      producto_id: v.id,
+      variante: v.combinacion || v.nombre || '-',
+      sku: v.sku || '-',
+      cantidad: existingQtyMap.get(v.id) || 0,
+    }));
+    const varSheetHost = root.querySelector('#pedido-var-sheet');
+    if (varSheetHost) {
+      renderSpreadsheetTable(varSheetHost, {
+        rows: pedidoVarRows,
+        emptyText: 'Este producto no tiene variantes activas.',
+        compact: true,
+        showDirty: false,
+        columns: [
+          { key: 'variante', label: 'Variante', type: 'readonly' },
+          { key: 'sku', label: 'SKU', type: 'readonly', nowrap: true },
+          {
+            key: 'cantidad',
+            label: 'Cantidad',
+            type: 'number',
+            min: 0,
+            step: 1,
+            align: 'right',
+            parse: (val) => Math.max(0, Number(val) || 0),
+          },
+        ],
+        onCellChange: () => {},
+      });
+    }
+
     root.querySelector('#pedido-plantilla-select')?.addEventListener('change', (e) => {
       selectedPlantillaId = e.target.value;
       render();
@@ -129,8 +167,8 @@ export async function renderPedidoFormView({ id } = {}) {
     root.querySelector('#form-pedido').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const lineas = Array.from(root.querySelectorAll('.pedido-var-qty'))
-        .map(inp => ({ producto_id: Number(inp.dataset.productoId), cantidad: Number(inp.value) || 0 }))
+      const lineas = pedidoVarRows
+        .map(r => ({ producto_id: Number(r.producto_id), cantidad: Number(r.cantidad) || 0 }))
         .filter(l => l.cantidad > 0);
 
       const payload = {

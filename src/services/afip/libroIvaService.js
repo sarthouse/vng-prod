@@ -1,6 +1,17 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
+
+const jurisdiccionRepo = new BaseRepository({ model: MODELS.jurisdicciones });
+const padronRepo = new BaseRepository({ model: MODELS.padron_alicuotas });
+const contactoRepo = new BaseRepository({ model: MODELS.contactos });
+const impuestoConfigRepo = new BaseRepository({ model: MODELS.impuestos_config });
+const ventaRepo = new BaseRepository({ model: MODELS.ventas });
+const ventaLineaRepo = new BaseRepository({ model: MODELS.venta_lineas });
+const ventaImpuestoRepo = new BaseRepository({ model: MODELS.venta_impuestos });
+const compraRepo = new BaseRepository({ model: MODELS.compras });
+const compraLineaRepo = new BaseRepository({ model: MODELS.compra_lineas });
+const compraImpuestoRepo = new BaseRepository({ model: MODELS.compra_impuestos });
+const pagoRetencionRepo = new BaseRepository({ model: MODELS.pago_retenciones });
 
 const PROVINCIA_TO_JURISDICCION = {
   'caba': '901',
@@ -85,25 +96,19 @@ export function resolveJurisdiccionCodigo(provincia = '', explicitCodigo = '') {
 }
 
 export function listJurisdicciones() {
-  return db.prepare('SELECT * FROM jurisdicciones WHERE activo = 1 ORDER BY codigo ASC').all();
+  return jurisdiccionRepo.findWhere({ activo: 1 }, { orderBy: 'codigo ASC' });
 }
 
 export function listPadronAlicuotas({ cuit, jurisdiccion_codigo, tipo } = {}) {
-  const where = ['1=1'];
-  const args = [];
+  const qb = padronRepo.query().orderBy('id', 'DESC').limit(500);
+  if (jurisdiccion_codigo) qb.where('jurisdiccion_codigo', String(jurisdiccion_codigo).trim());
+  if (tipo) qb.where('tipo', tipo);
+  let rows = qb.all();
   if (cuit) {
-    where.push("REPLACE(cuit, '-', '') = ?");
-    args.push(String(cuit).replace(/\D/g, ''));
+    const digits = String(cuit).replace(/\D/g, '');
+    rows = rows.filter(r => String(r.cuit || '').replace(/\D/g, '') === digits);
   }
-  if (jurisdiccion_codigo) {
-    where.push('jurisdiccion_codigo = ?');
-    args.push(String(jurisdiccion_codigo).trim());
-  }
-  if (tipo) {
-    where.push('tipo = ?');
-    args.push(tipo);
-  }
-  return db.prepare(`SELECT * FROM padron_alicuotas WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT 500`).all(...args);
+  return rows;
 }
 
 export function upsertPadronAlicuota(b) {
@@ -112,10 +117,9 @@ export function upsertPadronAlicuota(b) {
   const jur = String(b.jurisdiccion_codigo || '902').trim();
   const tipo = ['percepcion', 'retencion'].includes(b.tipo) ? b.tipo : 'percepcion';
   const alicuota = Math.max(0, Number(b.alicuota) || 0);
-  const existing = db.prepare(
-    "SELECT id FROM padron_alicuotas WHERE REPLACE(cuit, '-', '') = ? AND jurisdiccion_codigo = ? AND tipo = ?"
-  ).get(cuitDigits, jur, tipo);
-  const repo = new BaseRepository({ model: MODELS.padron_alicuotas });
+  const existing = padronRepo.findWhere({ jurisdiccion_codigo: jur, tipo })
+    .find(r => String(r.cuit || '').replace(/\D/g, '') === cuitDigits);
+  const repo = padronRepo;
   if (existing) {
     repo.update(existing.id, {
       cuit: cuitDigits,
@@ -169,18 +173,21 @@ export function importPadronCsv(text, { jurisdiccion_codigo = '902', tipo = 'per
 }
 
 export function sugerirPercepciones({ contacto_id, jurisdiccion_codigo, neto = 0, total = 0, aplica_a = 'ventas' } = {}) {
-  const contacto = contacto_id
-    ? db.prepare('SELECT id, cuit, provincia, jurisdiccion_codigo, condicion_iva FROM contactos WHERE id = ?').get(Number(contacto_id))
-    : null;
+  const contacto = contacto_id ? contactoRepo.findById(Number(contacto_id)) : null;
   const jur = resolveJurisdiccionCodigo(contacto?.provincia, jurisdiccion_codigo || contacto?.jurisdiccion_codigo);
   const cuitDigits = String(contacto?.cuit || '').replace(/\D/g, '');
   const netoVal = Number(neto) || 0;
   const totalVal = Number(total) || netoVal;
 
-  const impuestos = db.prepare(`
-    SELECT * FROM impuestos_config
-    WHERE activo = 1 AND tipo = 'percepcion' AND (aplica_a = 'ambos' OR aplica_a = ?)
-  `).all(aplica_a);
+  const impuestos = impuestoConfigRepo.query()
+    .where('activo', 1)
+    .where('tipo', 'percepcion')
+    .whereIn('aplica_a', ['ambos', aplica_a])
+    .all();
+
+  const padronPerc = cuitDigits
+    ? padronRepo.findWhere({ tipo: 'percepcion' }).filter(r => String(r.cuit || '').replace(/\D/g, '') === cuitDigits)
+    : [];
 
   const sugerencias = [];
   for (const imp of impuestos) {
@@ -190,9 +197,7 @@ export function sugerirPercepciones({ contacto_id, jurisdiccion_codigo, neto = 0
     let alicuota = Number(imp.alicuota_defecto || 0);
     let fuente = 'config';
     if (cuitDigits && imp.jurisdiccion_codigo) {
-      const pad = db.prepare(
-        "SELECT alicuota, origen FROM padron_alicuotas WHERE REPLACE(cuit, '-', '') = ? AND jurisdiccion_codigo = ? AND tipo = 'percepcion' LIMIT 1"
-      ).get(cuitDigits, imp.jurisdiccion_codigo);
+      const pad = padronPerc.find(r => r.jurisdiccion_codigo === imp.jurisdiccion_codigo);
       if (pad) {
         alicuota = Number(pad.alicuota || 0);
         fuente = pad.origen || 'padron';
@@ -272,40 +277,40 @@ function fmtDateDmy(fecha) {
 
 export function getLibroIva({ tipo = 'ventas', desde = '', hasta = '', incluir_no_fiscales = false } = {}) {
   const isVentas = tipo !== 'compras';
-  const table = isVentas ? 'ventas' : 'compras';
-  const linesTable = isVentas ? 'venta_lineas' : 'compra_lineas';
+  const docRepo = isVentas ? ventaRepo : compraRepo;
+  const lineRepo = isVentas ? ventaLineaRepo : compraLineaRepo;
   const lineFk = isVentas ? 'venta_id' : 'compra_id';
-  const impTable = isVentas ? 'venta_impuestos' : 'compra_impuestos';
+  const impRepo = isVentas ? ventaImpuestoRepo : compraImpuestoRepo;
   const impFk = isVentas ? 'venta_id' : 'compra_id';
 
-  const where = ["d.estado NOT IN ('Borrador', 'Presupuesto', 'Anulada', 'Cancelado')"];
-  const args = [];
+  const qbDocs = docRepo.query('d')
+    .select(
+      'd.*',
+      'c.nombre AS contacto_nombre',
+      'c.razon_social AS contacto_razon_social',
+      'c.tipo_documento AS contacto_tipo_doc',
+      'c.cuit AS contacto_cuit',
+      'c.condicion_iva AS contacto_condicion_iva',
+      'c.provincia AS contacto_provincia',
+      'c.jurisdiccion_codigo AS contacto_jur'
+    )
+    .leftJoin('contactos', 'c', 'c.id', 'd.contacto_id')
+    .whereNotIn('d.estado', ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado'])
+    .orderBy('d.fecha', 'ASC')
+    .orderBy('d.id', 'ASC');
   if (!incluir_no_fiscales) {
-    where.push("d.caracter = 'fiscal'");
-    where.push("UPPER(d.tipo_comprobante) NOT IN ('INT', 'FX', 'NCX', 'NDX', 'X')");
+    qbDocs.where('d.caracter', 'fiscal');
   }
-  if (desde) {
-    where.push('d.fecha >= ?');
-    args.push(desde);
-  }
-  if (hasta) {
-    where.push('d.fecha <= ?');
-    args.push(hasta);
+  if (desde) qbDocs.where('d.fecha', '>=', desde);
+  if (hasta) qbDocs.where('d.fecha', '<=', hasta);
+
+  let docs = qbDocs.all();
+  if (!incluir_no_fiscales) {
+    docs = docs.filter(d => !['INT', 'FX', 'NCX', 'NDX', 'X'].includes(String(d.tipo_comprobante || '').toUpperCase()));
   }
 
-  const docs = db.prepare(`
-    SELECT d.*, c.nombre AS contacto_nombre, c.razon_social AS contacto_razon_social,
-           c.tipo_documento AS contacto_tipo_doc, c.cuit AS contacto_cuit,
-           c.condicion_iva AS contacto_condicion_iva, c.provincia AS contacto_provincia,
-           c.jurisdiccion_codigo AS contacto_jur
-    FROM ${table} d
-    LEFT JOIN contactos c ON c.id = d.contacto_id
-    WHERE ${where.join(' AND ')}
-    ORDER BY d.fecha ASC, d.id ASC
-  `).all(...args);
-
-  const stmtLines = db.prepare(`SELECT alicuota_iva, subtotal, iva_monto FROM ${linesTable} WHERE ${lineFk} = ?`);
-  const stmtImps = db.prepare(`SELECT tipo, nombre, alicuota, monto FROM ${impTable} WHERE ${impFk} = ?`);
+  const stmtLines = { all: (id) => lineRepo.query().select('alicuota_iva', 'subtotal', 'iva_monto').where(lineFk, id).all() };
+  const stmtImps = { all: (id) => impRepo.query().select('tipo', 'nombre', 'alicuota', 'monto').where(impFk, id).all() };
 
   const rows = [];
   const totales = {
@@ -567,86 +572,85 @@ export function getLibroAuxiliar({ categoria = 'percepciones', jurisdiccion_codi
   const rows = [];
 
   if (categoria === 'percepciones' || categoria === 'todas') {
-    const vWhere = ["v.estado NOT IN ('Borrador', 'Presupuesto', 'Anulada')", "vi.tipo = 'percepcion'"];
-    const vArgs = [];
-    if (desde) { vWhere.push('v.fecha >= ?'); vArgs.push(desde); }
-    if (hasta) { vWhere.push('v.fecha <= ?'); vArgs.push(hasta); }
-    const vRows = db.prepare(`
-      SELECT vi.id, v.fecha, 'venta' AS origen, 'Practicada (Venta)' AS direccion,
-             v.id AS documento_id, v.numero AS comprobante, v.tipo_comprobante, v.clase_documento,
-             c.nombre AS contacto_nombre, c.razon_social AS contacto_razon_social, c.cuit,
-             COALESCE(NULLIF(ic.jurisdiccion_codigo, ''), v.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo,
-             COALESCE(ic.codigo_regimen, '') AS codigo_regimen,
-             vi.nombre AS impuesto_nombre, ic.codigo AS impuesto_codigo,
-             v.neto AS base_imponible, vi.alicuota, vi.monto
-      FROM venta_impuestos vi
-      JOIN ventas v ON v.id = vi.venta_id
-      LEFT JOIN contactos c ON c.id = v.contacto_id
-      LEFT JOIN impuestos_config ic ON ic.id = vi.impuesto_id
-      WHERE ${vWhere.join(' AND ')}
-    `).all(...vArgs);
+    const qbV = ventaImpuestoRepo.query('vi')
+      .select(
+        'vi.id', 'v.fecha', "'venta' AS origen", "'Practicada (Venta)' AS direccion",
+        'v.id AS documento_id', 'v.numero AS comprobante', 'v.tipo_comprobante', 'v.clase_documento',
+        'c.nombre AS contacto_nombre', 'c.razon_social AS contacto_razon_social', 'c.cuit',
+        "COALESCE(NULLIF(ic.jurisdiccion_codigo, ''), v.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo",
+        "COALESCE(ic.codigo_regimen, '') AS codigo_regimen",
+        'vi.nombre AS impuesto_nombre', 'ic.codigo AS impuesto_codigo',
+        'v.neto AS base_imponible', 'vi.alicuota', 'vi.monto'
+      )
+      .innerJoin('ventas', 'v', 'v.id', 'vi.venta_id')
+      .leftJoin('contactos', 'c', 'c.id', 'v.contacto_id')
+      .leftJoin('impuestos_config', 'ic', 'ic.id', 'vi.impuesto_id')
+      .whereNotIn('v.estado', ['Borrador', 'Presupuesto', 'Anulada'])
+      .where('vi.tipo', 'percepcion');
+    if (desde) qbV.where('v.fecha', '>=', desde);
+    if (hasta) qbV.where('v.fecha', '<=', hasta);
+    const vRows = qbV.all();
 
-    const cWhere = ["co.estado NOT IN ('Borrador', 'Anulada', 'Cancelado')", "ci.tipo = 'percepcion'"];
-    const cArgs = [];
-    if (desde) { cWhere.push('co.fecha >= ?'); cArgs.push(desde); }
-    if (hasta) { cWhere.push('co.fecha <= ?'); cArgs.push(hasta); }
-    const cRows = db.prepare(`
-      SELECT ci.id, co.fecha, 'compra' AS origen, 'Sufrida (Compra)' AS direccion,
-             co.id AS documento_id, co.numero AS comprobante, co.tipo_comprobante, co.clase_documento,
-             c.nombre AS contacto_nombre, c.razon_social AS contacto_razon_social, c.cuit,
-             COALESCE(NULLIF(ic.jurisdiccion_codigo, ''), co.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo,
-             COALESCE(ic.codigo_regimen, '') AS codigo_regimen,
-             ci.nombre AS impuesto_nombre, ic.codigo AS impuesto_codigo,
-             co.neto AS base_imponible, ci.alicuota, ci.monto
-      FROM compra_impuestos ci
-      JOIN compras co ON co.id = ci.compra_id
-      LEFT JOIN contactos c ON c.id = co.contacto_id
-      LEFT JOIN impuestos_config ic ON ic.id = ci.impuesto_id
-      WHERE ${cWhere.join(' AND ')}
-    `).all(...cArgs);
+    const qbC = compraImpuestoRepo.query('ci')
+      .select(
+        'ci.id', 'co.fecha', "'compra' AS origen", "'Sufrida (Compra)' AS direccion",
+        'co.id AS documento_id', 'co.numero AS comprobante', 'co.tipo_comprobante', 'co.clase_documento',
+        'c.nombre AS contacto_nombre', 'c.razon_social AS contacto_razon_social', 'c.cuit',
+        "COALESCE(NULLIF(ic.jurisdiccion_codigo, ''), co.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo",
+        "COALESCE(ic.codigo_regimen, '') AS codigo_regimen",
+        'ci.nombre AS impuesto_nombre', 'ic.codigo AS impuesto_codigo',
+        'co.neto AS base_imponible', 'ci.alicuota', 'ci.monto'
+      )
+      .innerJoin('compras', 'co', 'co.id', 'ci.compra_id')
+      .leftJoin('contactos', 'c', 'c.id', 'co.contacto_id')
+      .leftJoin('impuestos_config', 'ic', 'ic.id', 'ci.impuesto_id')
+      .whereNotIn('co.estado', ['Borrador', 'Anulada', 'Cancelado'])
+      .where('ci.tipo', 'percepcion');
+    if (desde) qbC.where('co.fecha', '>=', desde);
+    if (hasta) qbC.where('co.fecha', '<=', hasta);
+    const cRows = qbC.all();
 
     rows.push(...vRows, ...cRows);
   }
 
   if (categoria === 'retenciones' || categoria === 'todas') {
-    const pWhere = ["p.estado = 'Confirmado'"];
-    const pArgs = [];
-    if (desde) { pWhere.push('p.fecha >= ?'); pArgs.push(desde); }
-    if (hasta) { pWhere.push('p.fecha <= ?'); pArgs.push(hasta); }
-    const pRows = db.prepare(`
-      SELECT pr.id, p.fecha, 'pago' AS origen, 'Practicada (Pago)' AS direccion,
-             p.id AS documento_id, COALESCE(NULLIF(pr.numero_certificado, ''), p.numero) AS comprobante,
-             'OP' AS tipo_comprobante, 'pago' AS clase_documento,
-             c.nombre AS contacto_nombre, c.razon_social AS contacto_razon_social, c.cuit,
-             COALESCE(NULLIF(pr.jurisdiccion_codigo, ''), ic.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo,
-             COALESCE(NULLIF(pr.codigo_regimen, ''), ic.codigo_regimen, '') AS codigo_regimen,
-             pr.nombre AS impuesto_nombre, ic.codigo AS impuesto_codigo,
-             pr.base_imponible, pr.alicuota, pr.monto, pr.numero_certificado
-      FROM pago_retenciones pr
-      JOIN pagos p ON p.id = pr.pago_id
-      LEFT JOIN contactos c ON c.id = p.contacto_id
-      LEFT JOIN impuestos_config ic ON ic.id = pr.impuesto_id
-      WHERE ${pWhere.join(' AND ')}
-    `).all(...pArgs);
+    const qbP = pagoRetencionRepo.query('pr')
+      .select(
+        'pr.id', 'p.fecha', "'pago' AS origen", "'Practicada (Pago)' AS direccion",
+        'p.id AS documento_id', "COALESCE(NULLIF(pr.numero_certificado, ''), p.numero) AS comprobante",
+        "'OP' AS tipo_comprobante", "'pago' AS clase_documento",
+        'c.nombre AS contacto_nombre', 'c.razon_social AS contacto_razon_social', 'c.cuit',
+        "COALESCE(NULLIF(pr.jurisdiccion_codigo, ''), ic.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo",
+        "COALESCE(NULLIF(pr.codigo_regimen, ''), ic.codigo_regimen, '') AS codigo_regimen",
+        'pr.nombre AS impuesto_nombre', 'ic.codigo AS impuesto_codigo',
+        'pr.base_imponible', 'pr.alicuota', 'pr.monto', 'pr.numero_certificado'
+      )
+      .innerJoin('pagos', 'p', 'p.id', 'pr.pago_id')
+      .leftJoin('contactos', 'c', 'c.id', 'p.contacto_id')
+      .leftJoin('impuestos_config', 'ic', 'ic.id', 'pr.impuesto_id')
+      .where('p.estado', 'Confirmado');
+    if (desde) qbP.where('p.fecha', '>=', desde);
+    if (hasta) qbP.where('p.fecha', '<=', hasta);
+    const pRows = qbP.all();
 
-    const crWhere = ["co.estado NOT IN ('Borrador', 'Anulada', 'Cancelado')", "ci.tipo = 'retencion'"];
-    const crArgs = [];
-    if (desde) { crWhere.push('co.fecha >= ?'); crArgs.push(desde); }
-    if (hasta) { crWhere.push('co.fecha <= ?'); crArgs.push(hasta); }
-    const crRows = db.prepare(`
-      SELECT ci.id, co.fecha, 'compra' AS origen, 'Compra' AS direccion,
-             co.id AS documento_id, co.numero AS comprobante, co.tipo_comprobante, co.clase_documento,
-             c.nombre AS contacto_nombre, c.razon_social AS contacto_razon_social, c.cuit,
-             COALESCE(NULLIF(ic.jurisdiccion_codigo, ''), co.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo,
-             COALESCE(ic.codigo_regimen, '') AS codigo_regimen,
-             ci.nombre AS impuesto_nombre, ic.codigo AS impuesto_codigo,
-             co.neto AS base_imponible, ci.alicuota, ci.monto
-      FROM compra_impuestos ci
-      JOIN compras co ON co.id = ci.compra_id
-      LEFT JOIN contactos c ON c.id = co.contacto_id
-      LEFT JOIN impuestos_config ic ON ic.id = ci.impuesto_id
-      WHERE ${crWhere.join(' AND ')}
-    `).all(...crArgs);
+    const qbCr = compraImpuestoRepo.query('ci')
+      .select(
+        'ci.id', 'co.fecha', "'compra' AS origen", "'Compra' AS direccion",
+        'co.id AS documento_id', 'co.numero AS comprobante', 'co.tipo_comprobante', 'co.clase_documento',
+        'c.nombre AS contacto_nombre', 'c.razon_social AS contacto_razon_social', 'c.cuit',
+        "COALESCE(NULLIF(ic.jurisdiccion_codigo, ''), co.jurisdiccion_codigo, c.jurisdiccion_codigo, '') AS jurisdiccion_codigo",
+        "COALESCE(ic.codigo_regimen, '') AS codigo_regimen",
+        'ci.nombre AS impuesto_nombre', 'ic.codigo AS impuesto_codigo',
+        'co.neto AS base_imponible', 'ci.alicuota', 'ci.monto'
+      )
+      .innerJoin('compras', 'co', 'co.id', 'ci.compra_id')
+      .leftJoin('contactos', 'c', 'c.id', 'co.contacto_id')
+      .leftJoin('impuestos_config', 'ic', 'ic.id', 'ci.impuesto_id')
+      .whereNotIn('co.estado', ['Borrador', 'Anulada', 'Cancelado'])
+      .where('ci.tipo', 'retencion');
+    if (desde) qbCr.where('co.fecha', '>=', desde);
+    if (hasta) qbCr.where('co.fecha', '<=', hasta);
+    const crRows = qbCr.all();
 
     rows.push(...pRows, ...crRows);
   }
@@ -753,19 +757,17 @@ export function exportSifereTxt({ desde = '', hasta = '', categoria = 'percepcio
 
 export function getReporteJurisdicciones({ desde = '', hasta = '', tipo = 'ventas' } = {}) {
   const isVentas = tipo !== 'compras';
-  const table = isVentas ? 'ventas' : 'compras';
-  const where = ["d.estado NOT IN ('Borrador', 'Presupuesto', 'Anulada', 'Cancelado')"];
-  const args = [];
-  if (desde) { where.push('d.fecha >= ?'); args.push(desde); }
-  if (hasta) { where.push('d.fecha <= ?'); args.push(hasta); }
-
-  const docs = db.prepare(`
-    SELECT d.id, d.clase_documento, d.neto, d.iva_monto, d.otros_impuestos_monto, d.total,
-           d.jurisdiccion_codigo, c.provincia AS contacto_provincia, c.jurisdiccion_codigo AS contacto_jur
-    FROM ${table} d
-    LEFT JOIN contactos c ON c.id = d.contacto_id
-    WHERE ${where.join(' AND ')}
-  `).all(...args);
+  const docRepo = isVentas ? ventaRepo : compraRepo;
+  const qb = docRepo.query('d')
+    .select(
+      'd.id', 'd.clase_documento', 'd.neto', 'd.iva_monto', 'd.otros_impuestos_monto', 'd.total',
+      'd.jurisdiccion_codigo', 'c.provincia AS contacto_provincia', 'c.jurisdiccion_codigo AS contacto_jur'
+    )
+    .leftJoin('contactos', 'c', 'c.id', 'd.contacto_id')
+    .whereNotIn('d.estado', ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado']);
+  if (desde) qb.where('d.fecha', '>=', desde);
+  if (hasta) qb.where('d.fecha', '<=', hasta);
+  const docs = qb.all();
 
   const jurNames = new Map(listJurisdicciones().map(j => [j.codigo, j.nombre]));
   const grouped = new Map();

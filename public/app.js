@@ -1,11 +1,16 @@
 import { addRoute, initRouter } from './router.js';
 import { api, refreshKPIs, setOnUnauthorized, toast } from './lib/api.js';
+import { mountAppShell } from './lib/appShell.js';
+import { observeMoneyInputs } from './lib/format.js';
 import { observeTableBulkSelection } from './lib/engine/index.js';
 import { loadComprobantesCatalog } from './lib/comprobantesAr.js';
 import { renderAuthView } from './views/auth/authView.js';
 import { renderDatabasesView } from './views/auth/databasesView.js';
 
 import { renderPresupuestoDetalleView } from './views/produccion/presupuestoDetalleView.js';
+import { renderPedidosView } from './views/produccion/pedidosView.js';
+import { renderPedidoFormView } from './views/produccion/pedidoFormView.js';
+import { renderPedidoDetalleView } from './views/produccion/pedidoDetalleView.js';
 import { renderRecetasView, renderRecetaNuevaView } from './views/produccion/recetasView.js';
 import { renderRecetaDetalleView } from './views/produccion/recetaDetalleView.js';
 import { renderOrdenesView, renderOrdenNuevaView } from './views/produccion/ordenesView.js';
@@ -53,8 +58,10 @@ import {
 
 import { renderConfigView } from './views/config/configView.js';
 import { renderDashboardView } from './views/dashboard/dashboardView.js';
+import { renderTareasView } from './views/tareas/tareasView.js';
 
 addRoute('/', renderDashboardView);
+addRoute('/tareas', renderTareasView);
 addRoute('/presupuestos/:id', renderPresupuestoDetalleView, 'produccion.ver');
 
 addRoute('/recetas', () => renderRecetasView(), 'produccion.ver');
@@ -112,6 +119,10 @@ addRoute('/inventario/unidades', () => renderUnidadesView(), 'inventario.ver');
 addRoute('/inventario/ubicaciones', () => renderUbicacionesView(), 'inventario.ver');
 addRoute('/produccion/etapas', () => renderEtapasView(), 'produccion.ver');
 addRoute('/cronograma', () => renderCronogramaView(), 'comercial.ver');
+addRoute('/pedidos', () => renderPedidosView(), 'produccion.ver');
+addRoute('/pedidos/nuevo', () => renderPedidoFormView(), 'produccion.editar');
+addRoute('/pedidos/:id', (_c, params) => renderPedidoDetalleView(params), 'produccion.ver');
+addRoute('/pedidos/:id/editar', (_c, params) => renderPedidoFormView(params), 'produccion.editar');
 addRoute('/ordenes', () => renderOrdenesView(), 'produccion.ver');
 addRoute('/ordenes/nueva', () => renderOrdenNuevaView(), 'produccion.editar');
 addRoute('/ordenes/:id', (_c, params) => renderOrdenDetalleView(params), 'produccion.ver');
@@ -151,6 +162,8 @@ function applyNavPermissions(sidebar) {
   });
 }
 
+mountAppShell(document.getElementById('app-shell-root') || document.body);
+
 function setAuthenticatedUI(user) {
   window.__currentUser = user || null;
   const shell = document.getElementById('app-shell');
@@ -162,7 +175,8 @@ function setAuthenticatedUI(user) {
   const userGroup = document.getElementById('topbar-user-group');
   const sidebar = document.getElementById('main-nav');
   if (user) {
-    if (shell) shell.classList.remove('sidebar-collapsed');
+    const savedCollapsed = sessionStorage.getItem('vng_sidebar_collapsed') === '1';
+    if (shell) shell.classList.toggle('sidebar-collapsed', savedCollapsed);
     if (sidebarEl) sidebarEl.style.display = '';
     if (toggleBtnEl) toggleBtnEl.style.display = '';
     kpiCards.forEach(el => { el.style.display = ''; });
@@ -174,6 +188,13 @@ function setAuthenticatedUI(user) {
       applyNavPermissions(sidebar);
     }
     refreshKPIs();
+    api('/api/databases/current').then(res => {
+      const badge = document.getElementById('topbar-db-badge');
+      if (badge && res?.current) {
+        badge.textContent = `Base: ${res.current}`;
+        badge.style.display = '';
+      }
+    }).catch(() => {});
     if (window.location.pathname === '/login' || window.location.pathname === '/database') {
       window.history.replaceState({}, '', '/');
     }
@@ -211,7 +232,19 @@ document.getElementById('btn-logout')?.addEventListener('click', async () => {
 
 (async function bootstrap() {
   observeTableBulkSelection(document.getElementById('app-view'));
+  observeMoneyInputs(document.body);
   loadComprobantesCatalog(api);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const target = e.target;
+    if (!target || target.tagName !== 'INPUT') return;
+    const t = (target.type || '').toLowerCase();
+    if (t === 'submit' || t === 'button' || t === 'checkbox' || t === 'radio') return;
+    const form = target.closest('form');
+    if (!form || form.id === 'form-auth' || form.id === 'form-login') return;
+    e.preventDefault();
+  });
   try {
     const res = await api('/api/auth/me');
     setAuthenticatedUI(res.user);
@@ -231,6 +264,7 @@ toggleBtn?.addEventListener('click', () => {
     shell?.classList.toggle('sidebar-open');
   } else {
     shell?.classList.toggle('sidebar-collapsed');
+    sessionStorage.setItem('vng_sidebar_collapsed', shell?.classList.contains('sidebar-collapsed') ? '1' : '0');
   }
 });
 

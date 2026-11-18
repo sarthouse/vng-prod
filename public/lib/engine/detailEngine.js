@@ -22,6 +22,7 @@ export function mountDetailView(container, {
   tabs = [],
   defaultTab = null,
   sidebarHtml = '',
+  sidebarPosition = 'right',
   onMountSidebar = null,
   onAfterMount = null,
 } = {}) {
@@ -118,12 +119,12 @@ export function mountDetailView(container, {
 
       ${kpiHtml}
 
-      <div class="ve-detail-grid ${sidebarHtml || onMountSidebar ? 'has-sidebar' : ''}">
+      <div class="ve-detail-grid ${(sidebarHtml || onMountSidebar) && sidebarPosition !== 'bottom' ? 'has-sidebar' : ''}">
         <div class="ve-detail-main">
           ${mainHtml}
           ${tabsHtml}
         </div>
-        ${(sidebarHtml || onMountSidebar) ? `<aside class="ve-detail-sidebar">${sidebarHtml}</aside>` : ''}
+        ${(sidebarHtml || onMountSidebar) ? `<aside class="ve-detail-sidebar" ${sidebarPosition === 'bottom' ? 'style="margin-top:16px;"' : ''}>${sidebarHtml}</aside>` : ''}
       </div>
     </div>
   `;

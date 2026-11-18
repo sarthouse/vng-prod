@@ -130,28 +130,28 @@ export async function renderFlujoCajaView() {
     };
 
     const matrizTabHtml = `
-      <div class="card" style="margin-bottom:16px;">
+      <div class="card mb-md">
         <div id="fc-chart-container"></div>
       </div>
       <div class="card">
         <div class="card-header">
           <div>
             <h2>Matriz de Flujo de Caja (${granularidad === 'semana' ? 'Semanal' : 'Mensual'})</h2>
-            <span class="muted" style="font-size:0.82rem;">Hacé clic en cualquier monto subrayado para ver el desglose de comprobantes y vencimientos de ese período.</span>
+            <span class="muted text-sm">Hacé clic en cualquier monto subrayado para ver el desglose de comprobantes y vencimientos de ese período.</span>
           </div>
-          <div class="actions" style="flex-wrap:wrap; gap:8px;">
+          <div class="actions sx-f41bf6">
             <div class="pill-group">
               <button type="button" class="pill ${granularidad === 'semana' ? 'active' : ''}" data-fc-gran="semana">Por Semana</button>
               <button type="button" class="pill ${granularidad === 'mes' ? 'active' : ''}" data-fc-gran="mes">Por Mes</button>
             </div>
-            <select id="fc-cuenta" style="width:auto;">
+            <select id="fc-cuenta" class="w-auto">
               <option value="">Todas las cuentas</option>
               ${(matriz.cuentas || []).map(c => `<option value="${c.id}" ${String(c.id) === String(filtroCuenta) ? 'selected' : ''}>${esc(c.nombre)} (${fmtMoney(c.saldo_actual)})</option>`).join('')}
             </select>
-            <select id="fc-hist-count" style="width:auto;" title="Períodos históricos hacia atrás">
+            <select id="fc-hist-count" class="w-auto" title="Períodos históricos hacia atrás">
               ${[2, 4, 6, 8].map(n => `<option value="${n}" ${histPeriodos === n ? 'selected' : ''}>${n} ${granularidad === 'semana' ? 'sem.' : 'meses'} hist.</option>`).join('')}
             </select>
-            <select id="fc-proy-count" style="width:auto;" title="Períodos proyectados hacia adelante">
+            <select id="fc-proy-count" class="w-auto" title="Períodos proyectados hacia adelante">
               ${[4, 6, 8, 12].map(n => `<option value="${n}" ${proyPeriodos === n ? 'selected' : ''}>+${n} ${granularidad === 'semana' ? 'sem.' : 'meses'} proy.</option>`).join('')}
             </select>
           </div>
@@ -165,7 +165,7 @@ export async function renderFlujoCajaView() {
         <div class="card-header">
           <div>
             <h2>Gastos e Ingresos Recurrentes / Estimados</h2>
-            <span class="muted" style="font-size:0.82rem;">Alquileres, sueldos, servicios fijos o ingresos estimados que alimentan las semanas proyectadas.</span>
+            <span class="muted text-sm">Alquileres, sueldos, servicios fijos o ingresos estimados que alimentan las semanas proyectadas.</span>
           </div>
           <button type="button" id="btn-fc-new-proy" class="btn btn-primary btn-sm">+ Nueva Proyección</button>
         </div>

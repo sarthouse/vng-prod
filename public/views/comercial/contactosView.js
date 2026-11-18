@@ -1,8 +1,8 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, renderProvinciaOptions, exportRowsToCSV } from '../../lib/format.js';
+import { esc, fmtMoney, renderProvinciaOptions, exportRowsToCSV, formatDocumento, bindDocumentoInput } from '../../lib/format.js';
 import { navigate } from '../../router.js';
 import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
-import { printCuentaCorriente, buildCuentaCorrienteMovimientos } from '../../lib/cuentaCorrientePrint.js';
+import { printCuentaCorriente, buildCuentaCorrienteMovimientos } from '../../lib/print/index.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
 
 export async function renderContactosView() {
@@ -82,12 +82,12 @@ export async function renderContactosView() {
       columns: [
         {
           label: 'Nombre',
-          render: c => `<a href="/contactos/${c.id}" data-link class="link-primary"><strong>${esc(c.nombre)}</strong></a>${c.razon_social ? `<div class="muted" style="font-size:11px;">${esc(c.razon_social)}</div>` : ''}`,
+          render: c => `<a href="/contactos/${c.id}" data-link class="link-primary"><strong>${esc(c.nombre)}</strong></a>${c.razon_social ? `<div class="muted text-2xs">${esc(c.razon_social)}</div>` : ''}`,
         },
         {
           label: 'Roles',
           render: c => `
-            <div class="actions" style="gap:4px;">
+            <div class="actions sx-e5491b">
               ${c.es_proveedor ? '<span class="badge badge-confirmado">Proveedor</span>' : ''}
               ${c.es_taller ? '<span class="badge badge-parcial">Taller</span>' : ''}
               ${c.es_cliente ? '<span class="badge badge-ok">Cliente</span>' : ''}
@@ -197,7 +197,7 @@ export async function renderContactoFormView({ id } = {}) {
   root.innerHTML = `
     <div class="page-header">
       <div>
-        <div style="margin-bottom:6px;"><a href="/contactos" data-link class="muted" style="font-size:0.85rem;">← Volver a Contactos</a></div>
+        <div class="mb-xs"><a href="/contactos" data-link class="muted text-md">← Volver a Contactos</a></div>
         <h1>${isEdit ? esc(c.nombre) : 'Nuevo Contacto'}</h1>
       </div>
       ${isEdit ? `<div class="actions"><button type="button" id="btn-con-print-cc" class="btn">Imprimir Cta. Cte. / PDF</button></div>` : ''}
@@ -207,7 +207,7 @@ export async function renderContactoFormView({ id } = {}) {
       <div class="card-header"><h2>Datos del Contacto</h2></div>
       <div class="card-body">
         <div class="form-grid">
-          <div class="full" style="display:flex;gap:16px;flex-wrap:wrap;padding:8px 12px;background:var(--color-bg);border-radius:8px;border:1px solid var(--color-border);">
+          <div class="full sx-0bb33f">
             <label class="checkbox-field"><input type="checkbox" name="es_proveedor" ${c.es_proveedor ? 'checked' : ''} /> <strong>Es Proveedor</strong></label>
             <label class="checkbox-field"><input type="checkbox" name="es_taller" ${c.es_taller ? 'checked' : ''} /> <strong>Es Taller Productivo</strong></label>
             <label class="checkbox-field"><input type="checkbox" name="es_cliente" ${c.es_cliente ? 'checked' : ''} /> <strong>Es Cliente</strong></label>
@@ -222,11 +222,11 @@ export async function renderContactoFormView({ id } = {}) {
               ).join('')}
             </select>
           </label>
-          <label style="min-width:0;">
+          <label class="sx-3f9f96">
             <span>Nº Documento</span>
-            <div style="display:flex;gap:6px;align-items:center;min-width:0;">
-              <input type="text" name="cuit" value="${esc(c.cuit || '')}" style="flex:1;min-width:0;width:auto;" />
-              <button type="button" class="btn btn-sm" id="btn-con-padron" title="Consultar datos fiscales en AFIP Padrón A5" style="flex-shrink:0;white-space:nowrap;">Padrón AFIP</button>
+            <div class="sx-a59865">
+              <input type="text" name="cuit" value="${esc(c.cuit || '')}" class="sx-fc7f9d" />
+              <button type="button" class="btn btn-sm sx-d062a8" id="btn-con-padron" title="Consultar datos fiscales en AFIP Padrón A5">Padrón AFIP</button>
             </div>
           </label>
           <label>
@@ -289,7 +289,7 @@ export async function renderContactoFormView({ id } = {}) {
           </label>
           <label><span>Límite de Crédito</span><input type="number" step="0.01" min="0" name="limite_credito" value="${Number(c.limite_credito || 0)}" /></label>
           <label><span>Vto. Certificado No Retención</span><input type="date" name="exento_retenciones_vto" value="${esc(c.exento_retenciones_vto || '')}" /></label>
-          <label class="checkbox-inline" style="align-self:end;padding-bottom:6px;">
+          <label class="checkbox-inline sx-d1493b">
             <input type="checkbox" name="exento_retenciones" ${c.exento_retenciones ? 'checked' : ''} />
             <span>Exento de Retenciones</span>
           </label>
@@ -301,7 +301,7 @@ export async function renderContactoFormView({ id } = {}) {
         </div>
       </div>
     </form>
-    ${isEdit ? `<div id="con-cc-section" style="margin-top:16px;"></div><div id="con-imputaciones-section" style="margin-top:16px;"></div>` : ''}
+    ${isEdit ? `<div id="con-cc-section" class="mt-md"></div><div id="con-imputaciones-section" class="mt-md"></div>` : ''}
   `;
 
   if (isEdit && existing) {
@@ -313,9 +313,9 @@ export async function renderContactoFormView({ id } = {}) {
 
     const { movsCliente, movsProveedor } = buildCuentaCorrienteMovimientos(existing);
     const renderCcCard = (titulo, movs, saldo, saldoLabel) => `
-      <div class="card" style="margin-bottom:14px;">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-          <h2 style="margin:0;">${esc(titulo)}</h2>
+      <div class="card mb-lg">
+        <div class="card-header sx-510ea6">
+          <h2 class="m-0">${esc(titulo)}</h2>
           <span class="badge ${saldo > 0 ? 'badge-parcial' : 'badge-ok'}">${esc(saldoLabel)}: <strong>${fmtMoney(saldo)}</strong></span>
         </div>
         <div class="table-wrap">
@@ -323,7 +323,7 @@ export async function renderContactoFormView({ id } = {}) {
             <thead><tr><th>Fecha</th><th>Comprobante</th><th>Número</th><th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo</th></tr></thead>
             <tbody>
               ${movs.length === 0
-                ? '<tr><td colspan="6" class="muted" style="text-align:center;padding:14px;">Sin movimientos confirmados.</td></tr>'
+                ? '<tr><td colspan="6" class="muted sx-823150">Sin movimientos confirmados.</td></tr>'
                 : movs.map(m => `
                     <tr>
                       <td>${esc(m.fecha)}</td>
@@ -355,24 +355,24 @@ export async function renderContactoFormView({ id } = {}) {
       if (!dominios.length) return;
 
       const blocks = await Promise.all(dominios.map(async ({ dom, label }) => {
-        const est = await api(`/api/tesoreria/imputaciones/estado-cuenta?contacto_id=${existing.id}&dominio=${dom}`);
+        const est = await api(`/api/tesoreria/imputaciones/estado-cuenta?contacto_id=${c.id}&dominio=${dom}`);
         const facsPend = (est.facturas || []).filter(f => f.pendiente > 0.01);
         const compsDisp = (est.comprobantes || []).filter(cm => cm.disponible > 0.01);
         const imps = est.imputaciones || [];
 
         return `
-          <div class="card" style="margin-bottom:14px;">
+          <div class="card mb-lg">
             <div class="card-header"><h2>${esc(label)}</h2></div>
-            <form class="form-imputar-cc toolbar" data-dom="${dom}" style="gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-              <select name="comprobante" style="min-width:220px;" ${compsDisp.length ? '' : 'disabled'}>
+            <form class="form-imputar-cc toolbar sx-93cc35" data-dom="${dom}">
+              <select name="comprobante" class="mw-220" ${compsDisp.length ? '' : 'disabled'}>
                 <option value="">${compsDisp.length ? '-- Elegir Cobro/Pago/NC con saldo --' : 'Sin comprobantes sin imputar'}</option>
                 ${compsDisp.map(cm => `<option value="${esc(cm.comprobante_tipo)}:${cm.id}" data-disp="${cm.disponible}">${esc(cm.comprobante_tipo.toUpperCase())} ${esc(cm.numero || `#${cm.id}`)} · Disp: ${fmtMoney(cm.disponible)}</option>`).join('')}
               </select>
-              <select name="factura_id" style="min-width:220px;" ${facsPend.length ? '' : 'disabled'}>
+              <select name="factura_id" class="mw-220" ${facsPend.length ? '' : 'disabled'}>
                 <option value="">${facsPend.length ? '-- Elegir Factura pendiente --' : 'Sin facturas pendientes'}</option>
                 ${facsPend.map(f => `<option value="${f.id}" data-pend="${f.pendiente}">${esc(f.numero || `#${f.id}`)} · Pend: ${fmtMoney(f.pendiente)}</option>`).join('')}
               </select>
-              <input type="number" step="0.01" min="0.01" name="monto_imputado" placeholder="Monto a imputar" style="width:140px;" />
+              <input type="number" step="0.01" min="0.01" name="monto_imputado" placeholder="Monto a imputar" class="w-140" />
               <button type="submit" class="btn btn-primary" ${compsDisp.length && facsPend.length ? '' : 'disabled'}>Imputar</button>
             </form>
             <div class="table-wrap">
@@ -388,7 +388,7 @@ export async function renderContactoFormView({ id } = {}) {
                       <td class="num"><strong>${fmtMoney(im.monto_imputado)}</strong></td>
                       <td><button type="button" class="btn btn-sm btn-danger btn-del-imp" data-id="${im.id}">Desimputar</button></td>
                     </tr>
-                  `).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;">Sin imputaciones registradas.</td></tr>'}
+                  `).join('') : '<tr><td colspan="6" class="muted text-center">Sin imputaciones registradas.</td></tr>'}
                 </tbody>
               </table>
             </div>
@@ -482,14 +482,18 @@ export async function renderContactoFormView({ id } = {}) {
     }
   });
 
-  root.querySelector('#form-contacto').addEventListener('submit', async (e) => {
+  const formContacto = root.querySelector('#form-contacto');
+  bindDocumentoInput(formContacto?.querySelector('input[name="cuit"]'), formContacto?.querySelector('select[name="tipo_documento"]'));
+
+  formContacto.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const tipoDoc = fd.get('tipo_documento') || 'CUIT';
     const payload = {
       nombre: fd.get('nombre'),
       razon_social: fd.get('razon_social'),
-      tipo_documento: fd.get('tipo_documento'),
-      cuit: fd.get('cuit'),
+      tipo_documento: tipoDoc,
+      cuit: formatDocumento(fd.get('cuit'), tipoDoc),
       condicion_iva: fd.get('condicion_iva'),
       telefono: fd.get('telefono'),
       email: fd.get('email'),

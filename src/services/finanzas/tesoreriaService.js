@@ -1,12 +1,29 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
-import { getNextNumeroDocumento } from '../config/configService.js';
+import { getNextNumeroDocumento, resolveNumeroDocumento } from '../config/configService.js';
 import { listProductos } from '../inventario/productoService.js';
 import { listOrdenes } from '../produccion/produccionService.js';
 import { defaultChequeService } from './chequeService.js';
 import { defaultAsientoService } from './asientoService.js';
 import { crearImputacion, getFacturaImputado } from './imputacionService.js';
+
+const asientoRepo = new BaseRepository({ model: MODELS.asientos });
+const asientoLineaRepo = new BaseRepository({ model: MODELS.asiento_lineas });
+const cuentaRepo = new BaseRepository({ model: MODELS.cuentas });
+const cobroRepo = new BaseRepository({ model: MODELS.cobros });
+const cobroLineaRepo = new BaseRepository({ model: MODELS.cobro_lineas });
+const pagoRepo = new BaseRepository({ model: MODELS.pagos });
+const pagoLineaRepo = new BaseRepository({ model: MODELS.pago_lineas });
+const pagoRetencionRepo = new BaseRepository({ model: MODELS.pago_retenciones });
+const impuestoConfigRepo = new BaseRepository({ table: 'impuestos_config' });
+const metodoPagoRepo = new BaseRepository({ table: 'metodos_pago' });
+const planCuentaRepo = new BaseRepository({ model: MODELS.plan_cuentas });
+const compraRepo = new BaseRepository({ model: MODELS.compras });
+const ventaRepo = new BaseRepository({ model: MODELS.ventas });
+const imputacionRepo = new BaseRepository({ table: 'imputaciones' });
+const ordenRepo = new BaseRepository({ model: MODELS.ordenes_produccion });
+const productoRepo = new BaseRepository({ table: 'productos' });
+const chequeRepo = new BaseRepository({ table: 'cheques' });
 
 function resolveCuentaPlanContable(cuenta) {
   if (cuenta?.cuenta_contable_id) {
@@ -33,86 +50,107 @@ export function registrarAsiento({ fecha, tipo_origen, origen_id = null, concept
   if (Math.abs(sumDebe - sumHaber) > 0.01) {
     throw new Error(`Asiento desbalanceado: Debe (${sumDebe.toFixed(2)}) != Haber (${sumHaber.toFixed(2)})`);
   }
-  const info = db.prepare(`
-    INSERT INTO asientos (fecha, tipo_origen, origen_id, concepto)
-    VALUES (?, ?, ?, ?)
-  `).run(fecha || new Date().toISOString().slice(0, 10), tipo_origen, origen_id, concepto);
-  const asientoId = Number(info.lastInsertRowid);
-  const ins = db.prepare(`
-    INSERT INTO asiento_lineas (asiento_id, plan_cuenta_id, cuenta_id, contacto_id, cuenta_contable, debe, haber)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
+  const asientoId = asientoRepo.create({
+    fecha: fecha || new Date().toISOString().slice(0, 10),
+    tipo_origen,
+    origen_id,
+    concepto,
+  });
   for (const l of lineas) {
-    ins.run(
-      asientoId,
-      l.plan_cuenta_id ? Number(l.plan_cuenta_id) : null,
-      l.cuenta_id ? Number(l.cuenta_id) : null,
-      l.contacto_id ? Number(l.contacto_id) : null,
-      l.cuenta_contable,
-      Number((Number(l.debe) || 0).toFixed(2)),
-      Number((Number(l.haber) || 0).toFixed(2))
-    );
+    asientoLineaRepo.create({
+      asiento_id: asientoId,
+      plan_cuenta_id: l.plan_cuenta_id ? Number(l.plan_cuenta_id) : null,
+      cuenta_id: l.cuenta_id ? Number(l.cuenta_id) : null,
+      contacto_id: l.contacto_id ? Number(l.contacto_id) : null,
+      cuenta_contable: l.cuenta_contable,
+      debe: Number((Number(l.debe) || 0).toFixed(2)),
+      haber: Number((Number(l.haber) || 0).toFixed(2)),
+    });
   }
   return asientoId;
 }
 
 export function listAsientos({ limit = 60 } = {}) {
-  const asientos = db.prepare('SELECT * FROM asientos ORDER BY fecha DESC, id DESC LIMIT ?').all(limit);
-  const getLines = db.prepare('SELECT * FROM asiento_lineas WHERE asiento_id = ? ORDER BY id ASC');
-  return asientos.map(a => ({ ...a, lineas: getLines.all(a.id) }));
+  const asientos = asientoRepo.query()
+    .orderBy('fecha', 'DESC')
+    .orderBy('id', 'DESC')
+    .limit(limit)
+    .all();
+  if (!asientos.length) return [];
+  const allLines = asientoLineaRepo.query()
+    .whereIn('asiento_id', asientos.map(a => a.id))
+    .orderBy('id', 'ASC')
+    .all();
+  const linesMap = new Map();
+  for (const l of allLines) {
+    if (!linesMap.has(l.asiento_id)) linesMap.set(l.asiento_id, []);
+    linesMap.get(l.asiento_id).push(l);
+  }
+  return asientos.map(a => ({ ...a, lineas: linesMap.get(a.id) || [] }));
 }
 
 export function recalcCuentaSaldo(cuentaId) {
   if (!cuentaId) return 0;
-  const cuenta = db.prepare('SELECT * FROM cuentas WHERE id = ?').get(Number(cuentaId));
+  const cuenta = cuentaRepo.findById(Number(cuentaId));
   if (!cuenta) return 0;
-  const ingresosLineas = db.prepare(`
-    SELECT COALESCE(SUM(cl.monto), 0) as t
-    FROM cobro_lineas cl
-    JOIN cobros co ON co.id = cl.cobro_id
-    WHERE cl.cuenta_id = ? AND co.estado = 'Confirmado' AND cl.cheque_id IS NULL
-  `).get(cuenta.id).t;
-  const ingresosLegacy = db.prepare(`
-    SELECT COALESCE(SUM(co.monto), 0) as t
-    FROM cobros co
-    WHERE co.cuenta_id = ? AND co.estado = 'Confirmado'
-      AND NOT EXISTS (SELECT 1 FROM cobro_lineas cl WHERE cl.cobro_id = co.id)
-  `).get(cuenta.id).t;
-  const egresosLineas = db.prepare(`
-    SELECT COALESCE(SUM(pl.monto), 0) as t
-    FROM pago_lineas pl
-    JOIN pagos p ON p.id = pl.pago_id
-    WHERE pl.cuenta_id = ? AND p.estado = 'Confirmado' AND pl.cheque_id IS NULL
-  `).get(cuenta.id).t;
-  const egresosLegacy = db.prepare(`
-    SELECT COALESCE(SUM(p.monto), 0) as t
-    FROM pagos p
-    WHERE p.cuenta_id = ? AND p.estado = 'Confirmado'
-      AND NOT EXISTS (SELECT 1 FROM pago_lineas pl WHERE pl.pago_id = p.id)
-  `).get(cuenta.id).t;
-  const transf = db.prepare(`
-    SELECT COALESCE(SUM(al.debe - al.haber), 0) as t
-    FROM asiento_lineas al
-    JOIN asientos a ON a.id = al.asiento_id
-    WHERE al.cuenta_id = ? AND a.estado = 'Confirmado'
-      AND a.tipo_origen IN ('transferencia', 'ajuste_saldo', 'cheque_deposito', 'cheque_acreditacion', 'cheque_debito', 'cheque_rechazo')
-  `).get(cuenta.id).t;
+  const ingresosLineas = cobroLineaRepo.query('cl')
+    .innerJoin('cobros', 'co', 'co.id', 'cl.cobro_id')
+    .where('cl.cuenta_id', cuenta.id)
+    .where('co.estado', 'Confirmado')
+    .whereNull('cl.cheque_id')
+    .sum('cl.monto');
+  const cobrosCta = cobroRepo.query()
+    .select('id, monto')
+    .where('cuenta_id', cuenta.id)
+    .where('estado', 'Confirmado')
+    .all();
+  const cobroIdsWithLines = cobrosCta.length
+    ? new Set(cobroLineaRepo.query().select('cobro_id').whereIn('cobro_id', cobrosCta.map(c => c.id)).all().map(r => r.cobro_id))
+    : new Set();
+  const ingresosLegacy = cobrosCta
+    .filter(c => !cobroIdsWithLines.has(c.id))
+    .reduce((s, c) => s + Number(c.monto || 0), 0);
+
+  const egresosLineas = pagoLineaRepo.query('pl')
+    .innerJoin('pagos', 'p', 'p.id', 'pl.pago_id')
+    .where('pl.cuenta_id', cuenta.id)
+    .where('p.estado', 'Confirmado')
+    .whereNull('pl.cheque_id')
+    .sum('pl.monto');
+  const pagosCta = pagoRepo.query()
+    .select('id, monto')
+    .where('cuenta_id', cuenta.id)
+    .where('estado', 'Confirmado')
+    .all();
+  const pagoIdsWithLines = pagosCta.length
+    ? new Set(pagoLineaRepo.query().select('pago_id').whereIn('pago_id', pagosCta.map(p => p.id)).all().map(r => r.pago_id))
+    : new Set();
+  const egresosLegacy = pagosCta
+    .filter(p => !pagoIdsWithLines.has(p.id))
+    .reduce((s, p) => s + Number(p.monto || 0), 0);
+
+  const transf = asientoLineaRepo.query('al')
+    .select('al.debe, al.haber')
+    .innerJoin('asientos', 'a', 'a.id', 'al.asiento_id')
+    .where('al.cuenta_id', cuenta.id)
+    .where('a.estado', 'Confirmado')
+    .whereIn('a.tipo_origen', ['transferencia', 'ajuste_saldo', 'cheque_deposito', 'cheque_acreditacion', 'cheque_debito', 'cheque_rechazo'])
+    .all()
+    .reduce((s, al) => s + Number(al.debe || 0) - Number(al.haber || 0), 0);
+
   const ingresos = Number(ingresosLineas || 0) + Number(ingresosLegacy || 0);
   const egresos = Number(egresosLineas || 0) + Number(egresosLegacy || 0);
   const saldo = Number(((Number(cuenta.saldo_inicial) || 0) + ingresos - egresos + Number(transf || 0)).toFixed(2));
-  db.prepare('UPDATE cuentas SET saldo_actual = ? WHERE id = ?').run(saldo, cuenta.id);
+  cuentaRepo.update(cuenta.id, { saldo_actual: saldo });
   return saldo;
 }
 
 export function listCuentas() {
-  const cuentas = db.prepare(`
-    SELECT c.*,
-           COALESCE(pc.codigo, '') as plan_cuenta_codigo,
-           COALESCE(pc.nombre, '') as plan_cuenta_nombre
-    FROM cuentas c
-    LEFT JOIN plan_cuentas pc ON pc.id = c.cuenta_contable_id
-    ORDER BY c.id ASC
-  `).all();
+  const cuentas = cuentaRepo.query('c')
+    .select("c.*, COALESCE(pc.codigo, '') as plan_cuenta_codigo, COALESCE(pc.nombre, '') as plan_cuenta_nombre")
+    .leftJoin('plan_cuentas', 'pc', 'pc.id', 'c.cuenta_contable_id')
+    .orderBy('c.id', 'ASC')
+    .all();
   return cuentas.map(c => ({ ...c, saldo_actual: recalcCuentaSaldo(c.id) }));
 }
 
@@ -128,13 +166,16 @@ export function createCuenta(b) {
     : resolveCuentaPlanContable({ tipo });
   const cuentaContableId = planCuenta?.id || (b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null);
 
-  db.exec('BEGIN');
-  try {
-    const info = db.prepare(`
-      INSERT INTO cuentas (nombre, tipo, moneda, cuenta_contable_id, saldo_inicial, saldo_actual, activa)
-      VALUES (?, ?, ?, ?, ?, ?, 1)
-    `).run(nombre, tipo, moneda, cuentaContableId, saldoInicial, saldoInicial);
-    const id = Number(info.lastInsertRowid);
+  return cuentaRepo.transaction(() => {
+    const id = cuentaRepo.create({
+      nombre,
+      tipo,
+      moneda,
+      cuenta_contable_id: cuentaContableId,
+      saldo_inicial: saldoInicial,
+      saldo_actual: saldoInicial,
+      activa: 1,
+    });
 
     if (Math.abs(saldoInicial) >= 0.01) {
       const planContra = b.plan_cuenta_contrapartida_id
@@ -165,16 +206,12 @@ export function createCuenta(b) {
         lineas: saldoInicial > 0 ? [lineCuenta, lineContra] : [lineContra, lineCuenta],
       });
     }
-    db.exec('COMMIT');
     return id;
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+  });
 }
 
 export function ajustarSaldoCuenta(id, b = {}) {
-  const cuenta = db.prepare('SELECT * FROM cuentas WHERE id = ?').get(Number(id));
+  const cuenta = cuentaRepo.findById(Number(id));
   if (!cuenta) throw new Error('Cuenta no encontrada');
 
   const saldoActual = recalcCuentaSaldo(cuenta.id);
@@ -212,8 +249,7 @@ export function ajustarSaldoCuenta(id, b = {}) {
     haber: diferencia > 0 ? absDif : 0,
   };
 
-  db.exec('BEGIN');
-  try {
+  return cuentaRepo.transaction(() => {
     const asientoId = defaultAsientoService.createAsiento({
       diario_id: diario?.id || null,
       fecha,
@@ -223,90 +259,77 @@ export function ajustarSaldoCuenta(id, b = {}) {
       lineas: diferencia > 0 ? [lineCuenta, lineContra] : [lineContra, lineCuenta],
     });
     const saldoNuevo = recalcCuentaSaldo(cuenta.id);
-    db.exec('COMMIT');
     return { asiento_id: asientoId, saldo_anterior: saldoActual, saldo_nuevo: saldoNuevo, diferencia };
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+  });
 }
 
 export function updateCuenta(id, b) {
-  const ex = db.prepare('SELECT * FROM cuentas WHERE id = ?').get(id);
+  const ex = cuentaRepo.findById(id);
   if (!ex) return false;
   const cuentaContableId = b.cuenta_contable_id !== undefined
     ? (b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null)
     : ex.cuenta_contable_id;
-  db.prepare(`
-    UPDATE cuentas SET nombre=?, tipo=?, moneda=?, cuenta_contable_id=?, saldo_inicial=?, activa=? WHERE id=?
-  `).run(
-    b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
-    b.tipo !== undefined ? b.tipo : ex.tipo,
-    b.moneda !== undefined ? b.moneda : ex.moneda,
-    cuentaContableId,
-    b.saldo_inicial !== undefined ? Number(b.saldo_inicial) : ex.saldo_inicial,
-    b.activa !== undefined ? (b.activa ? 1 : 0) : ex.activa,
-    id
-  );
+  cuentaRepo.update(id, {
+    nombre: b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
+    tipo: b.tipo !== undefined ? b.tipo : ex.tipo,
+    moneda: b.moneda !== undefined ? b.moneda : ex.moneda,
+    cuenta_contable_id: cuentaContableId,
+    saldo_inicial: b.saldo_inicial !== undefined ? Number(b.saldo_inicial) : ex.saldo_inicial,
+    activa: b.activa !== undefined ? (b.activa ? 1 : 0) : ex.activa,
+  });
   recalcCuentaSaldo(id);
   return true;
 }
 
 export function deleteCuenta(id) {
-  db.prepare('DELETE FROM cuentas WHERE id = ?').run(id);
+  cuentaRepo.delete(id);
 }
 
 export function listPagos({ cuenta_id, contacto_id, proveedor_id } = {}) {
-  let sql = `
-    SELECT p.*, COALESCE(c.nombre, '') as cuenta_nombre, COALESCE(co.nombre, '') as proveedor_nombre, COALESCE(co.nombre, '') as contacto_nombre
-    FROM pagos p
-    LEFT JOIN cuentas c ON c.id = p.cuenta_id
-    LEFT JOIN contactos co ON co.id = p.contacto_id
-    WHERE 1=1
-  `;
-  const args = [];
+  const qb = pagoRepo.query('p')
+    .select("p.*, COALESCE(c.nombre, '') as cuenta_nombre, COALESCE(co.nombre, '') as proveedor_nombre, COALESCE(co.nombre, '') as contacto_nombre")
+    .leftJoin('cuentas', 'c', 'c.id', 'p.cuenta_id')
+    .leftJoin('contactos', 'co', 'co.id', 'p.contacto_id');
   const filterContacto = contacto_id || proveedor_id;
-  if (cuenta_id) { sql += ' AND p.cuenta_id = ?'; args.push(Number(cuenta_id)); }
-  if (filterContacto) { sql += ' AND p.contacto_id = ?'; args.push(Number(filterContacto)); }
-  sql += ' ORDER BY p.fecha DESC, p.id DESC';
-  return db.prepare(sql).all(...args);
+  if (cuenta_id) qb.where('p.cuenta_id', Number(cuenta_id));
+  if (filterContacto) qb.where('p.contacto_id', Number(filterContacto));
+  return qb.orderBy('p.fecha', 'DESC').orderBy('p.id', 'DESC').all();
 }
 
 export function getPagoById(id) {
-  const pago = db.prepare(`
-    SELECT p.*,
-           COALESCE(c.nombre, '') as cuenta_nombre,
-           COALESCE(co.nombre, '') as proveedor_nombre,
-           COALESCE(co.nombre, '') as contacto_nombre,
-           COALESCE(NULLIF(co.razon_social, ''), co.nombre, '') as contacto_razon_social,
-           COALESCE(co.tipo_documento, 'CUIT') as contacto_tipo_documento,
-           COALESCE(co.cuit, '') as contacto_cuit,
-           COALESCE(co.condicion_iva, '') as contacto_condicion_iva,
-           COALESCE(NULLIF(co.direccion_fiscal, ''), co.direccion, '') as contacto_direccion,
-           COALESCE(co.localidad, '') as contacto_localidad,
-           COALESCE(co.provincia, '') as contacto_provincia,
-           COALESCE(cmp.numero, '') as compra_numero
-    FROM pagos p
-    LEFT JOIN cuentas c ON c.id = p.cuenta_id
-    LEFT JOIN contactos co ON co.id = p.contacto_id
-    LEFT JOIN compras cmp ON cmp.id = p.compra_id
-    WHERE p.id = ?
-  `).get(Number(id));
+  const pago = pagoRepo.query('p')
+    .select(
+      'p.*',
+      "COALESCE(c.nombre, '') as cuenta_nombre",
+      "COALESCE(co.nombre, '') as proveedor_nombre",
+      "COALESCE(co.nombre, '') as contacto_nombre",
+      "COALESCE(NULLIF(co.razon_social, ''), co.nombre, '') as contacto_razon_social",
+      "COALESCE(co.tipo_documento, 'CUIT') as contacto_tipo_documento",
+      "COALESCE(co.cuit, '') as contacto_cuit",
+      "COALESCE(co.condicion_iva, '') as contacto_condicion_iva",
+      "COALESCE(NULLIF(co.direccion_fiscal, ''), co.direccion, '') as contacto_direccion",
+      "COALESCE(co.localidad, '') as contacto_localidad",
+      "COALESCE(co.provincia, '') as contacto_provincia",
+      "COALESCE(cmp.numero, '') as compra_numero"
+    )
+    .leftJoin('cuentas', 'c', 'c.id', 'p.cuenta_id')
+    .leftJoin('contactos', 'co', 'co.id', 'p.contacto_id')
+    .leftJoin('compras', 'cmp', 'cmp.id', 'p.compra_id')
+    .where('p.id', Number(id))
+    .get();
   if (!pago) return null;
-  const lineas = db.prepare(`
-    SELECT pl.*, COALESCE(c.nombre, '') as cuenta_nombre
-    FROM pago_lineas pl
-    LEFT JOIN cuentas c ON c.id = pl.cuenta_id
-    WHERE pl.pago_id = ?
-    ORDER BY pl.id ASC
-  `).all(Number(id));
-  const retenciones = db.prepare(`
-    SELECT pr.*, COALESCE(ic.codigo, '') as impuesto_codigo
-    FROM pago_retenciones pr
-    LEFT JOIN impuestos_config ic ON ic.id = pr.impuesto_id
-    WHERE pr.pago_id = ?
-    ORDER BY pr.id ASC
-  `).all(Number(id));
+  const lineas = pagoLineaRepo.query('pl')
+    .select("pl.*, COALESCE(c.nombre, '') as cuenta_nombre")
+    .leftJoin('cuentas', 'c', 'c.id', 'pl.cuenta_id')
+    .where('pl.pago_id', Number(id))
+    .orderBy('pl.id', 'ASC')
+    .all();
+  const retenciones = pagoRetencionRepo.query('pr')
+    .select("pr.*, COALESCE(ic.codigo, '') as impuesto_codigo")
+    .leftJoin('impuestos_config', 'ic', 'ic.id', 'pr.impuesto_id')
+    .where('pr.pago_id', Number(id))
+    .orderBy('pr.id', 'ASC')
+    .all();
   return { pago, lineas, retenciones };
 }
 
@@ -365,7 +388,7 @@ export function createPago(b, user = null) {
   const rawRets = Array.isArray(b.retenciones) ? b.retenciones : [];
   const retenciones = rawRets
     .map(r => {
-      const imp = r.impuesto_id ? db.prepare('SELECT * FROM impuestos_config WHERE id = ?').get(Number(r.impuesto_id)) : null;
+      const imp = r.impuesto_id ? impuestoConfigRepo.findById(Number(r.impuesto_id)) : null;
       const base = Number(Number(r.base_imponible || 0).toFixed(2));
       const alic = Number(Number(r.alicuota ?? imp?.alicuota_defecto ?? 0).toFixed(4));
       const m = r.monto !== undefined && Number(r.monto) > 0
@@ -393,10 +416,7 @@ export function createPago(b, user = null) {
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
   const categoriaGasto = (b.categoria_gasto || (contactoId ? 'Proveedores' : 'Gastos operativos')).trim();
   const concepto = (b.concepto || '').trim();
-  const rawNum = (b.numero || '').trim();
-  const numero = (!rawNum || rawNum.endsWith('-'))
-    ? getNextNumeroDocumento('pago', b.punto_venta).numero
-    : rawNum;
+  const numero = resolveNumeroDocumento('pago', b.numero, b.punto_venta);
 
   const pagoRepo = new BaseRepository({ model: MODELS.pagos });
   const pagoLineaRepo = new BaseRepository({ model: MODELS.pago_lineas });
@@ -406,7 +426,7 @@ export function createPago(b, user = null) {
   return pagoRepo.transaction(() => {
     const metodoPagoId = b.metodo_pago_id
       ? Number(b.metodo_pago_id)
-      : (db.prepare('SELECT id FROM metodos_pago WHERE LOWER(nombre) = LOWER(?) LIMIT 1').get(metodoCab)?.id || null);
+      : (metodoPagoRepo.query().select('id, nombre').all().find(m => String(m.nombre || '').toLowerCase() === metodoCab.toLowerCase())?.id || null);
     const pagoId = pagoRepo.create({
       numero,
       fecha,
@@ -480,18 +500,17 @@ export function createPago(b, user = null) {
     }
 
     if (retenciones.length > 0) {
-      const retRepo = new BaseRepository({ model: MODELS.pago_retenciones });
-      const ctaRetDefault = db.prepare("SELECT id, codigo, nombre FROM plan_cuentas WHERE codigo = '2.1.03' LIMIT 1").get();
+      const ctaRetDefault = planCuentaRepo.query().select('id, codigo, nombre').where('codigo', '2.1.03').limit(1).get();
       for (const ret of retenciones) {
         let certNro = ret.numero_certificado;
         if (!certNro) {
           try {
-            certNro = getNextNumeroDocumento('retencion').numero;
+            certNro = getNextNumeroDocumento('retencion', null, { advance: true }).numero;
           } catch (_) {
             certNro = `RET-${String(pagoId).padStart(6, '0')}`;
           }
         }
-        retRepo.create({
+        pagoRetencionRepo.create({
           pago_id: pagoId,
           impuesto_id: ret.impuesto_id,
           nombre: ret.nombre,
@@ -504,7 +523,7 @@ export function createPago(b, user = null) {
           plan_cuenta_id: ret.plan_cuenta_id || ctaRetDefault?.id || null,
         });
         const ctaRet = ret.plan_cuenta_id
-          ? db.prepare('SELECT id, codigo, nombre FROM plan_cuentas WHERE id = ?').get(ret.plan_cuenta_id)
+          ? planCuentaRepo.query().select('id, codigo, nombre').where('id', ret.plan_cuenta_id).get()
           : ctaRetDefault;
         asientoLineas.push({
           plan_cuenta_id: ctaRet?.id || null,
@@ -517,7 +536,7 @@ export function createPago(b, user = null) {
     }
 
     if ((b.estado || 'Confirmado') === 'Confirmado' && (hasChequeOrCuenta || retenciones.length > 0) && asientoLineas.length > 0) {
-      let planCta = planCuentaId ? db.prepare('SELECT id, codigo, nombre FROM plan_cuentas WHERE id = ?').get(planCuentaId) : null;
+      let planCta = planCuentaId ? planCuentaRepo.query().select('id, codigo, nombre').where('id', planCuentaId).get() : null;
       if (!planCta && contactoId) {
         planCta = defaultAsientoService.resolvePlanCuenta('2.1.01');
       }
@@ -555,7 +574,7 @@ export function createPago(b, user = null) {
           });
         }
       } else if (b.compra_id) {
-        const cmp = db.prepare('SELECT id, total FROM compras WHERE id = ?').get(Number(b.compra_id));
+        const cmp = compraRepo.query().select('id, total').where('id', Number(b.compra_id)).get();
         if (cmp) {
           const pend = Math.max(0, Number(cmp.total || 0) - getFacturaImputado('compras', cmp.id));
           const aImputar = Number(Math.min(totalBruto, pend).toFixed(2));
@@ -577,65 +596,55 @@ export function createPago(b, user = null) {
 }
 
 export function deletePago(id) {
-  const pagoRepo = new BaseRepository({ model: MODELS.pagos });
-  const pagoLineaRepo = new BaseRepository({ model: MODELS.pago_lineas });
-  const asientoRepo = new BaseRepository({ model: MODELS.asientos });
   const ex = pagoRepo.findById(id);
   const lineas = pagoLineaRepo.findWhere({ pago_id: Number(id) });
   const cuentasAfectadas = new Set(lineas.map(l => l.cuenta_id).filter(Boolean));
   if (ex?.cuenta_id) cuentasAfectadas.add(ex.cuenta_id);
   asientoRepo.query().where('tipo_origen', 'pago').where('origen_id', Number(id)).delete();
-  db.prepare("DELETE FROM imputaciones WHERE dominio = 'compras' AND comprobante_tipo = 'pago' AND comprobante_id = ?").run(Number(id));
+  imputacionRepo.query().where('dominio', 'compras').where('comprobante_tipo', 'pago').where('comprobante_id', Number(id)).delete();
   pagoRepo.delete(id);
   for (const cid of cuentasAfectadas) recalcCuentaSaldo(cid);
 }
 
 export function listCobros({ cuenta_id, contacto_id, cliente_id } = {}) {
-  let sql = `
-    SELECT co.*, COALESCE(c.nombre, '') as cuenta_nombre,
-           COALESCE(ct.nombre, '') as cliente_nombre,
-           COALESCE(ct.nombre, '') as contacto_nombre
-    FROM cobros co
-    LEFT JOIN cuentas c ON c.id = co.cuenta_id
-    LEFT JOIN contactos ct ON ct.id = co.contacto_id
-    WHERE 1=1
-  `;
-  const args = [];
+  const qb = cobroRepo.query('co')
+    .select("co.*, COALESCE(c.nombre, '') as cuenta_nombre, COALESCE(ct.nombre, '') as cliente_nombre, COALESCE(ct.nombre, '') as contacto_nombre")
+    .leftJoin('cuentas', 'c', 'c.id', 'co.cuenta_id')
+    .leftJoin('contactos', 'ct', 'ct.id', 'co.contacto_id');
   const filterContacto = contacto_id || cliente_id;
-  if (cuenta_id) { sql += ' AND co.cuenta_id = ?'; args.push(Number(cuenta_id)); }
-  if (filterContacto) { sql += ' AND co.contacto_id = ?'; args.push(Number(filterContacto)); }
-  sql += ' ORDER BY co.fecha DESC, co.id DESC';
-  return db.prepare(sql).all(...args);
+  if (cuenta_id) qb.where('co.cuenta_id', Number(cuenta_id));
+  if (filterContacto) qb.where('co.contacto_id', Number(filterContacto));
+  return qb.orderBy('co.fecha', 'DESC').orderBy('co.id', 'DESC').all();
 }
 
 export function getCobroById(id) {
-  const cobro = db.prepare(`
-    SELECT co.*,
-           COALESCE(c.nombre, '') as cuenta_nombre,
-           COALESCE(ct.nombre, '') as cliente_nombre,
-           COALESCE(ct.nombre, '') as contacto_nombre,
-           COALESCE(NULLIF(ct.razon_social, ''), ct.nombre, '') as contacto_razon_social,
-           COALESCE(ct.tipo_documento, 'CUIT') as contacto_tipo_documento,
-           COALESCE(ct.cuit, '') as contacto_cuit,
-           COALESCE(ct.condicion_iva, '') as contacto_condicion_iva,
-           COALESCE(NULLIF(ct.direccion_fiscal, ''), ct.direccion, '') as contacto_direccion,
-           COALESCE(ct.localidad, '') as contacto_localidad,
-           COALESCE(ct.provincia, '') as contacto_provincia,
-           COALESCE(v.numero, '') as venta_numero
-    FROM cobros co
-    LEFT JOIN cuentas c ON c.id = co.cuenta_id
-    LEFT JOIN contactos ct ON ct.id = co.contacto_id
-    LEFT JOIN ventas v ON v.id = co.venta_id
-    WHERE co.id = ?
-  `).get(Number(id));
+  const cobro = cobroRepo.query('co')
+    .select(
+      'co.*',
+      "COALESCE(c.nombre, '') as cuenta_nombre",
+      "COALESCE(ct.nombre, '') as cliente_nombre",
+      "COALESCE(ct.nombre, '') as contacto_nombre",
+      "COALESCE(NULLIF(ct.razon_social, ''), ct.nombre, '') as contacto_razon_social",
+      "COALESCE(ct.tipo_documento, 'CUIT') as contacto_tipo_documento",
+      "COALESCE(ct.cuit, '') as contacto_cuit",
+      "COALESCE(ct.condicion_iva, '') as contacto_condicion_iva",
+      "COALESCE(NULLIF(ct.direccion_fiscal, ''), ct.direccion, '') as contacto_direccion",
+      "COALESCE(ct.localidad, '') as contacto_localidad",
+      "COALESCE(ct.provincia, '') as contacto_provincia",
+      "COALESCE(v.numero, '') as venta_numero"
+    )
+    .leftJoin('cuentas', 'c', 'c.id', 'co.cuenta_id')
+    .leftJoin('contactos', 'ct', 'ct.id', 'co.contacto_id')
+    .leftJoin('ventas', 'v', 'v.id', 'co.venta_id')
+    .where('co.id', Number(id))
+    .get();
   if (!cobro) return null;
-  const lineas = db.prepare(`
-    SELECT cl.*, COALESCE(c.nombre, '') as cuenta_nombre
-    FROM cobro_lineas cl
-    LEFT JOIN cuentas c ON c.id = cl.cuenta_id
-    WHERE cl.cobro_id = ?
-    ORDER BY cl.id ASC
-  `).all(Number(id));
+  const lineas = cobroLineaRepo.query('cl')
+    .select("cl.*, COALESCE(c.nombre, '') as cuenta_nombre")
+    .leftJoin('cuentas', 'c', 'c.id', 'cl.cuenta_id')
+    .where('cl.cobro_id', Number(id))
+    .orderBy('cl.id', 'ASC')
+    .all();
   return { cobro, lineas };
 }
 
@@ -648,10 +657,7 @@ export function createCobro(b, user = null) {
   const contactoId = (b.contacto_id || b.cliente_id || b.proveedor_id) ? Number(b.contacto_id || b.cliente_id || b.proveedor_id) : null;
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
   const concepto = (b.concepto || '').trim();
-  const rawNum = (b.numero || '').trim();
-  const numero = (!rawNum || rawNum.endsWith('-'))
-    ? getNextNumeroDocumento('cobro', b.punto_venta).numero
-    : rawNum;
+  const numero = resolveNumeroDocumento('cobro', b.numero, b.punto_venta);
 
   const cobroRepo = new BaseRepository({ model: MODELS.cobros });
   const cobroLineaRepo = new BaseRepository({ model: MODELS.cobro_lineas });
@@ -661,7 +667,7 @@ export function createCobro(b, user = null) {
   return cobroRepo.transaction(() => {
     const metodoPagoId = b.metodo_pago_id
       ? Number(b.metodo_pago_id)
-      : (db.prepare('SELECT id FROM metodos_pago WHERE LOWER(nombre) = LOWER(?) LIMIT 1').get(metodoCab)?.id || null);
+      : (metodoPagoRepo.query().select('id, nombre').all().find(m => String(m.nombre || '').toLowerCase() === metodoCab.toLowerCase())?.id || null);
     const cobroId = cobroRepo.create({
       numero,
       fecha,
@@ -759,7 +765,7 @@ export function createCobro(b, user = null) {
           });
         }
       } else if (b.venta_id) {
-        const vta = db.prepare('SELECT id, total FROM ventas WHERE id = ?').get(Number(b.venta_id));
+        const vta = ventaRepo.query().select('id, total').where('id', Number(b.venta_id)).get();
         if (vta) {
           const pend = Math.max(0, Number(vta.total || 0) - getFacturaImputado('ventas', vta.id));
           const aImputar = Number(Math.min(monto, pend).toFixed(2));
@@ -781,15 +787,12 @@ export function createCobro(b, user = null) {
 }
 
 export function deleteCobro(id) {
-  const cobroRepo = new BaseRepository({ model: MODELS.cobros });
-  const cobroLineaRepo = new BaseRepository({ model: MODELS.cobro_lineas });
-  const asientoRepo = new BaseRepository({ model: MODELS.asientos });
   const ex = cobroRepo.findById(id);
   const lineas = cobroLineaRepo.findWhere({ cobro_id: Number(id) });
   const cuentasAfectadas = new Set(lineas.map(l => l.cuenta_id).filter(Boolean));
   if (ex?.cuenta_id) cuentasAfectadas.add(ex.cuenta_id);
   asientoRepo.query().where('tipo_origen', 'cobro').where('origen_id', Number(id)).delete();
-  db.prepare("DELETE FROM imputaciones WHERE dominio = 'ventas' AND comprobante_tipo = 'cobro' AND comprobante_id = ?").run(Number(id));
+  imputacionRepo.query().where('dominio', 'ventas').where('comprobante_tipo', 'cobro').where('comprobante_id', Number(id)).delete();
   cobroRepo.delete(id);
   for (const cid of cuentasAfectadas) recalcCuentaSaldo(cid);
 }
@@ -802,8 +805,8 @@ export function createTransferencia(b) {
     throw new Error('Seleccioná dos cuentas distintas para transferir');
   }
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0');
-  const ori = db.prepare('SELECT * FROM cuentas WHERE id = ?').get(origenId);
-  const des = db.prepare('SELECT * FROM cuentas WHERE id = ?').get(destinoId);
+  const ori = cuentaRepo.findById(origenId);
+  const des = cuentaRepo.findById(destinoId);
   if (!ori || !des) throw new Error('Cuenta no encontrada');
 
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
@@ -814,8 +817,7 @@ export function createTransferencia(b) {
     ? resolveDiarioCuenta({ tipo: 'banco' })
     : resolveDiarioCuenta({ tipo: 'efectivo' });
 
-  db.exec('BEGIN');
-  try {
+  return cuentaRepo.transaction(() => {
     const asientoId = defaultAsientoService.createAsiento({
       diario_id: diario?.id || null,
       fecha,
@@ -841,12 +843,8 @@ export function createTransferencia(b) {
     });
     recalcCuentaSaldo(origenId);
     recalcCuentaSaldo(destinoId);
-    db.exec('COMMIT');
     return asientoId;
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+  });
 }
 
 function getPeriodoInfo(isoDate, granularidad = 'semana') {
@@ -875,17 +873,17 @@ export function getFlujoCaja({ desde, hasta, cuenta_id, granularidad = 'semana' 
   const cobros = listCobros({ cuenta_id }).filter(c => c.estado === 'Confirmado');
   const pagos = listPagos({ cuenta_id }).filter(p => p.estado === 'Confirmado');
 
-  let transfSql = `
-    SELECT al.id, a.fecha, a.numero, al.cuenta_id, COALESCE(c.nombre, '') as cuenta_nombre,
-           a.concepto, (al.debe - al.haber) as monto
-    FROM asiento_lineas al
-    JOIN asientos a ON a.id = al.asiento_id
-    LEFT JOIN cuentas c ON c.id = al.cuenta_id
-    WHERE a.tipo_origen = 'transferencia' AND al.cuenta_id IS NOT NULL
-  `;
-  const transfArgs = [];
-  if (cuenta_id) { transfSql += ' AND al.cuenta_id = ?'; transfArgs.push(Number(cuenta_id)); }
-  const transferencias = db.prepare(transfSql).all(...transfArgs);
+  const transfQb = asientoLineaRepo.query('al')
+    .select("al.id, a.fecha, a.numero, al.cuenta_id, COALESCE(c.nombre, '') as cuenta_nombre, a.concepto, al.debe, al.haber")
+    .innerJoin('asientos', 'a', 'a.id', 'al.asiento_id')
+    .leftJoin('cuentas', 'c', 'c.id', 'al.cuenta_id')
+    .where('a.tipo_origen', 'transferencia')
+    .whereNotNull('al.cuenta_id');
+  if (cuenta_id) transfQb.where('al.cuenta_id', Number(cuenta_id));
+  const transferencias = transfQb.all().map(t => ({
+    ...t,
+    monto: Number(t.debe || 0) - Number(t.haber || 0),
+  }));
 
   const allMovs = [
     ...cobros.map(c => ({
@@ -993,16 +991,21 @@ export function getFlujoOperativo() {
   const cuentas = listCuentas();
   const cajaTotal = cuentas.reduce((s, c) => s + Number(c.saldo_actual || 0), 0);
 
-  const comprasTotal = db.prepare("SELECT COALESCE(SUM(total), 0) as t FROM compras WHERE estado = 'Confirmado'").get().t;
-  const pagosProveedores = db.prepare("SELECT COALESCE(SUM(monto), 0) as t FROM pagos WHERE estado = 'Confirmado' AND contacto_id IS NOT NULL").get().t;
-  const pagosOtros = db.prepare("SELECT COALESCE(SUM(monto), 0) as t FROM pagos WHERE estado = 'Confirmado' AND contacto_id IS NULL").get().t;
+  const comprasTotal = compraRepo.query().where('estado', 'Confirmado').sum('total');
+  const pagosProveedores = pagoRepo.query().where('estado', 'Confirmado').whereNotNull('contacto_id').sum('monto');
+  const pagosOtros = pagoRepo.query().where('estado', 'Confirmado').whereNull('contacto_id').sum('monto');
 
-  const ventasTotal = db.prepare("SELECT COALESCE(SUM(total), 0) as t FROM ventas WHERE estado IN ('Confirmada', 'Entregada')").get().t;
-  const cobrosClientes = db.prepare("SELECT COALESCE(SUM(monto), 0) as t FROM cobros WHERE estado = 'Confirmado' AND contacto_id IS NOT NULL").get().t;
+  const ventasTotal = ventaRepo.query().whereIn('estado', ['Confirmada', 'Entregada']).sum('total');
+  const cobrosClientes = cobroRepo.query().where('estado', 'Confirmado').whereNotNull('contacto_id').sum('monto');
 
-  const ordenesActivas = db.prepare("SELECT COUNT(*) as c FROM ordenes_produccion WHERE estado IN ('Planificada', 'En Proceso')").get().c;
-  const ordenesCompletadas = db.prepare("SELECT COUNT(*) as c FROM ordenes_produccion WHERE estado = 'Completada'").get().c;
-  const valorStock = db.prepare("SELECT COALESCE(SUM(stock * precio), 0) as t FROM productos WHERE activo = 1 AND stock > 0").get().t;
+  const ordenesActivas = ordenRepo.query().whereIn('estado', ['Planificada', 'En Proceso']).count();
+  const ordenesCompletadas = ordenRepo.query().where('estado', 'Completada').count();
+  const valorStock = productoRepo.query()
+    .select('stock, precio')
+    .where('activo', 1)
+    .where('stock', '>', 0)
+    .all()
+    .reduce((s, p) => s + Number(p.stock || 0) * Number(p.precio || 0), 0);
 
   const porCobrar = Math.max(0, Number(ventasTotal) - Number(cobrosClientes));
   const porPagar = Math.max(0, Number(comprasTotal) - Number(pagosProveedores));
@@ -1065,15 +1068,14 @@ export function getDashboardSummary() {
 const proyeccionRepo = new BaseRepository({ model: MODELS.flujo_proyecciones });
 
 export function listProyecciones() {
-  return db.prepare(`
-    SELECT fp.*,
-           COALESCE(pc.codigo || ' ' || pc.nombre, '') as plan_cuenta_nombre,
-           COALESCE(c.nombre, '') as cuenta_nombre
-    FROM flujo_proyecciones fp
-    LEFT JOIN plan_cuentas pc ON pc.id = fp.plan_cuenta_id
-    LEFT JOIN cuentas c ON c.id = fp.cuenta_id
-    ORDER BY fp.activo DESC, fp.fecha_inicio ASC, fp.id ASC
-  `).all();
+  return proyeccionRepo.query('fp')
+    .select("fp.*, COALESCE(pc.codigo || ' ' || pc.nombre, '') as plan_cuenta_nombre, COALESCE(c.nombre, '') as cuenta_nombre")
+    .leftJoin('plan_cuentas', 'pc', 'pc.id', 'fp.plan_cuenta_id')
+    .leftJoin('cuentas', 'c', 'c.id', 'fp.cuenta_id')
+    .orderBy('fp.activo', 'DESC')
+    .orderBy('fp.fecha_inicio', 'ASC')
+    .orderBy('fp.id', 'ASC')
+    .all();
 }
 
 export function createProyeccion(b) {
@@ -1158,17 +1160,20 @@ export function getFlujoProyectado({ desde, hasta, dias = 30, meses, cuenta_id, 
   const eventos = [];
 
   if (!cuenta_id) {
-    const ventasPend = db.prepare(`
-      SELECT v.id, v.numero, v.fecha, v.fecha_vencimiento, v.fecha_entrega_est, v.total,
-             COALESCE(co.nombre, '') as contacto_nombre,
-             COALESCE((SELECT SUM(cb.monto) FROM cobros cb WHERE cb.venta_id = v.id AND cb.estado = 'Confirmado'), 0) as cobrado
-      FROM ventas v
-      LEFT JOIN contactos co ON co.id = v.contacto_id
-      WHERE v.estado IN ('Confirmada', 'Entregada') AND v.clase_documento != 'nota_credito'
-    `).all();
+    const ventasPend = ventaRepo.query('v')
+      .select("v.id, v.numero, v.fecha, v.fecha_vencimiento, v.fecha_entrega_est, v.total, COALESCE(co.nombre, '') as contacto_nombre")
+      .leftJoin('contactos', 'co', 'co.id', 'v.contacto_id')
+      .whereIn('v.estado', ['Confirmada', 'Entregada'])
+      .where('v.clase_documento', '!=', 'nota_credito')
+      .all();
+    const cobrosPorVenta = new Map();
+    for (const cb of cobroRepo.query().select('venta_id, monto').where('estado', 'Confirmado').whereNotNull('venta_id').all()) {
+      cobrosPorVenta.set(cb.venta_id, (cobrosPorVenta.get(cb.venta_id) || 0) + Number(cb.monto || 0));
+    }
 
     for (const v of ventasPend) {
-      const pendiente = Number((Number(v.total || 0) - Number(v.cobrado || 0)).toFixed(2));
+      const cobrado = cobrosPorVenta.get(v.id) || 0;
+      const pendiente = Number((Number(v.total || 0) - cobrado).toFixed(2));
       if (pendiente <= 0.01) continue;
       const fechaEst = (v.fecha_vencimiento || v.fecha_entrega_est || v.fecha || hoy).trim();
       if (fechaEst > limite) continue;
@@ -1185,17 +1190,21 @@ export function getFlujoProyectado({ desde, hasta, dias = 30, meses, cuenta_id, 
       });
     }
 
-    const comprasPend = db.prepare(`
-      SELECT c.id, c.numero, c.fecha, c.fecha_vencimiento, c.total,
-             COALESCE(co.nombre, '') as contacto_nombre,
-             COALESCE((SELECT SUM(COALESCE(NULLIF(p.total_bruto, 0), p.monto)) FROM pagos p WHERE p.compra_id = c.id AND p.estado = 'Confirmado'), 0) as pagado
-      FROM compras c
-      LEFT JOIN contactos co ON co.id = c.contacto_id
-      WHERE c.estado = 'Confirmado' AND c.clase_documento != 'nota_credito'
-    `).all();
+    const comprasPend = compraRepo.query('c')
+      .select("c.id, c.numero, c.fecha, c.fecha_vencimiento, c.total, COALESCE(co.nombre, '') as contacto_nombre")
+      .leftJoin('contactos', 'co', 'co.id', 'c.contacto_id')
+      .where('c.estado', 'Confirmado')
+      .where('c.clase_documento', '!=', 'nota_credito')
+      .all();
+    const pagosPorCompra = new Map();
+    for (const p of pagoRepo.query().select('compra_id, total_bruto, monto').where('estado', 'Confirmado').whereNotNull('compra_id').all()) {
+      const val = Number(p.total_bruto) > 0 ? Number(p.total_bruto) : Number(p.monto || 0);
+      pagosPorCompra.set(p.compra_id, (pagosPorCompra.get(p.compra_id) || 0) + val);
+    }
 
     for (const c of comprasPend) {
-      const pendiente = Number((Number(c.total || 0) - Number(c.pagado || 0)).toFixed(2));
+      const pagado = pagosPorCompra.get(c.id) || 0;
+      const pendiente = Number((Number(c.total || 0) - pagado).toFixed(2));
       if (pendiente <= 0.01) continue;
       const fechaEst = (c.fecha_vencimiento || c.fecha || hoy).trim();
       if (fechaEst > limite) continue;
@@ -1239,13 +1248,12 @@ export function getFlujoProyectado({ desde, hasta, dias = 30, meses, cuenta_id, 
     }
   }
 
-  const chequesActivos = db.prepare(`
-    SELECT ch.*, COALESCE(co.nombre, '') as contacto_nombre
-    FROM cheques ch
-    LEFT JOIN contactos co ON co.id = ch.contacto_origen_id
-    WHERE (ch.origen = 'terceros' AND ch.estado IN ('En Cartera', 'Depositado'))
-       OR (ch.origen = 'propio' AND ch.estado = 'Emitido')
-  `).all();
+  const chequesActivos = chequeRepo.query('ch')
+    .select("ch.*, COALESCE(co.nombre, '') as contacto_nombre")
+    .leftJoin('contactos', 'co', 'co.id', 'ch.contacto_origen_id')
+    .all()
+    .filter(ch => (ch.origen === 'terceros' && ['En Cartera', 'Depositado'].includes(ch.estado))
+      || (ch.origen === 'propio' && ch.estado === 'Emitido'));
   for (const ch of chequesActivos) {
     const fechaCh = (ch.fecha_pago || ch.fecha_emision || hoy).trim();
     if (fechaCh > limite) continue;

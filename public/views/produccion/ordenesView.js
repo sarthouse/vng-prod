@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, exportRowsToCSV } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { renderKpiStrip, renderDataTable, renderGroupedList, renderKanbanBoard, renderGanttChart, renderViewSwitcher } from '../../lib/engine/index.js';
+import { renderKpiStrip, renderDataTable, renderGroupedList, renderKanbanBoard, renderGanttChart, renderViewSwitcher, renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
 
@@ -125,12 +125,12 @@ export async function renderOrdenesView() {
         ? ordenes.filter(o => o.estado !== 'Completada' && o.estado !== 'Cancelada')
         : ordenes;
       const toolbarHtml = `
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 16px;border-bottom:1px solid var(--color-border);">
+        <div class="sx-7f7d64">
           <div>
             <strong>Cronograma Gantt de Producción</strong>
-            <span class="muted" style="font-size:12px;margin-left:8px;">Visualización temporal de órdenes y sus etapas por taller (${ganttRows.length} orden${ganttRows.length === 1 ? '' : 'es'})</span>
+            <span class="muted sx-450526">Visualización temporal de órdenes y sus etapas por taller (${ganttRows.length} orden${ganttRows.length === 1 ? '' : 'es'})</span>
           </div>
-          <label class="checkbox-inline" style="margin:0;font-size:12px;">
+          <label class="checkbox-inline sx-b68435">
             <input type="checkbox" id="cb-gantt-pendientes" ${ganttSoloPendientes ? 'checked' : ''} />
             <span>Solo órdenes pendientes / en proceso</span>
           </label>
@@ -141,12 +141,12 @@ export async function renderOrdenesView() {
         toolbarHtml,
         emptyText: ganttSoloPendientes ? 'No hay órdenes pendientes de producción.' : 'No hay órdenes de producción creadas todavía.',
         labelRender: (op) => `
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <div class="sx-33c883">
             <a href="/ordenes/${op.id}" data-link class="link-primary"><strong>${esc(op.codigo)}</strong></a>
-            <span class="badge ${op.estado === 'Completada' ? 'badge-ok' : op.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado'}" style="font-size:10px;">${esc(op.estado)}</span>
+            <span class="badge ${op.estado === 'Completada' ? 'badge-ok' : op.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado'} sx-bcf88e">${esc(op.estado)}</span>
           </div>
-          <div style="font-size:12px;font-weight:500;">${esc(op.plantilla_nombre)} · <strong>${op.cantidad} u.</strong></div>
-          <div class="muted" style="font-size:11px;">${esc(op.fecha_inicio)} → ${esc(op.fecha_objetivo || '-')} · Etapas: ${op.etapas_completadas}/${op.etapas_total}</div>
+          <div class="sx-440624">${esc(op.plantilla_nombre)} · <strong>${op.cantidad} u.</strong></div>
+          <div class="muted text-2xs">${esc(op.fecha_inicio)} → ${esc(op.fecha_objetivo || '-')} · Etapas: ${op.etapas_completadas}/${op.etapas_total}</div>
         `,
       });
       container.querySelector('#cb-gantt-pendientes')?.addEventListener('change', (e) => {
@@ -172,12 +172,12 @@ export async function renderOrdenesView() {
         rows: ordenes,
         emptyText: 'Sin órdenes',
         renderCard: (op) => `
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <div class="sx-631785">
             <a href="/ordenes/${op.id}" data-link class="link-primary"><strong>${esc(op.codigo)}</strong></a>
             <span class="badge badge-muted">${op.cantidad} u.</span>
           </div>
-          <div style="font-weight:500; font-size:0.88rem; margin-bottom:4px;">${esc(op.plantilla_nombre)}</div>
-          <div class="muted" style="font-size:0.78rem; margin-bottom:6px;">
+          <div class="sx-be215d">${esc(op.plantilla_nombre)}</div>
+          <div class="muted sx-1d2e04">
             Etapas: ${op.etapas_completadas}/${op.etapas_total} · Obj: ${esc(op.fecha_objetivo || '-')}
           </div>
           <div class="actions">
@@ -235,8 +235,8 @@ export async function renderOrdenNuevaView() {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;">
-            <a href="/ordenes" data-link class="muted" style="font-size:0.85rem;">← Volver a Órdenes</a>
+          <div class="mb-xs">
+            <a href="/ordenes" data-link class="muted text-md">← Volver a Órdenes</a>
           </div>
           <h1>Nueva Orden de Producción</h1>
           <p class="muted">Genera automáticamente las etapas configuradas y reserva materiales en inventario.</p>
@@ -247,10 +247,13 @@ export async function renderOrdenNuevaView() {
         <form id="form-nueva-orden" class="form-grid">
           <label>
             <span>Producto *</span>
-            <select name="plantilla_id" id="orden-plantilla-select" required>
-              <option value="">-- Seleccionar producto --</option>
-              ${plantillas.map(p => `<option value="${p.id}" ${String(p.id) === String(selectedPlantillaId) ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}
-            </select>
+            <div class="sx-c59ad0">
+              <select name="plantilla_id" id="orden-plantilla-select" required class="sx-da5cd6">
+                <option value="">-- Seleccionar producto --</option>
+                ${plantillas.map(p => `<option value="${p.id}" ${String(p.id) === String(selectedPlantillaId) ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}
+              </select>
+              ${selectedPlantillaId ? `<a href="/plantillas/${selectedPlantillaId}" data-link class="btn btn-sm" title="Ir al detalle del producto">&#8599;</a>` : ''}
+            </div>
           </label>
           <label>
             <span>Receta Técnica</span>
@@ -274,22 +277,19 @@ export async function renderOrdenNuevaView() {
             <span>Fecha Objetivo</span>
             <input type="date" name="fecha_objetivo" />
           </label>
+          <label>
+            <span>Estado *</span>
+            <select name="estado">
+              <option value="Borrador" selected>Borrador</option>
+              <option value="Planificada">Planificada</option>
+            </select>
+          </label>
 
           <div class="full">
-            <span style="display:block; font-size:0.82rem; font-weight:600; color:var(--color-secondary); margin-bottom:6px;">
+            <span class="sx-999b07">
               Cantidades por Variante (si vinculás un pedido y dejás todo en 0, copia las cantidades del pedido)
             </span>
-            <div class="sizes-grid">
-              ${variantes.length
-                ? variantes.map(v => `
-                    <label class="size-box">
-                      <span title="${esc(v.nombre)}">${esc(v.combinacion || v.sku || v.nombre)}</span>
-                      <input type="number" min="0" class="orden-var-qty" data-producto-id="${v.id}" value="0" />
-                    </label>
-                  `).join('')
-                : `<div class="muted">Este producto no tiene variantes activas.</div>`
-              }
-            </div>
+            <div id="orden-var-sheet"></div>
           </div>
 
           <label class="full">
@@ -305,6 +305,36 @@ export async function renderOrdenNuevaView() {
       </div>
     `;
 
+    const ordenVarRows = variantes.map(v => ({
+      producto_id: v.id,
+      variante: v.combinacion || v.nombre || '-',
+      sku: v.sku || '-',
+      cantidad: 0,
+    }));
+    const varSheetHost = root.querySelector('#orden-var-sheet');
+    if (varSheetHost) {
+      renderSpreadsheetTable(varSheetHost, {
+        rows: ordenVarRows,
+        emptyText: 'Este producto no tiene variantes activas.',
+        compact: true,
+        showDirty: false,
+        columns: [
+          { key: 'variante', label: 'Variante', type: 'readonly' },
+          { key: 'sku', label: 'SKU', type: 'readonly', nowrap: true },
+          {
+            key: 'cantidad',
+            label: 'Cantidad',
+            type: 'number',
+            min: 0,
+            step: 1,
+            align: 'right',
+            parse: (val) => Math.max(0, Number(val) || 0),
+          },
+        ],
+        onCellChange: () => {},
+      });
+    }
+
     root.querySelector('#orden-plantilla-select').addEventListener('change', (e) => {
       selectedPlantillaId = e.target.value;
       render();
@@ -313,8 +343,8 @@ export async function renderOrdenNuevaView() {
     root.querySelector('#form-nueva-orden').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const lineas = Array.from(root.querySelectorAll('.orden-var-qty'))
-        .map(inp => ({ producto_id: Number(inp.dataset.productoId), cantidad: Number(inp.value) || 0 }))
+      const lineas = ordenVarRows
+        .map(r => ({ producto_id: Number(r.producto_id), cantidad: Number(r.cantidad) || 0 }))
         .filter(l => l.cantidad > 0);
 
       const payload = {
@@ -323,6 +353,7 @@ export async function renderOrdenNuevaView() {
         pedido_id: fd.get('pedido_id') ? Number(fd.get('pedido_id')) : null,
         fecha_inicio: fd.get('fecha_inicio'),
         fecha_objetivo: fd.get('fecha_objetivo') || null,
+        estado: fd.get('estado') || 'Borrador',
         notas: fd.get('notas') || '',
         lineas,
       };

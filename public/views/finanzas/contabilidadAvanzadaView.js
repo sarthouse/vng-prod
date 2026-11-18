@@ -39,13 +39,13 @@ export async function renderPosicionIvaView() {
       ],
       bodyHtml: `
         <div class="card">
-          <form id="form-pos-iva" class="toolbar" style="flex-wrap:wrap;gap:8px;align-items:end;">
-            <div><label style="display:block;font-size:12px;">Desde</label><input type="date" name="desde" value="${esc(state.desde)}" /></div>
-            <div><label style="display:block;font-size:12px;">Hasta</label><input type="date" name="hasta" value="${esc(state.hasta)}" /></div>
-            <div><label style="display:block;font-size:12px;">Saldo Téc. Ant.</label><input type="number" step="0.01" min="0" name="saldoTecAnt" value="${state.saldoTecAnt}" style="width:130px;" /></div>
-            <div><label style="display:block;font-size:12px;">Saldo Libre Ant.</label><input type="number" step="0.01" min="0" name="saldoLibAnt" value="${state.saldoLibAnt}" style="width:130px;" /></div>
+          <form id="form-pos-iva" class="toolbar sx-94decf">
+            <div><label class="block-label">Desde</label><input type="date" name="desde" value="${esc(state.desde)}" /></div>
+            <div><label class="block-label">Hasta</label><input type="date" name="hasta" value="${esc(state.hasta)}" /></div>
+            <div><label class="block-label">Saldo Téc. Ant.</label><input type="number" step="0.01" min="0" name="saldoTecAnt" value="${state.saldoTecAnt}" class="w-130" /></div>
+            <div><label class="block-label">Saldo Libre Ant.</label><input type="number" step="0.01" min="0" name="saldoLibAnt" value="${state.saldoLibAnt}" class="w-130" /></div>
             <button type="submit" class="btn btn-primary">Calcular</button>
-            <button type="button" class="btn" id="btn-contabilizar-iva" style="margin-left:auto;">Contabilizar Liquidación</button>
+            <button type="button" class="btn sx-834563" id="btn-contabilizar-iva">Contabilizar Liquidación</button>
           </form>
 
           <div class="table-wrap">
@@ -120,17 +120,17 @@ export async function renderConciliacionBancariaView() {
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:14px;">
-        <div class="toolbar" style="gap:8px;flex-wrap:wrap;align-items:end;">
+      <div class="card mb-lg">
+        <div class="toolbar sx-5f4e6a">
           <div>
-            <label style="display:block;font-size:12px;">Cuenta Bancaria / Billetera</label>
-            <select id="conc-cuenta" style="min-width:220px;">
+            <label class="block-label">Cuenta Bancaria / Billetera</label>
+            <select id="conc-cuenta" class="mw-220">
               ${cuentas.length ? cuentas.map(c => `<option value="${c.id}" ${Number(state.cuentaId) === c.id ? 'selected' : ''}>${esc(c.nombre)} (${fmtMoney(c.saldo_actual)})</option>`).join('') : '<option value="">Sin cuentas bancarias</option>'}
             </select>
           </div>
           <div>
-            <label style="display:block;font-size:12px;">Estado</label>
-            <select id="conc-estado" style="width:150px;">
+            <label class="block-label">Estado</label>
+            <select id="conc-estado" class="sx-957822">
               <option value="" ${state.estado === '' ? 'selected' : ''}>Todos</option>
               <option value="pendiente" ${state.estado === 'pendiente' ? 'selected' : ''}>Pendientes</option>
               <option value="conciliado" ${state.estado === 'conciliado' ? 'selected' : ''}>Conciliados</option>
@@ -140,10 +140,10 @@ export async function renderConciliacionBancariaView() {
           <button type="button" class="btn btn-primary" id="btn-auto-conciliar">Auto-Conciliar (±3 días)</button>
         </div>
 
-        <form id="form-import-extracto" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
-          <label style="display:block;font-size:12px;margin-bottom:4px;">Importar Extracto (<code>fecha;descripcion;referencia;monto</code> o <code>fecha;descripcion;debito;credito</code>)</label>
-          <textarea name="contenido" rows="3" style="width:100%;" placeholder="2026-11-14;Transferencia Cliente A;TRF-001;50000&#10;2026-11-14;Comisión bancaria;COM;-1250"></textarea>
-          <div style="margin-top:8px;"><button type="submit" class="btn">Importar Líneas de Extracto</button></div>
+        <form id="form-import-extracto" class="sx-85dfb4">
+          <label class="sx-525124">Importar Extracto (<code>fecha;descripcion;referencia;monto</code> o <code>fecha;descripcion;debito;credito</code>)</label>
+          <textarea name="contenido" rows="3" class="sx-6d5673" placeholder="2026-11-14;Transferencia Cliente A;TRF-001;50000&#10;2026-11-14;Comisión bancaria;COM;-1250"></textarea>
+          <div class="sx-d43169"><button type="submit" class="btn">Importar Líneas de Extracto</button></div>
         </form>
       </div>
 
@@ -171,7 +171,7 @@ export async function renderConciliacionBancariaView() {
                   <td class="num"><strong>${fmtMoney(e.monto)}</strong></td>
                   <td><span class="badge ${e.estado === 'conciliado' ? 'badge-ok' : e.estado === 'ignorado' ? 'badge-muted' : 'badge-warn'}">${esc(e.estado)}</span></td>
                   <td>${e.entidad_tipo ? `<code>${esc(e.entidad_tipo)} #${e.entidad_id || ''}</code>` : (e.estado === 'pendiente' && sisMovs.length ? `
-                    <select class="conc-pick-sis" data-id="${e.id}" style="max-width:220px;">
+                    <select class="conc-pick-sis sx-ac5a41" data-id="${e.id}">
                       <option value="">-- Vincular movimiento --</option>
                       ${sisMovs.map(m => `<option value="${esc(m.entidad_tipo)}:${m.entidad_id}">${fmtDate(m.fecha)} · ${esc(m.numero || m.concepto)} (${fmtMoney(m.monto)})</option>`).join('')}
                     </select>
@@ -182,7 +182,7 @@ export async function renderConciliacionBancariaView() {
                     </div>
                   </td>
                 </tr>
-              `).join('') : '<tr><td colspan="7" class="muted" style="text-align:center;">Sin movimientos importados para esta cuenta.</td></tr>'}
+              `).join('') : '<tr><td colspan="7" class="muted text-center">Sin movimientos importados para esta cuenta.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -263,7 +263,7 @@ export async function renderCierresYMonedasView() {
       </div>
 
       ${cuadre ? `
-        <div class="card" style="margin-bottom:16px;">
+        <div class="card mb-md">
           <div class="card-header"><h2>Cuadre Contable y Antigüedad de Saldos</h2></div>
           <div class="table-wrap">
             <table class="data-table">
@@ -309,19 +309,19 @@ export async function renderCierresYMonedasView() {
         </div>
       ` : ''}
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;">
+      <div class="sx-da7c1b">
         <div class="card">
           <div class="card-header"><h2>Cierre de Ejercicio</h2></div>
-          <form id="form-cierre-ej" class="form-grid" style="margin-bottom:12px;">
+          <form id="form-cierre-ej" class="form-grid mb-md">
             <label><span>Desde *</span><input type="date" name="fecha_desde" required value="${year}-01-01" /></label>
             <label><span>Hasta *</span><input type="date" name="fecha_hasta" required value="${year}-12-31" /></label>
             <label class="full"><span>Descripción</span><input type="text" name="descripcion" placeholder="Ejercicio Fiscal ${year}" /></label>
-            <div class="full" style="display:flex;gap:8px;">
+            <div class="full sx-9c6869">
               <button type="button" class="btn" id="btn-preview-cierre">Previsualizar Resultado</button>
               <button type="submit" class="btn btn-primary">Cerrar Período y Refundir</button>
             </div>
           </form>
-          <div id="cierre-preview-box" style="margin-bottom:12px;"></div>
+          <div id="cierre-preview-box" class="mb-md"></div>
           <div class="table-wrap">
             <table class="data-table">
               <thead><tr><th>Período</th><th>Descripción</th><th class="num">Resultado</th><th>Asiento</th><th>Estado</th><th>Acciones</th></tr></thead>
@@ -335,7 +335,7 @@ export async function renderCierresYMonedasView() {
                     <td><span class="badge ${c.estado === 'cerrado' ? 'badge-ok' : 'badge-muted'}">${esc(c.estado)}</span></td>
                     <td>${c.estado === 'cerrado' ? `<button type="button" class="btn btn-sm" data-reabrir="${c.id}">Reabrir</button>` : '-'}</td>
                   </tr>
-                `).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;">Sin cierres registrados.</td></tr>'}
+                `).join('') : '<tr><td colspan="6" class="muted text-center">Sin cierres registrados.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -343,7 +343,7 @@ export async function renderCierresYMonedasView() {
 
         <div class="card">
           <div class="card-header"><h2>Cotizaciones Multimoneda</h2></div>
-          <form id="form-cotiz" class="form-grid" style="margin-bottom:12px;">
+          <form id="form-cotiz" class="form-grid mb-md">
             <label>
               <span>Moneda</span>
               <select name="moneda">
@@ -353,7 +353,7 @@ export async function renderCierresYMonedasView() {
             </label>
             <label><span>Fecha *</span><input type="date" name="fecha" required value="${new Date().toISOString().slice(0, 10)}" /></label>
             <label><span>Cotización ARS *</span><input type="number" step="0.01" min="0.01" name="cotizacion" required placeholder="1050.00" /></label>
-            <div style="align-self:end;"><button type="submit" class="btn btn-primary">Guardar</button></div>
+            <div class="self-end"><button type="submit" class="btn btn-primary">Guardar</button></div>
           </form>
           <div class="table-wrap">
             <table class="data-table">
@@ -366,7 +366,7 @@ export async function renderCierresYMonedasView() {
                     <td class="num">${fmtMoney(c.cotizacion)}</td>
                     <td>${esc(c.fuente || 'manual')}</td>
                   </tr>
-                `).join('') : '<tr><td colspan="4" class="muted" style="text-align:center;">Sin cotizaciones cargadas.</td></tr>'}
+                `).join('') : '<tr><td colspan="4" class="muted text-center">Sin cotizaciones cargadas.</td></tr>'}
               </tbody>
             </table>
           </div>

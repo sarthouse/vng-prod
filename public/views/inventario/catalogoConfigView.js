@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc } from '../../lib/format.js';
-import { renderHierarchyTree, renderViewSwitcher } from '../../lib/engine/index.js';
+import { renderHierarchyTree, renderViewSwitcher, renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
 
 let catViewMode = 'lista';
@@ -25,13 +25,13 @@ export async function renderCategoriasView() {
       <div class="card-header">
         <h2>Categorías</h2>
       </div>
-      <form id="form-add-cat" class="toolbar" style="margin-bottom:14px; flex-wrap:wrap; gap:8px;">
-        <input type="text" name="nombre" required placeholder="Nueva categoría" style="min-width:220px;" />
-        <select name="padre_id" style="min-width:190px;">
+      <form id="form-add-cat" class="toolbar sx-410c97">
+        <input type="text" name="nombre" required placeholder="Nueva categoría" class="mw-220" />
+        <select name="padre_id" class="mw-190">
           <option value="">Sin categoría padre</option>
           ${categorias.map(p => `<option value="${p.id}">${esc(p.display_name || (p.padre_nombre ? `${p.padre_nombre} / ${p.nombre}` : p.nombre))}</option>`).join('')}
         </select>
-        <input type="text" name="descripcion" placeholder="Descripción" style="min-width:240px; flex:1;" />
+        <input type="text" name="descripcion" placeholder="Descripción" class="sx-aca4d0" />
         <button type="submit" class="btn btn-primary">+ Agregar Categoría</button>
       </form>
       <div id="cat-list-container"></div>
@@ -61,88 +61,67 @@ export async function renderCategoriasView() {
         renderNode: (c) => `
           <div>
             <strong>${esc(c.nombre)}</strong>
-            ${c.descripcion ? `<span class="muted" style="margin-left:8px; font-size:0.82rem;">— ${esc(c.descripcion)}</span>` : ''}
+            ${c.descripcion ? `<span class="muted sx-04a5ff">— ${esc(c.descripcion)}</span>` : ''}
           </div>
         `,
       });
       return;
     }
 
-    container.innerHTML = `
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Nombre</th>
-              <th>Categoría Padre</th>
-              <th>Descripción</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${categorias.map(c => `
-              <tr>
-                <td>
-                  <input type="text" class="inline-edit-cat-nombre" data-cat-id="${c.id}" value="${esc(c.nombre)}" style="min-width:180px;" />
-                </td>
-                <td>
-                  <select class="inline-edit-cat-padre" data-cat-id="${c.id}" style="min-width:170px;">
-                    <option value="">-- Ninguna --</option>
-                    ${categorias.filter(p => p.id !== c.id).map(p => `
-                      <option value="${p.id}" ${Number(c.padre_id) === Number(p.id) ? 'selected' : ''}>${esc(p.display_name || (p.padre_nombre ? `${p.padre_nombre} / ${p.nombre}` : p.nombre))}</option>
-                    `).join('')}
-                  </select>
-                </td>
-                <td>
-                  <input type="text" class="inline-edit-cat-desc" data-cat-id="${c.id}" value="${esc(c.descripcion || '')}" placeholder="Sin descripción" style="min-width:220px;" />
-                </td>
-                <td>
-                  <div class="actions">
-                    <button type="button" class="btn btn-sm" data-save-cat="${c.id}">Guardar</button>
-                    <button type="button" class="btn btn-sm btn-danger" data-del-cat="${c.id}">Eliminar</button>
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-
-    container.querySelectorAll('[data-save-cat]').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const catId = btn.dataset.saveCat;
-        const nombreInput = container.querySelector(`.inline-edit-cat-nombre[data-cat-id="${catId}"]`);
-        const padreSelect = container.querySelector(`.inline-edit-cat-padre[data-cat-id="${catId}"]`);
-        const descInput = container.querySelector(`.inline-edit-cat-desc[data-cat-id="${catId}"]`);
-        try {
-          await api(`/api/categorias/${catId}`, {
-            method: 'PUT',
-            body: JSON.stringify({
-              nombre: nombreInput.value,
-              padre_id: padreSelect?.value || null,
-              descripcion: descInput?.value || '',
-            }),
-          });
-          toast('Categoría actualizada');
-          await renderCategoriasView();
-        } catch (err) {
-          toast(err.message, true);
-        }
-      });
-    });
-
-    container.querySelectorAll('[data-del-cat]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+    renderSpreadsheetTable(container, {
+      rows: categorias,
+      emptyText: 'No hay categorías cargadas.',
+      compact: true,
+      columns: [
+        { key: 'nombre', label: 'Nombre', type: 'text', parse: (v) => String(v || '').trim() },
+        {
+          key: 'padre_id',
+          label: 'Categoría Padre',
+          type: 'select',
+          options: (c) => [
+            { value: '', label: '-- Ninguna --' },
+            ...categorias.filter(p => p.id !== c.id).map(p => ({
+              value: String(p.id),
+              label: p.display_name || (p.padre_nombre ? `${p.padre_nombre} / ${p.nombre}` : p.nombre),
+            })),
+          ],
+          getValue: (c) => (c.padre_id ? String(c.padre_id) : ''),
+          parse: (v) => (v ? Number(v) : null),
+          render: (c) => esc(c.padre_nombre || '-- Ninguna --'),
+        },
+        {
+          key: 'descripcion',
+          label: 'Descripción',
+          type: 'text',
+          render: (c) => c.descripcion ? esc(c.descripcion) : '<span class="muted">Sin descripción</span>',
+        },
+      ],
+      onDeleteRow: async (c) => {
         if (!(await showConfirmModal('¿Eliminar esta categoría?'))) return;
         try {
-          await api(`/api/categorias/${btn.dataset.delCat}`, { method: 'DELETE' });
+          await api(`/api/categorias/${c.id}`, { method: 'DELETE' });
           toast('Categoría eliminada');
           await renderCategoriasView();
         } catch (err) {
           toast(err.message, true);
         }
-      });
+      },
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          await api(`/api/categorias/${row.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              nombre: key === 'nombre' ? value : row.nombre,
+              padre_id: key === 'padre_id' ? value : (row.padre_id || null),
+              descripcion: key === 'descripcion' ? value : (row.descripcion || ''),
+            }),
+          });
+          toast('Categoría actualizada');
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
     });
   };
 
@@ -194,7 +173,7 @@ export async function renderVariantesView() {
         </div>
         <button type="button" id="btn-seed-talles" class="btn btn-sm">Generar Talles 35–45</button>
       </div>
-      <form id="form-add-var" class="toolbar" style="margin-bottom:14px;">
+      <form id="form-add-var" class="toolbar mb-lg">
         <input type="text" name="atributo" required placeholder="Nuevo Atributo" />
         <input type="text" name="valor" required placeholder="Primer Valor" />
         <button type="submit" class="btn btn-primary">+ Agregar Atributo / Valor</button>
@@ -206,9 +185,9 @@ export async function renderVariantesView() {
           <table class="data-table">
             <thead>
               <tr>
-                <th style="width:180px;">Atributo</th>
+                <th class="sx-1dfda9">Atributo</th>
                 <th>Valores</th>
-                <th style="width:140px;">Acciones</th>
+                <th class="w-140">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -338,7 +317,7 @@ export async function renderUnidadesView() {
         <table class="data-table">
           <thead>
             <tr>
-              <th style="width:180px;">Categoría</th>
+              <th class="sx-1dfda9">Categoría</th>
               <th>Unidades y Ratios</th>
             </tr>
           </thead>
@@ -361,8 +340,8 @@ export async function renderUnidadesView() {
                         `;
                       }).join('')}
                       <form class="inline-add-val" data-add-udm-group="${esc(grp)}">
-                        <input type="text" name="nombre" placeholder="+ UdM" required style="width:85px;" />
-                        <input type="number" step="0.000001" min="0.000001" name="factor" placeholder="Factor" value="1" required style="width:76px;" />
+                        <input type="text" name="nombre" placeholder="+ UdM" required class="w-85" />
+                        <input type="number" step="0.000001" min="0.000001" name="factor" placeholder="Factor" value="1" required class="sx-63c269" />
                         <button type="submit" class="btn btn-sm">+</button>
                       </form>
                     </div>
@@ -448,42 +427,70 @@ export async function renderUbicacionesView() {
               ${internasUbic.map(u => `<option value="${u.id}">${esc(u.nombre)} (${esc(u.codigo)})</option>`).join('')}
             </select>
           </label>
-          <div style="align-self:end;"><button type="submit" class="btn btn-primary">+ Agregar Ubicación</button></div>
+          <div class="self-end"><button type="submit" class="btn btn-primary">+ Agregar Ubicación</button></div>
         </form>
 
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Ubicación Padre</th><th>Estado</th><th>Acciones</th></tr></thead>
-            <tbody>
-              ${ubicaciones.map(u => {
-                const isSys = Boolean(u.es_sistema || u.es_default);
-                const tipoBadge = u.tipo === 'virtual'
-                  ? '<span class="badge badge-muted">Virtual</span>'
-                  : (u.tipo === 'dedicada' ? '<span class="badge badge-parcial">Dedicada</span>' : '<span class="badge badge-confirmado">Interna</span>');
-                return `
-                  <tr>
-                    <td><code>${esc(u.codigo)}</code></td>
-                    <td><strong>${esc(u.nombre)}</strong></td>
-                    <td>${tipoBadge}</td>
-                    <td class="muted">${esc(u.parent_nombre || '—')}</td>
-                    <td>${u.activa ? '<span class="badge badge-ok">Activa</span>' : '<span class="badge badge-cancelado">Inactiva</span>'}</td>
-                    <td>
-                      ${isSys ? '<span class="badge badge-muted">Protegida</span>' : `
-                        <div class="actions">
-                          <button type="button" class="btn btn-sm" data-toggle-ubic="${u.id}" data-activa="${u.activa ? '1' : '0'}">${u.activa ? 'Desactivar' : 'Activar'}</button>
-                          <button type="button" class="btn btn-sm btn-danger" data-del-ubic="${u.id}">Eliminar</button>
-                        </div>
-                      `}
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
+        <div id="ubic-sheet-host"></div>
       </div>
     </div>
   `;
+
+  renderSpreadsheetTable(root.querySelector('#ubic-sheet-host'), {
+    rows: ubicaciones,
+    emptyText: 'Sin ubicaciones cargadas.',
+    compact: true,
+    columns: [
+      { key: 'codigo', label: 'Código', type: 'readonly', nowrap: true, render: (u) => `<code>${esc(u.codigo)}</code>` },
+      {
+        key: 'nombre',
+        label: 'Nombre',
+        type: 'text',
+        editable: (u) => !(u.es_sistema || u.es_default),
+        render: (u) => `<strong>${esc(u.nombre)}</strong>`,
+      },
+      {
+        key: 'tipo',
+        label: 'Tipo',
+        type: 'select',
+        editable: (u) => !(u.es_sistema || u.es_default),
+        options: [
+          { value: 'interna', label: 'Interna' },
+          { value: 'dedicada', label: 'Dedicada' },
+          { value: 'virtual', label: 'Virtual' },
+        ],
+        render: (u) => u.tipo === 'virtual'
+          ? '<span class="badge badge-muted">Virtual</span>'
+          : (u.tipo === 'dedicada' ? '<span class="badge badge-parcial">Dedicada</span>' : '<span class="badge badge-confirmado">Interna</span>'),
+      },
+      { key: 'parent_nombre', label: 'Ubicación Padre', type: 'readonly', render: (u) => `<span class="muted">${esc(u.parent_nombre || '—')}</span>` },
+      {
+        key: 'activa',
+        label: 'Activa',
+        type: 'checkbox',
+        align: 'center',
+        editable: (u) => !(u.es_sistema || u.es_default),
+      },
+    ],
+    extraActions: (u) => (u.es_sistema || u.es_default)
+      ? '<span class="badge badge-muted">Protegida</span>'
+      : `<button type="button" class="btn btn-sm btn-danger" data-del-ubic="${u.id}">Eliminar</button>`,
+    onCellChange: async ({ row, key, value }) => {
+      try {
+        await api(`/api/ubicaciones/${row.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            nombre: key === 'nombre' ? value : row.nombre,
+            tipo: key === 'tipo' ? value : row.tipo,
+            activa: key === 'activa' ? Boolean(Number(value)) : Boolean(row.activa),
+          }),
+        });
+        toast('Ubicación actualizada');
+      } catch (err) {
+        toast(err.message, true);
+        throw err;
+      }
+    },
+  });
 
   root.querySelector('#form-add-ubicacion')?.addEventListener('submit', async (e) => {
     e.preventDefault();

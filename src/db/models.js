@@ -127,6 +127,7 @@ export const MODELS = {
       cuenta_compra_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
       moneda: { type: 'TEXT', notNull: true, default: 'ARS' },
       peso_kg: { type: 'REAL', notNull: true, default: 0, min: 0 },
+      imagen_data: { type: 'TEXT', default: '', trim: false },
       atributos_json: { type: 'TEXT', notNull: true, default: '[]', trim: false },
     },
     indexes: [{ name: 'idx_plantillas_prov', columns: ['proveedor_id'] }],
@@ -207,6 +208,7 @@ export const MODELS = {
       taller_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
       plan_cuenta_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
       depende_de_id: { type: 'INTEGER' },
+      imagen_data: { type: 'TEXT', default: '', trim: false },
     },
   },
 
@@ -220,6 +222,7 @@ export const MODELS = {
       referencia: { type: 'TEXT', default: '' },
       activa: { type: 'INTEGER', notNull: true, default: 1, boolean: true },
       notas: { type: 'TEXT', default: '' },
+      ficha_tecnica_html: { type: 'TEXT', default: '', trim: false },
     },
     indexes: [{ name: 'idx_recetas_plantilla', columns: ['plantilla_id'] }],
   },
@@ -237,6 +240,7 @@ export const MODELS = {
       taller_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
       plan_cuenta_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
       depende_de_id: { type: 'INTEGER' },
+      imagen_data: { type: 'TEXT', default: '', trim: false },
     },
   },
 
@@ -596,6 +600,15 @@ export const MODELS = {
       afip_ta_wsfe: { type: 'TEXT', default: '' },
       afip_ta_padron: { type: 'TEXT', default: '' },
       afip_ta_wscdc: { type: 'TEXT', default: '' },
+      cta_clientes_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_proveedores_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_ventas_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_compras_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_mano_obra_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_iva_credito_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_iva_debito_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_perc_sufridas_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
+      cta_ret_depositar_id: { type: 'INTEGER', references: 'plan_cuentas(id)', onDelete: 'SET NULL' },
     },
   },
 
@@ -1143,6 +1156,7 @@ export const MODELS = {
     defaultOrder: 'codigo ASC',
     fields: {
       codigo: { type: 'TEXT', unique: true, notNull: true, required: true },
+      letra: { type: 'TEXT', default: '' },
       nombre: { type: 'TEXT', notNull: true, required: true },
       activo: { type: 'INTEGER', notNull: true, default: 1, boolean: true },
     },
@@ -1289,6 +1303,37 @@ export const MODELS = {
       activo: { type: 'INTEGER', notNull: true, default: 1, boolean: true },
     },
     indexes: [{ name: 'idx_prod_prov', columns: ['contacto_id', 'producto_id', 'plantilla_id'] }],
+  },
+
+  tareas: {
+    table: 'tareas',
+    defaultOrder: 'orden ASC, id DESC',
+    audit: true,
+    fields: {
+      titulo: { type: 'TEXT', notNull: true, required: true, label: 'Título' },
+      descripcion: { type: 'TEXT', default: '' },
+      estado: {
+        type: 'TEXT',
+        notNull: true,
+        default: 'Pendiente',
+        enum: ['Pendiente', 'En Proceso', 'En Revisión', 'Completada', 'Cancelada'],
+      },
+      prioridad: {
+        type: 'TEXT',
+        notNull: true,
+        default: 'Media',
+        enum: ['Baja', 'Media', 'Alta', 'Urgente'],
+      },
+      fecha_inicio: { type: 'TEXT', default: '' },
+      fecha_vencimiento: { type: 'TEXT', default: '' },
+      responsable_id: { type: 'INTEGER', references: 'usuarios(id)', onDelete: 'SET NULL' },
+      contacto_id: { type: 'INTEGER', references: 'contactos(id)', onDelete: 'SET NULL' },
+      referencia_tipo: { type: 'TEXT', default: '' },
+      referencia_id: { type: 'INTEGER' },
+      orden: { type: 'INTEGER', notNull: true, default: 0 },
+      completada_en: { type: 'TEXT' },
+    },
+    indexes: [{ name: 'idx_tareas_estado_resp', columns: ['estado', 'responsable_id', 'fecha_vencimiento'] }],
   },
 };
 

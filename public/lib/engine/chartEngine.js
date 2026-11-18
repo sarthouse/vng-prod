@@ -96,14 +96,14 @@ export function renderComboFlowChart(container, {
         <div class="ve-chart-head">
           <div>
             <strong>${esc(title)}</strong>
-            ${subtitle ? `<div class="muted" style="font-size:12px;">${esc(subtitle)}</div>` : ''}
+            ${subtitle ? `<div class="muted sx-6b9c17">${esc(subtitle)}</div>` : ''}
           </div>
           <div class="ve-chart-legend">
-            <span><i class="ve-chart-swatch" style="background:#16a34a;"></i> Entradas (+)</span>
-            <span><i class="ve-chart-swatch" style="background:#dc2626;"></i> Salidas (-)</span>
-            <span><i class="ve-chart-swatch" style="background:#2563eb;"></i> Saldo Real</span>
-            <span><i class="ve-chart-swatch" style="background:#2563eb;border:1px dashed #fff;"></i> Saldo Proyectado</span>
-            ${minY !== null ? `<span><i class="ve-chart-swatch" style="background:#d97706;"></i> Stock Mínimo (${formatValue(minRef)}${unitLabel ? ' ' + esc(unitLabel) : ''})</span>` : ''}
+            <span><i class="ve-chart-swatch sx-d92dad"></i> Entradas (+)</span>
+            <span><i class="ve-chart-swatch sx-aa7ca4"></i> Salidas (-)</span>
+            <span><i class="ve-chart-swatch sx-00f4c1"></i> Saldo Real</span>
+            <span><i class="ve-chart-swatch sx-15ed7a"></i> Saldo Proyectado</span>
+            ${minY !== null ? `<span><i class="ve-chart-swatch sx-cc9199"></i> Stock Mínimo (${formatValue(minRef)}${unitLabel ? ' ' + esc(unitLabel) : ''})</span>` : ''}
           </div>
         </div>
       ` : ''}

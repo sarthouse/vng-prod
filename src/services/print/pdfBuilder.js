@@ -1,4 +1,5 @@
 // Generador PDF 1.4 puro en Node.js (cero dependencias externas) con WinAnsiEncoding para español.
+import zlib from 'node:zlib';
 
 const MM_TO_PT = 72 / 25.4;
 
@@ -121,10 +122,122 @@ export function wrapTextMm(str, maxWidthMm, sizePt, bold = false) {
   return lines;
 }
 
+function parseJpegInfo(buf) {
+  if (!buf || buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+  let i = 2;
+  while (i + 3 < buf.length) {
+    if (buf[i] !== 0xFF) { i++; continue; }
+    while (i < buf.length && buf[i] === 0xFF) i++;
+    if (i >= buf.length) break;
+    const marker = buf[i++];
+    if (marker === 0xD8 || marker === 0xD9 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+    if (i + 1 >= buf.length) break;
+    const segLen = buf.readUInt16BE(i);
+    if (marker >= 0xC0 && marker <= 0xC3 && i + 7 < buf.length) {
+      const height = buf.readUInt16BE(i + 3);
+      const width = buf.readUInt16BE(i + 5);
+      const components = buf[i + 7];
+      return {
+        width,
+        height,
+        colorSpace: components === 1 ? '/DeviceGray' : components === 4 ? '/DeviceCMYK' : '/DeviceRGB',
+        filter: '/DCTDecode',
+        data: buf,
+      };
+    }
+    i += segLen;
+  }
+  return null;
+}
+
+function parsePngInfo(buf) {
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (!buf || buf.length < 24 || !buf.subarray(0, 8).equals(sig)) return null;
+  let pos = 8;
+  let width = 0; let height = 0; let bitDepth = 8; let colorType = 2;
+  const idatChunks = [];
+  while (pos + 8 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.subarray(pos + 4, pos + 8).toString('ascii');
+    const data = buf.subarray(pos + 8, pos + 8 + len);
+    if (type === 'IHDR' && len >= 13) {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+    } else if (type === 'IDAT') {
+      idatChunks.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+    pos += 12 + len;
+  }
+  if (!width || !height || bitDepth !== 8 || ![0, 2, 6].includes(colorType) || !idatChunks.length) return null;
+
+  const bpp = colorType === 6 ? 4 : colorType === 2 ? 3 : 1;
+  const raw = zlib.inflateSync(Buffer.concat(idatChunks));
+  const stride = width * bpp;
+  const rgb = Buffer.alloc(width * height * (colorType === 0 ? 1 : 3));
+  const prevRow = Buffer.alloc(stride);
+
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * (stride + 1);
+    const filter = raw[rowStart];
+    const row = Buffer.from(raw.subarray(rowStart + 1, rowStart + 1 + stride));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? row[x - bpp] : 0;
+      const b = prevRow[x];
+      const c = x >= bpp ? prevRow[x - bpp] : 0;
+      if (filter === 1) row[x] = (row[x] + a) & 0xFF;
+      else if (filter === 2) row[x] = (row[x] + b) & 0xFF;
+      else if (filter === 3) row[x] = (row[x] + ((a + b) >> 1)) & 0xFF;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        const pr = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        row[x] = (row[x] + pr) & 0xFF;
+      }
+    }
+    row.copy(prevRow);
+    if (colorType === 6) {
+      for (let px = 0; px < width; px++) {
+        const alpha = row[px * 4 + 3] / 255;
+        const dst = (y * width + px) * 3;
+        rgb[dst] = Math.round(row[px * 4] * alpha + 255 * (1 - alpha));
+        rgb[dst + 1] = Math.round(row[px * 4 + 1] * alpha + 255 * (1 - alpha));
+        rgb[dst + 2] = Math.round(row[px * 4 + 2] * alpha + 255 * (1 - alpha));
+      }
+    } else if (colorType === 2) {
+      row.copy(rgb, y * width * 3);
+    } else {
+      row.copy(rgb, y * width);
+    }
+  }
+
+  return {
+    width,
+    height,
+    colorSpace: colorType === 0 ? '/DeviceGray' : '/DeviceRGB',
+    filter: '/FlateDecode',
+    data: zlib.deflateSync(rgb),
+  };
+}
+
+function decodeDataUrlImage(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:image\/(jpeg|jpg|png);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!m) return null;
+  const buf = Buffer.from(m[2].replace(/\s+/g, ''), 'base64');
+  return m[1].toLowerCase() === 'png' ? parsePngInfo(buf) : parseJpegInfo(buf);
+}
+
 export class PdfDocument {
   constructor() {
     this.pages = [];
     this.current = null;
+    this.images = [];
+    this.imageByKey = new Map();
   }
 
   addPage(widthMm = 210, heightMm = 297) {
@@ -216,13 +329,43 @@ export class PdfDocument {
     return curY;
   }
 
+  drawImage(dataUrl, xMm, yMm, maxWMm, maxHMm) {
+    if (!dataUrl) return null;
+    let img = this.imageByKey.get(dataUrl);
+    if (!img) {
+      const parsed = decodeDataUrlImage(dataUrl);
+      if (!parsed || !parsed.width || !parsed.height) return null;
+      img = { ...parsed, name: `Im${this.images.length + 1}` };
+      this.images.push(img);
+      this.imageByKey.set(dataUrl, img);
+    }
+    const scale = Math.min(maxWMm / img.width, maxHMm / img.height);
+    const drawWMm = img.width * scale;
+    const drawHMm = img.height * scale;
+    const xPt = xMm * MM_TO_PT;
+    const wPt = drawWMm * MM_TO_PT;
+    const hPt = drawHMm * MM_TO_PT;
+    const yPt = this._yPt(yMm) - hPt;
+    this.current.ops.push('q', `${wPt.toFixed(2)} 0 0 ${hPt.toFixed(2)} ${xPt.toFixed(2)} ${yPt.toFixed(2)} cm`, `/${img.name} Do`, 'Q');
+    return { wMm: drawWMm, hMm: drawHMm };
+  }
+
   toBuffer() {
     // Objetos:
     // 1: Catalog, 2: Pages, 3: Font F1 (Helvetica), 4: Font F2 (Helvetica-Bold)
-    // Por cada página: PageObj, ContentObj
+    // Luego imágenes XObject (si hay), y por cada página: PageObj, ContentObj
     const objects = [];
     const pageIds = [];
     let nextId = 5;
+
+    const imageIds = [];
+    for (const img of this.images) {
+      const imgId = nextId++;
+      imageIds.push({ imgId, img });
+    }
+    const xObjectDict = imageIds.length
+      ? `/XObject << ${imageIds.map(x => `/${x.img.name} ${x.imgId} 0 R`).join(' ')} >>`
+      : '';
 
     for (const p of this.pages) {
       const pageId = nextId++;
@@ -230,21 +373,29 @@ export class PdfDocument {
       pageIds.push({ pageId, contentId, page: p });
     }
 
-    objects.push({ id: 1, body: `<< /Type /Catalog /Pages 2 0 R >>` });
-    objects.push({ id: 2, body: `<< /Type /Pages /Kids [${pageIds.map(x => `${x.pageId} 0 R`).join(' ')}] /Count ${pageIds.length} >>` });
-    objects.push({ id: 3, body: `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>` });
-    objects.push({ id: 4, body: `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>` });
+    objects.push({ id: 1, buf: Buffer.from(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`, 'latin1') });
+    objects.push({ id: 2, buf: Buffer.from(`2 0 obj\n<< /Type /Pages /Kids [${pageIds.map(x => `${x.pageId} 0 R`).join(' ')}] /Count ${pageIds.length} >>\nendobj\n`, 'latin1') });
+    objects.push({ id: 3, buf: Buffer.from(`3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n`, 'latin1') });
+    objects.push({ id: 4, buf: Buffer.from(`4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n`, 'latin1') });
+
+    for (const { imgId, img } of imageIds) {
+      const head = `${imgId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height} /ColorSpace ${img.colorSpace} /BitsPerComponent 8 /Filter ${img.filter} /Length ${img.data.length} >>\nstream\n`;
+      objects.push({
+        id: imgId,
+        buf: Buffer.concat([Buffer.from(head, 'latin1'), img.data, Buffer.from('\nendstream\nendobj\n', 'latin1')]),
+      });
+    }
 
     for (const item of pageIds) {
       const stream = item.page.ops.join('\n');
       const streamBuf = Buffer.from(stream, 'latin1');
       objects.push({
         id: item.pageId,
-        body: `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${item.page.wPt.toFixed(2)} ${item.page.hPt.toFixed(2)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${item.contentId} 0 R >>`,
+        buf: Buffer.from(`${item.pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${item.page.wPt.toFixed(2)} ${item.page.hPt.toFixed(2)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> ${xObjectDict} >> /Contents ${item.contentId} 0 R >>\nendobj\n`, 'latin1'),
       });
       objects.push({
         id: item.contentId,
-        body: `<< /Length ${streamBuf.length} >>\nstream\n${stream}\nendstream`,
+        buf: Buffer.from(`${item.contentId} 0 obj\n<< /Length ${streamBuf.length} >>\nstream\n${stream}\nendstream\nendobj\n`, 'latin1'),
       });
     }
 
@@ -255,10 +406,8 @@ export class PdfDocument {
 
     for (const obj of objects) {
       offsets[obj.id] = pos;
-      const str = `${obj.id} 0 obj\n${obj.body}\nendobj\n`;
-      const buf = Buffer.from(str, 'latin1');
-      chunks.push(buf);
-      pos += buf.length;
+      chunks.push(obj.buf);
+      pos += obj.buf.length;
     }
 
     const xrefOffset = pos;

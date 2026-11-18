@@ -92,7 +92,7 @@ export async function renderSeguridadSection(container) {
           </div>
         </div>
 
-        <form id="form-grupo" style="margin-bottom:16px;padding:12px;border-radius:8px;background:var(--surface-2,#f8fafc)">
+        <form id="form-grupo" class="sx-518ed4">
           <div class="form-grid">
             <label>
               <span>Nombre del Grupo *</span>
@@ -102,14 +102,14 @@ export async function renderSeguridadSection(container) {
               <span>Descripción</span>
               <input type="text" name="descripcion" value="${esc(editingGrupo?.descripcion || '')}" placeholder="Acceso a ventas y cobros" />
             </label>
-            <label style="display:flex;align-items:center;gap:8px;align-self:end">
+            <label class="sx-7b7c65">
               <input type="checkbox" name="es_admin" id="grp-es-admin" ${editingGrupo?.es_admin ? 'checked' : ''} />
               <span>Administrador total</span>
             </label>
           </div>
 
           <div id="grp-permisos-box" style="margin-top:12px;${editingGrupo?.es_admin ? 'opacity:0.5;pointer-events:none' : ''}">
-            <div style="font-size:12px;font-weight:600;margin-bottom:8px">Permisos asignados por categoría:</div>
+            <div class="sx-7e38e6">Permisos asignados por categoría:</div>
             <div class="perm-categories-grid">
               ${permCategories.map(cat => `
                 <div class="perm-category-card">
@@ -127,7 +127,7 @@ export async function renderSeguridadSection(container) {
             </div>
           </div>
 
-          <div style="display:flex;gap:8px;margin-top:12px">
+          <div class="sx-1d7326">
             <button type="submit" class="btn btn-primary">${editingGrupo ? 'Guardar Grupo' : '+ Crear Grupo'}</button>
             ${editingGrupo ? `<button type="button" class="btn secondary" id="btn-cancel-grupo">Cancelar</button>` : ''}
           </div>
@@ -148,7 +148,7 @@ export async function renderSeguridadSection(container) {
                 <tr>
                   <td><strong>${esc(g.nombre)}</strong> ${g.es_admin ? '<span class="badge badge-ok">Admin</span>' : ''}</td>
                   <td class="muted">${esc(g.descripcion || '—')}</td>
-                  <td style="font-size:12px">
+                  <td class="sx-6b9c17">
                     ${renderGroupPerms(g)}
                   </td>
                   <td>
@@ -172,7 +172,7 @@ export async function renderSeguridadSection(container) {
           </div>
         </div>
 
-        <form id="form-usuario" style="margin-bottom:16px;padding:12px;border-radius:8px;background:var(--surface-2,#f8fafc)">
+        <form id="form-usuario" class="sx-518ed4">
           <div class="form-grid">
             <label>
               <span>Usuario *</span>
@@ -196,12 +196,12 @@ export async function renderSeguridadSection(container) {
                 ${grupos.map(g => `<option value="${g.id}" ${String(g.id) === String(editingUsuario?.grupo_id) ? 'selected' : ''}>${esc(g.nombre)}</option>`).join('')}
               </select>
             </label>
-            <label style="display:flex;align-items:center;gap:8px;align-self:end">
+            <label class="sx-7b7c65">
               <input type="checkbox" name="activo" ${editingUsuario ? (editingUsuario.activo ? 'checked' : '') : 'checked'} />
               <span>Usuario activo</span>
             </label>
           </div>
-          <div style="display:flex;gap:8px;margin-top:12px">
+          <div class="sx-1d7326">
             <button type="submit" class="btn btn-primary">${editingUsuario ? 'Guardar Usuario' : '+ Crear Usuario'}</button>
             ${editingUsuario ? `<button type="button" class="btn secondary" id="btn-cancel-usuario">Cancelar</button>` : ''}
           </div>

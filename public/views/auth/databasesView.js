@@ -40,24 +40,24 @@ export async function renderDatabasesView(container, { onBack = null, requireSel
       </div>
 
       ${!state.unlocked ? `
-        <div class="card" style="max-width:440px;margin:24px auto">
+        <div class="card sx-3c9977">
           <div class="card-header"><h2>Autorización Requerida</h2></div>
           <div class="card-body">
-            <p class="muted" style="margin:0 0 14px">Ingresá la clave maestra (<code>DB_MASTER_KEY</code> en <code>.env</code>) para administrar o cambiar de base de datos.</p>
-            <form id="form-db-unlock" class="form-grid" style="grid-template-columns:1fr;gap:12px">
+            <p class="muted sx-228013">Ingresá la clave maestra (<code>DB_MASTER_KEY</code> en <code>.env</code>) para administrar o cambiar de base de datos.</p>
+            <form id="form-db-unlock" class="form-grid grid-1col">
               <label class="full">
                 <span>Clave Maestra *</span>
                 <input type="password" id="db-master-key" required placeholder="••••••••" autocomplete="off" />
               </label>
-              <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Desbloquear Gestor</button>
+              <button type="submit" class="btn btn-primary flex-center-full">Desbloquear Gestor</button>
             </form>
           </div>
         </div>
       ` : `
         <div class="card">
           <div class="card-header"><h2>Nueva Instancia de Base de Datos</h2></div>
-          <form id="form-db-create" class="form-grid" style="align-items:end">
-            <label style="flex:1;min-width:220px">
+          <form id="form-db-create" class="form-grid sx-ede874">
+            <label class="sx-39cc94">
               <span>Nombre (solo letras, números, - y _) *</span>
               <input type="text" id="new-db-name" required pattern="[a-zA-Z0-9_-]{1,40}" placeholder="Ej: empresa_demo o temporada_2027" />
             </label>

@@ -3,13 +3,13 @@ import * as metaSvc from '../services/auth/metaService.js';
 import { json, parseBody } from './http.js';
 
 export async function handleMetaRoutes(req, res, pathname, user) {
-  const metaMatch = pathname.match(/^\/api\/meta\/(compra|venta|movimiento|pago|cobro|orden|operacion_stock)\/(\d+)$/);
-  if (metaMatch && req.method === 'GET') {
+  const metaMatch = pathname.match(/^\/api\/meta\/([a-z_]+)\/(\d+)$/);
+  if (metaMatch && metaSvc.VALID_ENTIDADES.has(metaMatch[1]) && req.method === 'GET') {
     json(res, 200, metaSvc.getMetaBundle(metaMatch[1], Number(metaMatch[2])));
     return true;
   }
-  const notaEntityMatch = pathname.match(/^\/api\/notas\/(compra|venta|movimiento|pago|cobro|orden|operacion_stock)\/(\d+)$/);
-  if (notaEntityMatch && req.method === 'POST') {
+  const notaEntityMatch = pathname.match(/^\/api\/notas\/([a-z_]+)\/(\d+)$/);
+  if (notaEntityMatch && metaSvc.VALID_ENTIDADES.has(notaEntityMatch[1]) && req.method === 'POST') {
     const b = await parseBody(req);
     try {
       json(res, 201, { id: metaSvc.addNota({ tipo: notaEntityMatch[1], id: Number(notaEntityMatch[2]), contenido: b.contenido, user }) });
@@ -22,8 +22,8 @@ export async function handleMetaRoutes(req, res, pathname, user) {
     json(res, 200, { ok: true });
     return true;
   }
-  const adjEntityMatch = pathname.match(/^\/api\/adjuntos\/(compra|venta|movimiento|pago|cobro|orden|operacion_stock)\/(\d+)$/);
-  if (adjEntityMatch && req.method === 'POST') {
+  const adjEntityMatch = pathname.match(/^\/api\/adjuntos\/([a-z_]+)\/(\d+)$/);
+  if (adjEntityMatch && metaSvc.VALID_ENTIDADES.has(adjEntityMatch[1]) && req.method === 'POST') {
     const b = await parseBody(req, 15e6);
     try {
       json(res, 201, {

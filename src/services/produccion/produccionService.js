@@ -1,7 +1,6 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
-import { convertUnitFromDb } from '../config/configService.js';
+import { convertUnitFromDb, getEmpresaConfig, resolveNumeroDocumento } from '../config/configService.js';
 import { resolveVariantForPlantilla } from './presupuestoService.js';
 import { applicableQtyForLine, getActiveRecetaForPlantilla } from './recetaService.js';
 import { getInventarioResumen, registrarMovimientoStock } from '../inventario/inventarioService.js';
@@ -23,6 +22,20 @@ export const ordenRepo = new OrdenRepository();
 export const ordenEtapaRepo = new BaseRepository({ model: MODELS.orden_etapas });
 export const ordenLineaRepo = new BaseRepository({ model: MODELS.orden_lineas });
 export const planCuentaRepo = new BaseRepository({ model: MODELS.plan_cuentas });
+
+const recetaLineaRepo = new BaseRepository({ table: 'receta_lineas' });
+const recetaEtapaRepo = new BaseRepository({ table: 'receta_etapas' });
+const etapaConfigRepo = new BaseRepository({ table: 'etapas_config' });
+const movimientoStockRepo = new BaseRepository({ table: 'movimientos_stock' });
+const vProductoRepo = new BaseRepository({ table: 'v_productos' });
+const pedidoRepo = new BaseRepository({ table: 'pedidos' });
+const pedidoLineaRepo = new BaseRepository({ table: 'pedido_lineas' });
+const ubicacionRepo = new BaseRepository({ table: 'ubicaciones' });
+const stockQuantRepo = new BaseRepository({ table: 'stock_quants' });
+const entregaRepo = new BaseRepository({ table: 'entregas' });
+const empresaConfigRepo = new BaseRepository({ table: 'empresa_config' });
+const operacionStockRepo = new BaseRepository({ table: 'operaciones_stock' });
+const operacionStockLineaRepo = new BaseRepository({ table: 'operacion_stock_lineas' });
 
 function explodeRecetaLineForOrden(line, ordenLineas, udmCompra) {
   let vars = [];
@@ -82,27 +95,38 @@ function diffDaysISO(startIso, endIso) {
 }
 
 export function listOrdenes() {
-  const rows = db.prepare(`
-    SELECT op.*, pt.nombre as plantilla_nombre, r.nombre as receta_nombre, ped.pedido as pedido_numero,
-           COALESCE((SELECT SUM(ol.cantidad) FROM orden_lineas ol WHERE ol.orden_id = op.id), 0) as cantidad
-    FROM ordenes_produccion op
-    JOIN producto_plantillas pt ON pt.id = op.plantilla_id
-    LEFT JOIN recetas r ON r.id = op.receta_id
-    LEFT JOIN pedidos ped ON ped.id = op.pedido_id
-    ORDER BY op.id DESC
-  `).all();
+  const rows = ordenRepo.query('op')
+    .select('op.*, pt.nombre as plantilla_nombre, r.nombre as receta_nombre, ped.pedido as pedido_numero')
+    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'op.plantilla_id')
+    .leftJoin('recetas', 'r', 'r.id', 'op.receta_id')
+    .leftJoin('pedidos', 'ped', 'ped.id', 'op.pedido_id')
+    .orderBy('op.id', 'DESC')
+    .all();
+
+  const allLineas = ordenLineaRepo.query().select('orden_id, cantidad').all();
+  const cantByOrden = new Map();
+  for (const l of allLineas) {
+    cantByOrden.set(l.orden_id, (cantByOrden.get(l.orden_id) || 0) + Number(l.cantidad || 0));
+  }
+
+  const allEtapas = ordenEtapaRepo.query('oe')
+    .select("oe.*, COALESCE(c.nombre, '') as taller_nombre")
+    .leftJoin('contactos', 'c', 'c.id', 'oe.taller_id')
+    .orderBy('oe.orden_num', 'ASC')
+    .orderBy('oe.id', 'ASC')
+    .all();
+  const etapasByOrden = new Map();
+  for (const e of allEtapas) {
+    if (!etapasByOrden.has(e.orden_id)) etapasByOrden.set(e.orden_id, []);
+    etapasByOrden.get(e.orden_id).push(e);
+  }
 
   return rows.map(op => {
-    const etapas = db.prepare(`
-      SELECT oe.*, COALESCE(c.nombre, '') as taller_nombre
-      FROM orden_etapas oe
-      LEFT JOIN contactos c ON c.id = oe.taller_id
-      WHERE oe.orden_id = ?
-      ORDER BY oe.orden_num ASC, oe.id ASC
-    `).all(op.id);
+    const etapas = etapasByOrden.get(op.id) || [];
     const completadas = etapas.filter(e => e.estado === 'Completada').length;
     return {
       ...op,
+      cantidad: cantByOrden.get(op.id) || 0,
       etapas_total: etapas.length,
       etapas_completadas: completadas,
       etapas,
@@ -111,34 +135,34 @@ export function listOrdenes() {
 }
 
 export function getOrdenDetalle(id) {
-  const orden = db.prepare(`
-    SELECT op.*, pt.nombre as plantilla_nombre,
-           r.nombre as receta_nombre, ped.pedido as pedido_numero
-    FROM ordenes_produccion op
-    JOIN producto_plantillas pt ON pt.id = op.plantilla_id
-    LEFT JOIN recetas r ON r.id = op.receta_id
-    LEFT JOIN pedidos ped ON ped.id = op.pedido_id
-    WHERE op.id = ?
-  `).get(id);
+  const orden = ordenRepo.query('op')
+    .select('op.*, pt.nombre as plantilla_nombre, r.nombre as receta_nombre, ped.pedido as pedido_numero')
+    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'op.plantilla_id')
+    .leftJoin('recetas', 'r', 'r.id', 'op.receta_id')
+    .leftJoin('pedidos', 'ped', 'ped.id', 'op.pedido_id')
+    .where('op.id', id)
+    .get();
   if (!orden) return null;
 
-  const lineas = db.prepare(`
-    SELECT ol.*, p.nombre as producto_nombre, p.sku, p.combinacion_json,
-           COALESCE((
-             SELECT SUM(ms.cantidad)
-             FROM movimientos_stock ms
-             WHERE ms.referencia_tipo = 'orden_produccion'
-               AND ms.referencia_id = ol.orden_id
-               AND ms.tipo = 'ingreso_produccion'
-               AND ms.producto_id = ol.producto_id
-           ), 0) as cantidad_ingresada
-    FROM orden_lineas ol
-    JOIN productos p ON p.id = ol.producto_id
-    WHERE ol.orden_id = ?
-    ORDER BY ol.id ASC
-  `).all(id).map(l => {
+  const rawLineas = ordenLineaRepo.query('ol')
+    .select('ol.*, p.nombre as producto_nombre, p.sku, p.combinacion_json')
+    .innerJoin('productos', 'p', 'p.id', 'ol.producto_id')
+    .where('ol.orden_id', id)
+    .orderBy('ol.id', 'ASC')
+    .all();
+  const ingresosOp = movimientoStockRepo.query('ms')
+    .select('ms.producto_id, ms.cantidad')
+    .where('ms.referencia_tipo', 'orden_produccion')
+    .where('ms.referencia_id', id)
+    .where('ms.tipo', 'ingreso_produccion')
+    .all();
+  const ingresadaMap = new Map();
+  for (const ing of ingresosOp) {
+    ingresadaMap.set(Number(ing.producto_id), (ingresadaMap.get(Number(ing.producto_id)) || 0) + Number(ing.cantidad || 0));
+  }
+  const lineas = rawLineas.map(l => {
     const pedida = Number(l.cantidad || 0);
-    const ingresada = Number(l.cantidad_ingresada || 0);
+    const ingresada = Number(ingresadaMap.get(Number(l.producto_id)) || 0);
     return {
       ...l,
       cantidad_ingresada: Number(ingresada.toFixed(4)),
@@ -174,19 +198,19 @@ export function getOrdenDetalle(id) {
   const usedPlantillasOrProds = new Set();
 
   if (recetaId) {
-    const rLineas = db.prepare(`
-      SELECT rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, pt.tipo as producto_tipo,
-             pt.udm, p.stock, COALESCE(re.nombre, ec.nombre, 'General') as etapa_nombre,
-             COALESCE(c.nombre, '') as proveedor_nombre
-      FROM receta_lineas rl
-      JOIN v_productos p ON p.id = rl.producto_id
-      JOIN v_plantillas pt ON pt.id = p.plantilla_id
-      LEFT JOIN receta_etapas re ON re.id = rl.receta_etapa_id
-      LEFT JOIN etapas_config ec ON ec.id = rl.etapa_id
-      LEFT JOIN contactos c ON c.id = pt.proveedor_id
-      WHERE rl.receta_id = ?
-      ORDER BY COALESCE(re.orden, ec.orden, 999) ASC, p.nombre ASC
-    `).all(recetaId);
+    const rLineas = recetaLineaRepo.query('rl')
+      .select("rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, pt.tipo as producto_tipo, pt.udm, p.stock, COALESCE(re.nombre, ec.nombre, 'General') as etapa_nombre, COALESCE(c.nombre, '') as proveedor_nombre, COALESCE(re.orden, ec.orden, 999) as etapa_orden")
+      .innerJoin('v_productos', 'p', 'p.id', 'rl.producto_id')
+      .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+      .leftJoin('receta_etapas', 're', 're.id', 'rl.receta_etapa_id')
+      .leftJoin('etapas_config', 'ec', 'ec.id', 'rl.etapa_id')
+      .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
+      .where('rl.receta_id', recetaId)
+      .all()
+      .sort((a, b) => {
+        if (Number(a.etapa_orden) !== Number(b.etapa_orden)) return Number(a.etapa_orden) - Number(b.etapa_orden);
+        return String(a.producto_nombre || '').localeCompare(String(b.producto_nombre || ''));
+      });
 
     for (const l of rLineas) {
       usedPlantillasOrProds.add(`plt:${l.prod_plantilla_id}`);
@@ -208,14 +232,14 @@ export function getOrdenDetalle(id) {
     }
   }
 
-  const movimientos = db.prepare(`
-    SELECT ms.*, p.nombre as producto_nombre, pt.udm
-    FROM movimientos_stock ms
-    JOIN productos p ON p.id = ms.producto_id
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    WHERE ms.referencia_tipo = 'orden_produccion' AND ms.referencia_id = ?
-    ORDER BY ms.id DESC
-  `).all(id);
+  const movimientos = movimientoStockRepo.query('ms')
+    .select('ms.*, p.nombre as producto_nombre, pt.udm')
+    .innerJoin('productos', 'p', 'p.id', 'ms.producto_id')
+    .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .where('ms.referencia_tipo', 'orden_produccion')
+    .where('ms.referencia_id', id)
+    .orderBy('ms.id', 'DESC')
+    .all();
 
   return { orden, lineas, etapas, insumos: insumosPorEtapa, movimientos };
 }
@@ -232,12 +256,11 @@ function planificarDocumentosOrden(ordenId, codigo, fechaInicio, user = null) {
     const req = Number(ins.cantidad_requerida || 0);
     if (req <= 0) continue;
 
-    const prod = db.prepare(`
-      SELECT p.id, p.costo, p.precio, p.minimo_compra, p.stock, pt.proveedor_id, pt.alicuota_iva
-      FROM v_productos p
-      JOIN producto_plantillas pt ON pt.id = p.plantilla_id
-      WHERE p.id = ?
-    `).get(ins.producto_id);
+    const prod = vProductoRepo.query('p')
+      .select('p.id, p.costo, p.precio, p.minimo_compra, p.stock, pt.proveedor_id, pt.alicuota_iva')
+      .innerJoin('producto_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+      .where('p.id', ins.producto_id)
+      .get();
     if (!prod) continue;
 
     const disponible = Math.max(0, Number(prod.stock ?? ins.stock_actual ?? 0));
@@ -299,26 +322,25 @@ export function createOrden(b, user = null) {
   const plantillaId = Number(b.plantilla_id);
   if (!plantillaId) throw new Error('Debe seleccionar un producto fabricable');
 
-  const nextNum = (db.prepare('SELECT MAX(id) as m FROM ordenes_produccion').get().m || 0) + 1;
-  const codigo = (b.codigo || `OP-${String(nextNum).padStart(4, '0')}`).trim();
+  const codigo = resolveNumeroDocumento('orden', b.codigo);
   const fechaInicio = b.fecha_inicio || new Date().toISOString().slice(0, 10);
   let lineas = (Array.isArray(b.lineas) ? b.lineas : [])
     .map(l => ({ producto_id: Number(l.producto_id), cantidad: Math.max(0, Number(l.cantidad) || 0) }))
     .filter(l => l.producto_id > 0 && l.cantidad > 0);
 
   if (b.pedido_id && lineas.length === 0) {
-    lineas = db.prepare('SELECT producto_id, cantidad FROM pedido_lineas WHERE pedido_id = ?').all(Number(b.pedido_id));
+    lineas = pedidoLineaRepo.query().select('producto_id, cantidad').where('pedido_id', Number(b.pedido_id)).all();
   }
 
   const recetaId = b.receta_id ? Number(b.receta_id) : (getActiveRecetaForPlantilla(plantillaId, lineas.length === 1 ? lineas[0].producto_id : null)?.id || null);
 
   const recetaEtapas = recetaId
-    ? db.prepare('SELECT * FROM receta_etapas WHERE receta_id = ? ORDER BY orden ASC, id ASC').all(recetaId)
+    ? recetaEtapaRepo.query().where('receta_id', recetaId).orderBy('orden', 'ASC').orderBy('id', 'ASC').all()
     : [];
   const usingRecetaEtapas = recetaEtapas.length > 0;
   const etapasSource = usingRecetaEtapas
     ? recetaEtapas
-    : db.prepare('SELECT * FROM etapas_config ORDER BY orden ASC, id ASC').all();
+    : etapaConfigRepo.query().orderBy('orden', 'ASC').orderBy('id', 'ASC').all();
 
   const totalCantidadOrden = lineas.reduce((s, l) => s + Number(l.cantidad || 0), 0);
   const byId = new Map(etapasSource.map(e => [e.id, e]));
@@ -402,7 +424,7 @@ export function createOrden(b, user = null) {
 }
 
 export function updateOrdenEtapa(etapaRowId, b, user = null) {
-  const etapa = db.prepare('SELECT * FROM orden_etapas WHERE id = ?').get(etapaRowId);
+  const etapa = ordenEtapaRepo.findById(etapaRowId);
   if (!etapa) return false;
   const orden = ordenRepo.findById(etapa.orden_id);
   if (!orden) return false;
@@ -411,7 +433,7 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
   const today = new Date().toISOString().slice(0, 10);
 
   if ((newEstado === 'En Proceso' || newEstado === 'Completada') && etapa.depende_de_orden_etapa_id) {
-    const pred = db.prepare('SELECT id, nombre, estado FROM orden_etapas WHERE id = ?').get(etapa.depende_de_orden_etapa_id);
+    const pred = ordenEtapaRepo.query().select('id, nombre, estado').where('id', etapa.depende_de_orden_etapa_id).get();
     if (pred && pred.estado !== 'Completada') {
       throw new Error(`La etapa "${etapa.nombre}" está bloqueada hasta completar "${pred.nombre}"`);
     }
@@ -426,7 +448,7 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
     const nextMerma = b.cantidad_merma !== undefined ? Math.max(0, Number(b.cantidad_merma) || 0) : (Number(etapa.cantidad_merma) || 0);
     let nextProducida = b.cantidad_producida !== undefined ? Math.max(0, Number(b.cantidad_producida) || 0) : (Number(etapa.cantidad_producida) || 0);
     if (newEstado === 'Completada' && b.cantidad_producida === undefined && nextProducida === 0) {
-      const obj = Number(etapa.cantidad_objetivo) || Number(db.prepare('SELECT COALESCE(SUM(cantidad), 0) as c FROM orden_lineas WHERE orden_id = ?').get(orden.id)?.c || 0);
+      const obj = Number(etapa.cantidad_objetivo) || Number(ordenLineaRepo.query().where('orden_id', orden.id).sum('cantidad') || 0);
       nextProducida = Math.max(0, obj - nextMerma);
     }
     const nextCostoReal = b.costo_real !== undefined ? Math.max(0, Number(b.costo_real) || 0) : (Number(etapa.costo_real) || 0);
@@ -434,26 +456,28 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
 
     let stockConsumido = etapa.stock_consumido;
     if (newEstado === 'Completada' && !stockConsumido) {
-      const ordenLineas = db.prepare(`
-        SELECT ol.*, p.combinacion_json
-        FROM orden_lineas ol
-        JOIN productos p ON p.id = ol.producto_id
-        WHERE ol.orden_id = ?
-      `).all(orden.id);
+      const ordenLineas = ordenLineaRepo.query('ol')
+        .select('ol.*, p.combinacion_json')
+        .innerJoin('productos', 'p', 'p.id', 'ol.producto_id')
+        .where('ol.orden_id', orden.id)
+        .all();
       const recetaId = orden.receta_id || getActiveRecetaForPlantilla(orden.plantilla_id, ordenLineas.length === 1 ? ordenLineas[0].producto_id : null)?.id;
 
       if (recetaId && (etapa.receta_etapa_id || etapa.etapa_id)) {
-        const rLineas = db.prepare(`
-          SELECT rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, p.stock, pt.udm, pt.tipo
-          FROM receta_lineas rl
-          JOIN v_productos p ON p.id = rl.producto_id
-          JOIN v_plantillas pt ON pt.id = p.plantilla_id
-          WHERE rl.receta_id = ? AND pt.tipo != 'servicio'
-            AND ((? IS NOT NULL AND rl.receta_etapa_id = ?) OR (? IS NOT NULL AND rl.etapa_id = ?))
-        `).all(recetaId, etapa.receta_etapa_id || null, etapa.receta_etapa_id || null, etapa.etapa_id || null, etapa.etapa_id || null);
+        const allRLineas = recetaLineaRepo.query('rl')
+          .select('rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, p.stock, pt.udm, pt.tipo')
+          .innerJoin('v_productos', 'p', 'p.id', 'rl.producto_id')
+          .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+          .where('rl.receta_id', recetaId)
+          .where('pt.tipo', '!=', 'servicio')
+          .all();
+        const rLineas = allRLineas.filter(l =>
+          (etapa.receta_etapa_id && Number(l.receta_etapa_id) === Number(etapa.receta_etapa_id))
+          || (etapa.etapa_id && Number(l.etapa_id) === Number(etapa.etapa_id))
+        );
 
-        const tallerExtId = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'TALLER-EXT'").get()?.id || null;
-        const depCentralId = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id || null;
+        const tallerExtId = ubicacionRepo.query().select('id').where('codigo', 'TALLER-EXT').get()?.id || null;
+        const depCentralId = ubicacionRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id || null;
 
         for (const l of rLineas) {
           const exploded = explodeRecetaLineForOrden(l, ordenLineas, l.udm);
@@ -462,8 +486,7 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
               // Si los materiales fueron enviados a TALLER-EXT mediante remito_taller, consumir desde TALLER-EXT primero
               let qtyTaller = 0;
               if (tallerExtId) {
-                const qRow = db.prepare('SELECT COALESCE(SUM(cantidad), 0) as c FROM stock_quants WHERE producto_id = ? AND ubicacion_id = ?').get(item.producto_id, tallerExtId);
-                qtyTaller = Math.max(0, Number(qRow?.c || 0));
+                qtyTaller = Math.max(0, Number(stockQuantRepo.query().where('producto_id', item.producto_id).where('ubicacion_id', tallerExtId).sum('cantidad') || 0));
               }
               const fromTaller = Math.min(item.qty, qtyTaller);
               const fromDep = Number((item.qty - fromTaller).toFixed(4));
@@ -506,7 +529,8 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
     let nextCompraId = etapa.compra_id || null;
 
     if (newEstado === 'Completada' && nextTallerId && nextCostoReal > 0 && !nextCompraId) {
-      const defaultManoObra = planCuentaRepo.query().select('id').where('codigo', '5.1.02').where('activo', 1).get()?.id || null;
+      const cfgCtaManoObra = getEmpresaConfig()?.cta_mano_obra_id || null;
+      const defaultManoObra = cfgCtaManoObra || planCuentaRepo.query().select('id').where('codigo', '5.1.02').where('activo', 1).get()?.id || null;
       nextCompraId = createCompra({
         contacto_id: nextTallerId,
         orden_id: orden.id,
@@ -542,18 +566,20 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
       stock_consumido: stockConsumido,
     });
 
-    const allEtapas = db.prepare('SELECT estado FROM orden_etapas WHERE orden_id = ?').all(orden.id);
+    const allEtapas = ordenEtapaRepo.query().select('estado').where('orden_id', orden.id).all();
     if (allEtapas.length > 0 && allEtapas.every(e => e.estado === 'Completada')) {
       ordenRepo.update(orden.id, { estado: 'Completada' }, user);
-      const destUbi = db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'PROD-TERM'").get()?.id
-        || db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id
+      const destUbi = ubicacionRepo.query().select('id').where('codigo', 'PROD-TERM').get()?.id
+        || ubicacionRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id
         || null;
-      const oLineas = db.prepare('SELECT producto_id, cantidad FROM orden_lineas WHERE orden_id = ?').all(orden.id);
+      const oLineas = ordenLineaRepo.query().select('producto_id, cantidad').where('orden_id', orden.id).all();
       for (const ol of oLineas) {
-        const yaIngresado = Number(db.prepare(`
-          SELECT COALESCE(SUM(cantidad), 0) as c FROM movimientos_stock
-          WHERE referencia_tipo = 'orden_produccion' AND referencia_id = ? AND tipo = 'ingreso_produccion' AND producto_id = ?
-        `).get(orden.id, ol.producto_id)?.c || 0);
+        const yaIngresado = Number(movimientoStockRepo.query()
+          .where('referencia_tipo', 'orden_produccion')
+          .where('referencia_id', orden.id)
+          .where('tipo', 'ingreso_produccion')
+          .where('producto_id', ol.producto_id)
+          .sum('cantidad') || 0);
         const rem = Number((Number(ol.cantidad || 0) - yaIngresado).toFixed(4));
         if (rem > 0) {
           registrarMovimientoStock({
@@ -584,8 +610,8 @@ export function registrarIngresoParcialOrden(ordenId, b = {}, user = null) {
   const fecha = b.fecha || new Date().toISOString().slice(0, 10);
   const destUbi = b.ubicacion_destino_id
     ? Number(b.ubicacion_destino_id)
-    : (db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'PROD-TERM'").get()?.id
-      || db.prepare("SELECT id FROM ubicaciones WHERE codigo = 'DEP-CENTRAL'").get()?.id
+    : (ubicacionRepo.query().select('id').where('codigo', 'PROD-TERM').get()?.id
+      || ubicacionRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id
       || null);
   const lote = (b.lote || orden.codigo || '').trim();
   const reqMap = new Map((Array.isArray(b.lineas) ? b.lineas : []).map(l => [Number(l.producto_id), Number(l.cantidad) || 0]));
@@ -628,12 +654,15 @@ export function deleteOrden(id) {
 }
 
 export function computeCronogramaCompras() {
-  const histRows = db.prepare(`
-    SELECT ped.plantilla_id, ped.fecha as fecha_pedido, e.fecha as fecha_entrega
-    FROM entregas e
-    JOIN pedidos ped ON (e.pedido_id = ped.id OR e.lote = ped.pedido)
-    WHERE ped.fecha IS NOT NULL AND e.fecha IS NOT NULL
-  `).all();
+  const entregasAll = entregaRepo.query().select('pedido_id, lote, fecha').whereNotNull('fecha').all();
+  const pedidosAll = pedidoRepo.query().select('id, pedido, plantilla_id, fecha').whereNotNull('fecha').all();
+  const pedById = new Map(pedidosAll.map(p => [p.id, p]));
+  const pedByLote = new Map(pedidosAll.map(p => [p.pedido, p]));
+  const histRows = [];
+  for (const e of entregasAll) {
+    const ped = (e.pedido_id && pedById.get(e.pedido_id)) || (e.lote && pedByLote.get(e.lote)) || null;
+    if (ped) histRows.push({ plantilla_id: ped.plantilla_id, fecha_pedido: ped.fecha, fecha_entrega: e.fecha });
+  }
 
   const diasPorPlantilla = new Map();
   const todosDias = [];
@@ -648,48 +677,45 @@ export function computeCronogramaCompras() {
     }
   }
   const avg = arr => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
-  const empresaCfg = db.prepare('SELECT dias_entrega_defecto FROM empresa_config WHERE id = 1').get();
+  const empresaCfg = empresaConfigRepo.query().select('dias_entrega_defecto').where('id', 1).get();
   const leadTimeDefault = Number(empresaCfg?.dias_entrega_defecto) || 7;
   const leadTimeGlobal = avg(todosDias) ?? leadTimeDefault;
 
   const invList = getInventarioResumen();
   const invMap = new Map(invList.map(i => [i.id, i]));
 
-  const ordenes = db.prepare(`
-    SELECT op.*, pt.nombre as plantilla_nombre
-    FROM ordenes_produccion op
-    JOIN producto_plantillas pt ON pt.id = op.plantilla_id
-    WHERE op.estado IN ('Planificada', 'En Proceso')
-    ORDER BY op.fecha_inicio ASC
-  `).all();
+  const ordenes = ordenRepo.query('op')
+    .select('op.*, pt.nombre as plantilla_nombre')
+    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'op.plantilla_id')
+    .whereIn('op.estado', ['Planificada', 'En Proceso'])
+    .orderBy('op.fecha_inicio', 'ASC')
+    .all();
 
   const today = new Date().toISOString().slice(0, 10);
   const requerimientos = [];
 
   for (const op of ordenes) {
-    const etapas = db.prepare('SELECT * FROM orden_etapas WHERE orden_id = ? ORDER BY orden_num ASC').all(op.id);
+    const etapas = ordenEtapaRepo.query().where('orden_id', op.id).orderBy('orden_num', 'ASC').all();
     const etapaById = new Map(etapas.filter(e => e.etapa_id).map(e => [e.etapa_id, e]));
     const etapaByRecetaId = new Map(etapas.filter(e => e.receta_etapa_id).map(e => [e.receta_etapa_id, e]));
-    const ordenLineas = db.prepare(`
-      SELECT ol.*, p.combinacion_json
-      FROM orden_lineas ol
-      JOIN productos p ON p.id = ol.producto_id
-      WHERE ol.orden_id = ?
-    `).all(op.id);
+    const ordenLineas = ordenLineaRepo.query('ol')
+      .select('ol.*, p.combinacion_json')
+      .innerJoin('productos', 'p', 'p.id', 'ol.producto_id')
+      .where('ol.orden_id', op.id)
+      .all();
     const recetaId = op.receta_id || getActiveRecetaForPlantilla(op.plantilla_id, ordenLineas.length === 1 ? ordenLineas[0].producto_id : null)?.id;
     const pltLead = avg(diasPorPlantilla.get(op.plantilla_id) || []) ?? leadTimeGlobal;
     const usedPlantillasOrProds = new Set();
 
     if (recetaId) {
-      const lineas = db.prepare(`
-        SELECT rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, pt.tipo as producto_tipo,
-               pt.udm, p.precio, p.minimo_compra, p.stock, COALESCE(c.nombre, '') as proveedor_nombre
-        FROM receta_lineas rl
-        JOIN v_productos p ON p.id = rl.producto_id
-        JOIN v_plantillas pt ON pt.id = p.plantilla_id
-        LEFT JOIN contactos c ON c.id = pt.proveedor_id
-        WHERE rl.receta_id = ? AND pt.tipo != 'servicio'
-      `).all(recetaId);
+      const lineas = recetaLineaRepo.query('rl')
+        .select("rl.*, p.plantilla_id as prod_plantilla_id, p.nombre as producto_nombre, pt.tipo as producto_tipo, pt.udm, p.precio, p.minimo_compra, p.stock, COALESCE(c.nombre, '') as proveedor_nombre")
+        .innerJoin('v_productos', 'p', 'p.id', 'rl.producto_id')
+        .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+        .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
+        .where('rl.receta_id', recetaId)
+        .where('pt.tipo', '!=', 'servicio')
+        .all();
 
       for (const l of lineas) {
         usedPlantillasOrProds.add(`plt:${l.prod_plantilla_id}`);
@@ -808,23 +834,21 @@ export function computeCronogramaCompras() {
 }
 
 export function getPendientesOperativos() {
-  const entregas = db.prepare(`
-    SELECT os.id, os.numero, os.fecha, os.estado, os.contacto_id, os.referencia_tipo, os.referencia_id, os.motivo,
-           COALESCE(c.nombre, 'Sin cliente') as contacto_nombre
-    FROM operaciones_stock os
-    LEFT JOIN contactos c ON c.id = os.contacto_id
-    WHERE os.tipo = 'entrega' AND os.estado = 'Borrador'
-    ORDER BY os.fecha ASC, os.id ASC
-  `).all();
+  const entregas = operacionStockRepo.query('os')
+    .select("os.id, os.numero, os.fecha, os.estado, os.contacto_id, os.referencia_tipo, os.referencia_id, os.motivo, COALESCE(c.nombre, 'Sin cliente') as contacto_nombre")
+    .leftJoin('contactos', 'c', 'c.id', 'os.contacto_id')
+    .where('os.tipo', 'entrega')
+    .where('os.estado', 'Borrador')
+    .orderBy('os.fecha', 'ASC')
+    .orderBy('os.id', 'ASC')
+    .all();
 
   const entLineas = entregas.length > 0
-    ? db.prepare(`
-        SELECT osl.operacion_id, osl.producto_id, osl.cantidad, osl.udm,
-               COALESCE(p.nombre, osl.descripcion, 'Ítem') as producto_nombre, COALESCE(p.sku, '') as sku
-        FROM operacion_stock_lineas osl
-        LEFT JOIN productos p ON p.id = osl.producto_id
-        WHERE osl.operacion_id IN (${entregas.map(() => '?').join(',')})
-      `).all(...entregas.map(e => e.id))
+    ? operacionStockLineaRepo.query('osl')
+        .select("osl.operacion_id, osl.producto_id, osl.cantidad, osl.udm, COALESCE(p.nombre, osl.descripcion, 'Ítem') as producto_nombre, COALESCE(p.sku, '') as sku")
+        .leftJoin('productos', 'p', 'p.id', 'osl.producto_id')
+        .whereIn('osl.operacion_id', entregas.map(e => e.id))
+        .all()
     : [];
 
   const entLineasMap = new Map();
@@ -838,23 +862,20 @@ export function getPendientesOperativos() {
     return { ...e, lineas, total };
   });
 
-  const ordenes = db.prepare(`
-    SELECT op.id, op.codigo, op.fecha_inicio, op.fecha_objetivo, op.estado,
-           COALESCE(pt.nombre, '') as plantilla_nombre
-    FROM ordenes_produccion op
-    JOIN producto_plantillas pt ON pt.id = op.plantilla_id
-    WHERE op.estado IN ('Planificada', 'En Proceso')
-    ORDER BY op.fecha_objetivo ASC, op.id DESC
-  `).all();
+  const ordenes = ordenRepo.query('op')
+    .select("op.id, op.codigo, op.fecha_inicio, op.fecha_objetivo, op.estado, COALESCE(pt.nombre, '') as plantilla_nombre")
+    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'op.plantilla_id')
+    .whereIn('op.estado', ['Planificada', 'En Proceso'])
+    .orderBy('op.fecha_objetivo', 'ASC')
+    .orderBy('op.id', 'DESC')
+    .all();
 
   const ordLineas = ordenes.length > 0
-    ? db.prepare(`
-        SELECT ol.orden_id, ol.producto_id, ol.cantidad,
-               p.nombre as producto_nombre, COALESCE(p.sku, '') as sku
-        FROM orden_lineas ol
-        JOIN productos p ON p.id = ol.producto_id
-        WHERE ol.orden_id IN (${ordenes.map(() => '?').join(',')})
-      `).all(...ordenes.map(o => o.id))
+    ? ordenLineaRepo.query('ol')
+        .select("ol.orden_id, ol.producto_id, ol.cantidad, p.nombre as producto_nombre, COALESCE(p.sku, '') as sku")
+        .innerJoin('productos', 'p', 'p.id', 'ol.producto_id')
+        .whereIn('ol.orden_id', ordenes.map(o => o.id))
+        .all()
     : [];
 
   const ordLineasMap = new Map();

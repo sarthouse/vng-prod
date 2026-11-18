@@ -1,7 +1,8 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtNum, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq } from '../../lib/format.js';
+import { esc, fmtNum, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { printRemito } from '../../lib/remitoPrint.js';
+import { renderSpreadsheetTable } from '../../lib/engine/index.js';
+import { printRemito } from '../../lib/print/index.js';
 import { mountCombobox, quickCreateProducto, quickCreateProveedor } from '../../lib/autocomplete.js';
 import { renderKpiStrip, renderFilterBar, renderDataTable, mountDetailView } from '../../lib/engine/index.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
@@ -402,7 +403,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/operaciones-stock" data-link class="muted" style="font-size:0.85rem;">← Volver a Operaciones</a></div>
+          <div class="mb-xs"><a href="/operaciones-stock" data-link class="muted text-md">← Volver a Operaciones</a></div>
           <h1>Nueva Operación de Stock</h1>
         </div>
       </div>
@@ -478,26 +479,11 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
           <label><span>Código de Seguimiento</span><input type="text" id="op-seg" name="codigo_seguimiento" value="${esc(formState.codigo_seguimiento)}" placeholder="Ej: AR123456789" /></label>
 
           <div class="full">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div class="sx-fbf92c mb-sm">
               <strong>Detalle (${lineas.length})</strong>
-              <button type="button" id="btn-op-add-line" class="btn btn-sm">+ Agregar Ítem</button>
+              <span class="text-sm-muted">Click en celda para editar · Tab/Enter navega · Ctrl+V pega desde Excel</span>
             </div>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Producto</th><th>Lote</th><th class="num">Cantidad</th><th>Unidad</th><th></th></tr></thead>
-                <tbody>
-                  ${lineas.map((l, idx) => `
-                    <tr>
-                      <td style="min-width:220px;"><div class="op-prod-combo" data-idx="${idx}"></div></td>
-                      <td style="min-width:190px;"><div class="op-lote-combo" data-idx="${idx}"></div></td>
-                      <td class="num"><input type="number" step="0.01" min="0.01" class="op-qty" data-idx="${idx}" value="${l.cantidad}" style="width:95px;text-align:right;" /></td>
-                      <td><span class="badge badge-muted op-udm-badge" data-idx="${idx}">${esc(l.udm || 'unidades')}</span></td>
-                      <td><button type="button" class="btn btn-sm btn-danger op-del" data-idx="${idx}">Quitar</button></td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
+            <div id="op-lines-sheet"></div>
           </div>
 
           <div class="full modal-footer">
@@ -582,6 +568,7 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
           sublabel: c.es_taller ? 'Taller' : c.es_cliente ? 'Cliente' : 'Proveedor',
           raw: c,
         })),
+        getDetailUrl: (it) => `/contactos/${it.value}`,
         onSelect: (it) => { formState.contacto_id = it ? String(it.value) : ''; },
         onCreate: async (q) => {
           const created = await quickCreateProveedor(q, { es_taller: t === 'traslado' });
@@ -597,6 +584,12 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
     if (t === 'traslado') {
       bindPuntoVentaSeq(root.querySelector('#op-rem-pv'), root.querySelector('#op-numero'), 'remito', api);
     }
+    bindNumeroPadding(root.querySelector('#op-numero'), () => ({
+      pvDefault: root.querySelector('#op-rem-pv')?.value || 1,
+      prefijo: nextRemitoSeq?.prefijo || '',
+      sufijo: nextRemitoSeq?.sufijo || '',
+      padding: nextRemitoSeq?.padding || 8,
+    }));
 
     root.querySelector('#op-tipo').addEventListener('change', (e) => {
       syncFormMeta();
@@ -616,73 +609,81 @@ export async function renderOperacionStockFormView({ mode = 'operacion' } = {}) 
       raw: p,
     }));
 
-    const mountLoteCombo = (el, idx) => {
-      const l = lineas[idx];
+    const renderLinesSheet = () => {
+      const sheetHost = root.querySelector('#op-lines-sheet');
+      if (!sheetHost) return;
       const origId = getOriginIdForLotes();
-      const opts = quants
-        .filter(q => (!l.producto_id || String(q.producto_id) === String(l.producto_id)) && (!origId || Number(q.ubicacion_id) === origId) && Number(q.cantidad) > 0)
-        .map(q => ({
-          value: q.lote_codigo || '',
-          label: q.lote_codigo || 'Sin lote',
-          sublabel: `Disp: ${q.cantidad} (${q.ubicacion_nombre})`,
-          raw: q,
-        }));
-      mountCombobox(el, {
-        value: l.lote || '',
-        allowFreeText: true,
-        placeholder: 'Lote / Quant (opcional)...',
-        items: opts,
-        onSelect: (it) => {
-          if (!it) { l.lote = ''; l.lote_id = ''; return; }
-          if (it.raw) {
-            l.lote = it.raw.lote_codigo || '';
-            l.lote_id = it.raw.lote_id || '';
-          } else {
-            l.lote = it.label || it.value || '';
-            l.lote_id = '';
-          }
+      renderSpreadsheetTable(sheetHost, {
+        rows: lineas,
+        compact: true,
+        showDirty: false,
+        addRowLabel: '+ Agregar Ítem',
+        columns: [
+          {
+            key: 'producto_id',
+            label: 'Producto',
+            type: 'combobox',
+            placeholder: 'Buscar producto...',
+            options: () => prodItems(),
+            render: (l) => {
+              const p = productos.find(pr => String(pr.id) === String(l.producto_id));
+              return p ? `<strong>${esc(p.nombre)}</strong>` : '<span class="muted">Seleccionar producto...</span>';
+            },
+            onPickItem: (l, raw) => {
+              if (!raw) return;
+              l.producto_id = String(raw.id);
+              l.descripcion = raw.nombre;
+              l.udm = raw.udm || 'unidades';
+            },
+          },
+          {
+            key: 'lote',
+            label: 'Lote',
+            type: 'combobox',
+            placeholder: 'Lote / Quant (opcional)...',
+            options: (l) => quants
+              .filter(q => (!l.producto_id || String(q.producto_id) === String(l.producto_id)) && (!origId || Number(q.ubicacion_id) === origId) && Number(q.cantidad) > 0)
+              .map(q => ({
+                value: q.lote_codigo || '',
+                label: q.lote_codigo ? `${q.lote_codigo} (Disp: ${q.cantidad})` : `Sin lote (Disp: ${q.cantidad})`,
+                raw: q,
+              })),
+            onPickItem: (l, raw) => {
+              l.lote = raw?.lote_codigo || '';
+              l.lote_id = raw?.lote_id || '';
+            },
+            render: (l) => l.lote ? `<code>${esc(l.lote)}</code>` : '<span class="muted">-</span>',
+          },
+          {
+            key: 'cantidad',
+            label: 'Cantidad',
+            type: 'number',
+            step: 0.01,
+            min: 0.01,
+            align: 'right',
+            parse: (v) => Math.max(0.01, Number(v) || 1),
+          },
+          {
+            key: 'udm',
+            label: 'Unidad',
+            type: 'readonly',
+            nowrap: true,
+            render: (l) => `<span class="badge badge-muted">${esc(l.udm || 'unidades')}</span>`,
+          },
+        ],
+        onAddRow: () => {
+          lineas.push({ producto_id: '', lote: '', lote_id: '', descripcion: '', cantidad: 1, udm: 'unidades' });
+          renderLinesSheet();
         },
+        onDeleteRow: (_row, idx) => {
+          if (lineas.length <= 1) { toast('Debe haber al menos una línea', true); return; }
+          lineas.splice(idx, 1);
+          renderLinesSheet();
+        },
+        onCellChange: () => {},
       });
     };
-
-    root.querySelectorAll('.op-prod-combo').forEach(el => {
-      const idx = Number(el.dataset.idx);
-      mountCombobox(el, {
-        value: lineas[idx].producto_id,
-        placeholder: 'Buscar o crear producto...',
-        items: prodItems(),
-        onSelect: (it) => {
-          if (!it) { lineas[idx].producto_id = ''; return; }
-          const p = it.raw;
-          lineas[idx].producto_id = String(p.id);
-          lineas[idx].descripcion = p.nombre;
-          lineas[idx].udm = p.udm || 'unidades';
-          const udmBadge = root.querySelector(`.op-udm-badge[data-idx="${idx}"]`);
-          if (udmBadge) udmBadge.textContent = lineas[idx].udm;
-          const loteEl = root.querySelector(`.op-lote-combo[data-idx="${idx}"]`);
-          if (loteEl) mountLoteCombo(loteEl, idx);
-        },
-        onCreate: async (q) => {
-          const created = await quickCreateProducto(q, { se_compra: true, se_fabrica: false });
-          if (created) productos.push(created.raw);
-          return created;
-        },
-      });
-    });
-
-    root.querySelectorAll('.op-lote-combo').forEach(el => mountLoteCombo(el, Number(el.dataset.idx)));
-
-    root.querySelector('#btn-op-add-line').addEventListener('click', () => {
-      syncFormMeta();
-      lineas.push({ producto_id: '', lote: '', lote_id: '', descripcion: '', cantidad: 1, udm: 'unidades' });
-      draw();
-    });
-    root.querySelectorAll('.op-del').forEach(b => b.addEventListener('click', () => {
-      syncFormMeta();
-      lineas.splice(Number(b.dataset.idx), 1);
-      draw();
-    }));
-    root.querySelectorAll('.op-qty').forEach(inp => inp.addEventListener('input', () => { lineas[Number(inp.dataset.idx)].cantidad = Number(inp.value) || 0; }));
+    renderLinesSheet();
 
     const submitOp = async (estado) => {
       syncFormMeta();
@@ -761,13 +762,13 @@ export async function renderOperacionStockDetalleView({ id }) {
         <label>
           <span>Contacto</span>
           ${op.contacto_id
-            ? `<div style="padding:8px 0;"><a href="/contactos/${op.contacto_id}" data-link class="link-primary"><strong>${esc(op.contacto_nombre || op.contacto_razon_social || '-')}</strong></a></div>`
+            ? `<div class="sx-e1deb8"><a href="/contactos/${op.contacto_id}" data-link class="link-primary"><strong>${esc(op.contacto_nombre || op.contacto_razon_social || '-')}</strong></a></div>`
             : `<input type="text" readonly value="-" />`}
         </label>
         <label>
           <span>Documento Origen</span>
           ${refLink
-            ? `<div style="padding:8px 0;"><a href="${refLink}" data-link class="link-primary"><strong>${esc(`${op.referencia_tipo} #${op.referencia_id}`)}</strong></a></div>`
+            ? `<div class="sx-e1deb8"><a href="${refLink}" data-link class="link-primary"><strong>${esc(`${op.referencia_tipo} #${op.referencia_id}`)}</strong></a></div>`
             : `<input type="text" readonly value="${esc(op.referencia_tipo ? `${op.referencia_tipo} #${op.referencia_id}` : '-')}" />`}
         </label>
         <label><span>Motivo</span><input type="text" readonly value="${esc(op.motivo || '-')}" /></label>
@@ -778,8 +779,8 @@ export async function renderOperacionStockDetalleView({ id }) {
         </label>
         <label>
           <span>Código de Seguimiento</span>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" id="opd-seg" value="${esc(op.codigo_seguimiento || '')}" placeholder="Ej: AR123456789" style="flex:1;" />
+          <div class="flex-row-md">
+            <input type="text" id="opd-seg" value="${esc(op.codigo_seguimiento || '')}" placeholder="Ej: AR123456789" class="sx-da5cd6" />
             <button type="button" id="btn-opd-save-envio" class="btn btn-sm">Guardar envío</button>
           </div>
         </label>
@@ -788,14 +789,21 @@ export async function renderOperacionStockDetalleView({ id }) {
   `;
 
   const isBorrador = op.estado === 'Borrador';
+  if (isBorrador) {
+    lineas.forEach(l => {
+      l.lote_edit = l.lote_codigo || l.lote || '';
+      l.a_procesar = Number(l.cantidad || 0);
+    });
+  }
   const itemsHtml = `
     <div class="card">
       <div class="card-header">
         <div>
           <h2>Ítems (${lineas.length})</h2>
-          ${isBorrador ? `<span class="muted" style="font-size:0.82rem;">Podés ajustar la cantidad a procesar hoy; si es menor al total pedido se generará automáticamente un documento en Borrador por el saldo pendiente.</span>` : ''}
+          ${isBorrador ? `<span class="muted text-sm">Podés ajustar la cantidad a procesar hoy; si es menor al total pedido se generará automáticamente un documento en Borrador por el saldo pendiente.</span>` : ''}
         </div>
       </div>
+      ${isBorrador ? `<div id="opd-lines-sheet"></div>` : `
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -803,34 +811,26 @@ export async function renderOperacionStockDetalleView({ id }) {
               <th>Producto</th>
               <th>SKU</th>
               <th>Lote</th>
-              ${isBorrador ? '<th class="num">Pedido</th><th class="num">A Procesar</th>' : '<th class="num">Cantidad</th>'}
+              <th class="num">Cantidad</th>
               <th>Unidad</th>
             </tr>
           </thead>
           <tbody>
-            ${lineas.length === 0 ? `<tr><td colspan="${isBorrador ? 6 : 5}" class="muted">Sin líneas registradas.</td></tr>` : lineas.map(l => `
+            ${lineas.length === 0 ? `<tr><td colspan="5" class="muted">Sin líneas registradas.</td></tr>` : lineas.map(l => `
               <tr>
                 <td><strong>${esc(l.item_nombre || l.descripcion || '-')}</strong></td>
                 <td class="muted">${esc(l.sku || '-')}</td>
                 <td>
-                  ${isBorrador
-                    ? `<input type="text" class="opd-line-lote" data-lid="${l.id}" value="${esc(l.lote_codigo || l.lote || '')}" placeholder="Lote" style="width:130px;" />`
-                    : (l.lote_codigo || l.lote ? `<span class="badge badge-muted">${esc(l.lote_codigo || l.lote)}</span>` : '<span class="muted">-</span>')}
+                  ${l.lote_codigo || l.lote ? `<span class="badge badge-muted">${esc(l.lote_codigo || l.lote)}</span>` : '<span class="muted">-</span>'}
                 </td>
-                ${isBorrador ? `
-                  <td class="num muted">${fmtNum(l.cantidad)}</td>
-                  <td class="num">
-                    <input type="number" step="0.0001" min="0" max="${l.cantidad}" class="opd-line-qty num" data-lid="${l.id}" data-pid="${l.producto_id}" value="${l.cantidad}" style="width:110px;text-align:right;font-weight:600;" />
-                  </td>
-                ` : `
-                  <td class="num"><strong>${fmtNum(l.cantidad)}</strong></td>
-                `}
+                <td class="num"><strong>${fmtNum(l.cantidad)}</strong></td>
                 <td>${esc(l.udm || 'unidades')}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
       </div>
+      `}
     </div>
   `;
 
@@ -849,16 +849,12 @@ export async function renderOperacionStockDetalleView({ id }) {
       primary: true,
       onClick: async () => {
         try {
-          const partialLines = Array.from(root.querySelectorAll('.opd-line-qty')).map(inp => {
-            const lid = Number(inp.dataset.lid);
-            const loteInp = root.querySelector(`.opd-line-lote[data-lid="${lid}"]`);
-            return {
-              id: lid,
-              producto_id: Number(inp.dataset.pid),
-              cantidad: Number(inp.value) || 0,
-              lote: loteInp ? loteInp.value.trim() : undefined,
-            };
-          });
+          const partialLines = lineas.map(l => ({
+            id: Number(l.id),
+            producto_id: Number(l.producto_id),
+            cantidad: Number(l.a_procesar) || 0,
+            lote: String(l.lote_edit || '').trim() || undefined,
+          }));
           const res = await api(`/api/operaciones-stock/${id}/confirmar`, {
             method: 'POST',
             body: { lineas: partialLines, generar_backorder: true },
@@ -898,9 +894,9 @@ export async function renderOperacionStockDetalleView({ id }) {
     });
   }
 
-  const smartButtons = [{ label: 'Ítems', count: lineas.length, icon: '📦' }];
+  const smartButtons = [{ label: 'Ítems', count: lineas.length }];
   if (refLink) {
-    smartButtons.push({ label: `${op.referencia_tipo} #${op.referencia_id}`, count: '↗', icon: '🔗', href: refLink });
+    smartButtons.push({ label: `${op.referencia_tipo} #${op.referencia_id}`, count: '↗', href: refLink });
   }
 
   mountDetailView(root, {
@@ -926,7 +922,32 @@ export async function renderOperacionStockDetalleView({ id }) {
       { label: 'Total Unidades', value: fmtNum(totalUnidades) },
     ],
     tabs: [
-      { id: 'items', label: 'Ítems', badge: lineas.length, html: itemsHtml },
+      {
+        id: 'items',
+        label: 'Ítems',
+        badge: lineas.length,
+        html: itemsHtml,
+        onMount: (container) => {
+          if (!isBorrador) return;
+          const sheetHost = container.querySelector('#opd-lines-sheet');
+          if (!sheetHost) return;
+          renderSpreadsheetTable(sheetHost, {
+            rows: lineas,
+            emptyText: 'Sin líneas registradas.',
+            compact: true,
+            showDirty: false,
+            columns: [
+              { key: 'item_nombre', label: 'Producto', type: 'readonly', render: (l) => `<strong>${esc(l.item_nombre || l.descripcion || '-')}</strong>` },
+              { key: 'sku', label: 'SKU', type: 'readonly', nowrap: true, render: (l) => `<span class="muted">${esc(l.sku || '-')}</span>` },
+              { key: 'lote_edit', label: 'Lote', type: 'text', render: (l) => l.lote_edit ? `<code>${esc(l.lote_edit)}</code>` : '<span class="muted">-</span>' },
+              { key: 'cantidad', label: 'Pedido', type: 'readonly', align: 'right', nowrap: true, render: (l) => `<span class="muted">${fmtNum(l.cantidad)}</span>` },
+              { key: 'a_procesar', label: 'A Procesar', type: 'number', step: 0.0001, min: 0, align: 'right', parse: (v, r) => Math.max(0, Number(v) || 0) },
+              { key: 'udm', label: 'Unidad', type: 'readonly', nowrap: true, render: (l) => esc(l.udm || 'unidades') },
+            ],
+            onCellChange: () => {},
+          });
+        },
+      },
       { id: 'datos', label: 'Datos y Envío', html: datosHtml },
     ],
     defaultTab: 'items',

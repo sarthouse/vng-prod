@@ -1,5 +1,5 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, exportRowsToCSV, renderProvinciaOptions, setupFileDropzones } from '../../lib/format.js';
+import { esc, exportRowsToCSV, renderProvinciaOptions, setupFileDropzones, formatDocumento, bindDocumentoInput } from '../../lib/format.js';
 import { renderSeguridadSection } from './seguridadSection.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
 
@@ -43,18 +43,25 @@ function parseCsvText(text) {
 
 export async function renderConfigView() {
   const root = document.getElementById('app-view');
-  const [config, puntosVenta, secuencias, afip] = await Promise.all([
+  const [config, puntosVenta, secuencias, afip, planCuentas] = await Promise.all([
     api('/api/config'),
     api('/api/puntos-venta'),
     api('/api/secuencias').catch(() => []),
     api('/api/afip/config').catch(() => null),
+    api('/api/tesoreria/plan-cuentas').catch(() => []),
   ]);
   const empresa = config.empresa || {};
   const impuestos = config.impuestos || [];
+  const cuentasImputables = (planCuentas || []).filter(c => Number(c.activo) !== 0 && Number(c.imputable) !== 0);
+  const ctaOptions = (selectedId, fallbackLabel) => [
+    `<option value="">-- Estándar (${esc(fallbackLabel)}) --</option>`,
+    ...cuentasImputables.map(c => `<option value="${c.id}" ${Number(selectedId) === Number(c.id) ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`),
+  ].join('');
 
   const tabs = [
     { id: 'empresa', label: 'Empresa y Fiscal' },
-    { id: 'importacion', label: 'Importación CSV' },
+    { id: 'cuentas_contables', label: 'Cuentas Contables' },
+    { id: 'importacion', label: 'Importación / Exportación' },
     { id: 'seguridad', label: 'Usuarios y Permisos' },
   ];
   if (!tabs.some(t => t.id === activeConfigTab)) activeConfigTab = 'empresa';
@@ -204,23 +211,23 @@ export async function renderConfigView() {
           <span>Pie / Leyenda fija en comprobantes</span>
           <input type="text" name="print_pie_comprobante" value="${esc(empresa.print_pie_comprobante || '')}" placeholder="Ej: Alias: MI.EMPRESA.MP · Los cambios se realizan dentro de los 15 días." />
         </label>
-        <div class="full" style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;">
+        <div class="full sx-0db129">
           <label class="checkbox-field"><input type="checkbox" name="print_mostrar_logo" ${Number(empresa.print_mostrar_logo ?? 1) === 1 ? 'checked' : ''} /> <span>Mostrar logo en comprobantes</span></label>
           <label class="checkbox-field"><input type="checkbox" name="print_modo_economico" ${Number(empresa.print_modo_economico ?? 0) === 1 ? 'checked' : ''} /> <span>Modo tinta económico (B/N sin rellenos)</span></label>
         </div>
-        <div class="full" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-bg);">
-          <div id="empresa-logo-preview" style="width:140px;height:60px;border:1px dashed var(--color-border);border-radius:6px;background:#fff;display:grid;place-items:center;overflow:hidden;padding:4px;">
+        <div class="full sx-03a722">
+          <div id="empresa-logo-preview" class="sx-332390">
             ${empresa.logo_data && String(empresa.logo_data).startsWith('data:image/')
-              ? `<img src="${esc(empresa.logo_data)}" alt="Logo empresa" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-              : '<span class="muted" style="font-size:11px;">Sin logo</span>'}
+              ? `<img src="${esc(empresa.logo_data)}" alt="Logo empresa" class="sx-60bb2c" />`
+              : '<span class="muted text-2xs">Sin logo</span>'}
           </div>
-          <div style="flex:1;min-width:220px;">
-            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Logo de Empresa (para PDFs y Remitos)</div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <div class="sx-39cc94">
+            <div class="sx-1299a6">Logo de Empresa (para PDFs y Remitos)</div>
+            <div class="sx-36eedc">
               <input type="file" id="empresa-logo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" />
               <button type="button" class="btn btn-sm" id="btn-clear-logo">Quitar Logo</button>
             </div>
-            <p class="muted" style="font-size:11.5px;margin:4px 0 0;">PNG, JPG, WebP o SVG. Se optimiza automáticamente para impresión.</p>
+            <p class="muted sx-58980f">PNG, JPG, WebP o SVG. Se optimiza automáticamente para impresión.</p>
           </div>
           <input type="hidden" name="logo_data" id="empresa-logo-data" value="${esc(empresa.logo_data || '')}" />
         </div>
@@ -234,14 +241,14 @@ export async function renderConfigView() {
       <div class="card-header">
         <div>
           <h2>Puntos de Venta</h2>
-          <p class="muted" style="font-size:0.82rem;">Formato fiscal estándar: <code>{prefijo} {puntoventa}-{comprobante}</code> (ej. <code>FA 0001-00000001</code>).</p>
+          <p class="muted text-sm">Formato fiscal estándar: <code>{prefijo} {puntoventa}-{comprobante}</code> (ej. <code>FA 0001-00000001</code>).</p>
         </div>
       </div>
-      <form id="form-add-pv" class="toolbar" style="margin-bottom:14px;">
-        <input type="number" name="numero" min="1" max="9999" required placeholder="Número" style="width:150px;" />
-        <input type="text" name="nombre" required placeholder="Nombre" style="min-width:260px;" />
-        <label class="checkbox-inline" style="margin:0;"><input type="checkbox" name="es_default" /><span>Por defecto</span></label>
-        <label class="checkbox-inline" style="margin:0;"><input type="checkbox" name="es_electronica" /><span>Electrónica (WSFE)</span></label>
+      <form id="form-add-pv" class="toolbar mb-lg">
+        <input type="number" name="numero" min="1" max="9999" required placeholder="Número" class="sx-957822" />
+        <input type="text" name="nombre" required placeholder="Nombre" class="sx-6686b3" />
+        <label class="checkbox-inline m-0"><input type="checkbox" name="es_default" /><span>Por defecto</span></label>
+        <label class="checkbox-inline m-0"><input type="checkbox" name="es_electronica" /><span>Electrónica (WSFE)</span></label>
         <button type="submit" class="btn btn-primary">+ Agregar Punto de Venta</button>
       </form>
       <div class="table-wrap">
@@ -279,15 +286,15 @@ export async function renderConfigView() {
 
     ${afip ? `
     <div class="card">
-      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div class="card-header sx-4ad709">
         <div>
           <h2>Facturación Electrónica y Padrón (AFIP / ARCA)</h2>
-          <p class="muted" style="font-size:0.82rem;">Generá tu clave privada y CSR para subir a AFIP, cargá el certificado <code>.crt</code> y operá con WSFEv1 y Padrón A5.</p>
+          <p class="muted text-sm">Generá tu clave privada y CSR para subir a AFIP, cargá el certificado <code>.crt</code> y operá con WSFEv1 y Padrón A5.</p>
         </div>
         <span class="badge ${afip.entorno === 'produccion' ? 'badge-ok' : 'badge-parcial'}">${afip.entorno === 'produccion' ? 'Producción' : 'Homologación (Testing)'}</span>
       </div>
 
-      <div class="form-grid" style="margin-bottom:14px;">
+      <div class="form-grid mb-lg">
         <label>
           <span>Entorno AFIP</span>
           <select id="afip-entorno">
@@ -299,30 +306,30 @@ export async function renderConfigView() {
           <span>Nombre / Alias del Certificado (CN)</span>
           <input type="text" id="afip-cn" value="vanguard" placeholder="vanguard" />
         </label>
-        <div class="full" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <div class="full sx-49587d">
           <button type="button" class="btn btn-primary" id="btn-afip-gen-keys">Generar Clave Privada y CSR</button>
           <button type="button" class="btn" id="btn-afip-dl-csr" ${afip.tiene_csr ? '' : 'disabled'}>Descargar solicitud (.csr)</button>
           <button type="button" class="btn" id="btn-afip-test-wsfe">Probar Conexión WSFE</button>
-          <span class="muted" style="font-size:0.82rem;">
+          <span class="muted text-sm">
             ${afip.tiene_key ? 'Clave RSA 2048 guardada.' : 'Sin clave generada.'}
             ${afip.tiene_csr ? ' CSR listo para descargar.' : ''}
           </span>
         </div>
       </div>
 
-      <div style="border-top:1px solid var(--color-border);padding-top:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+      <div class="section-divider">
+        <div class="flex-between mb-md">
           <strong>Certificado X.509 emitido por AFIP (.crt)</strong>
           ${afip.cert_info
             ? `<span class="badge ${afip.cert_info.vigente ? 'badge-ok' : 'badge-danger'}">${afip.cert_info.vigente ? 'Vigente' : 'Vencido'} · Vence: ${esc(afip.cert_info.validTo)}</span>`
             : `<span class="badge badge-muted">Sin certificado cargado</span>`}
         </div>
-        ${afip.cert_info ? `<p class="muted" style="font-size:0.8rem;margin:0 0 8px;">${esc(afip.cert_info.subject)} · Serie: <code>${esc(afip.cert_info.serialNumber)}</code></p>` : ''}
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+        ${afip.cert_info ? `<p class="text-sm-muted mb-md">${esc(afip.cert_info.subject)} · Serie: <code>${esc(afip.cert_info.serialNumber)}</code></p>` : ''}
+        <div class="cert-upload-row">
           <input type="file" id="afip-crt-file" accept=".crt,.pem,.cer" />
-          <button type="button" class="btn btn-primary btn-sm" id="btn-afip-save-crt" disabled>Guardar Certificado (.crt)</button>
+          <button type="button" class="btn btn-primary" id="btn-afip-save-crt" disabled>Guardar Certificado (.crt)</button>
         </div>
-        <div id="afip-crt-status" class="muted" style="font-size:12px;">Seleccioná un archivo de certificado X.509 (.crt, .pem o .cer).</div>
+        <div id="afip-crt-status" class="text-sm-muted">Seleccioná un archivo de certificado X.509 (.crt, .pem o .cer).</div>
       </div>
     </div>
     ` : ''}
@@ -331,7 +338,7 @@ export async function renderConfigView() {
       <div class="card-header">
         <div>
           <h2>Secuencias de Numeración</h2>
-          <p class="muted" style="font-size:0.82rem;">Prefijos, sufijos, relleno (padding), próximo número y dominio para cada tipo de documento.</p>
+          <p class="muted text-sm">Prefijos, sufijos, relleno (padding), próximo número y dominio para cada tipo de documento.</p>
         </div>
       </div>
       <div class="table-wrap">
@@ -343,8 +350,8 @@ export async function renderConfigView() {
               <th>Dominio</th>
               <th>Prefijo</th>
               <th>Sufijo</th>
-              <th style="width:90px;">Padding</th>
-              <th style="width:110px;">Próx. Nº</th>
+              <th class="w-90">Padding</th>
+              <th class="sx-1a3055">Próx. Nº</th>
               <th>Usa PV</th>
               <th>Acciones</th>
             </tr>
@@ -361,10 +368,10 @@ export async function renderConfigView() {
                     ).join('')}
                   </select>
                 </td>
-                <td><input type="text" class="seq-prefijo input-sm" value="${esc(seq.prefijo)}" style="width:85px;" /></td>
-                <td><input type="text" class="seq-sufijo input-sm" value="${esc(seq.sufijo)}" style="width:75px;" /></td>
-                <td><input type="number" min="1" max="12" class="seq-padding input-sm" value="${seq.padding}" style="width:70px;" /></td>
-                <td><input type="number" min="1" class="seq-next input-sm" value="${seq.siguiente_numero}" style="width:90px;" /></td>
+                <td><input type="text" class="seq-prefijo input-sm w-85" value="${esc(seq.prefijo)}" /></td>
+                <td><input type="text" class="seq-sufijo input-sm sx-65e62e" value="${esc(seq.sufijo)}" /></td>
+                <td><input type="number" min="1" max="12" class="seq-padding input-sm w-70" value="${seq.padding}" /></td>
+                <td><input type="number" min="1" class="seq-next input-sm w-90" value="${seq.siguiente_numero}" /></td>
                 <td><input type="checkbox" class="seq-pv" ${seq.usa_punto_venta ? 'checked' : ''} /></td>
                 <td><button type="button" class="btn btn-sm btn-primary" data-save-seq="${seq.id}">Guardar</button></td>
               </tr>
@@ -376,40 +383,132 @@ export async function renderConfigView() {
 
     </section>
 
+    <section class="config-tab-panel ${activeConfigTab === 'cuentas_contables' ? 'active' : ''}" data-config-panel="cuentas_contables">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Cuentas Contables por Defecto</h2>
+            <span class="muted text-md">Cuentas utilizadas automáticamente en asientos de ventas, compras, impuestos y etapas de producción cuando no hay una cuenta específica en el ítem o diario.</span>
+          </div>
+        </div>
+        <form id="form-cuentas-defecto" class="form-grid">
+          <label>
+            <span>Clientes / Deudores por Ventas</span>
+            <select name="cta_clientes_id">${ctaOptions(empresa.cta_clientes_id, '1.1.03')}</select>
+          </label>
+          <label>
+            <span>Proveedores</span>
+            <select name="cta_proveedores_id">${ctaOptions(empresa.cta_proveedores_id, '2.1.01')}</select>
+          </label>
+          <label>
+            <span>Ventas por Defecto</span>
+            <select name="cta_ventas_id">${ctaOptions(empresa.cta_ventas_id, '4.1.01')}</select>
+          </label>
+          <label>
+            <span>Compras / Costo Mercadería por Defecto</span>
+            <select name="cta_compras_id">${ctaOptions(empresa.cta_compras_id, '5.1.01')}</select>
+          </label>
+          <label>
+            <span>Mano de Obra / Talleres (Etapas Producción)</span>
+            <select name="cta_mano_obra_id">${ctaOptions(empresa.cta_mano_obra_id, '5.1.02')}</select>
+          </label>
+          <label>
+            <span>IVA Crédito Fiscal</span>
+            <select name="cta_iva_credito_id">${ctaOptions(empresa.cta_iva_credito_id, '1.1.04')}</select>
+          </label>
+          <label>
+            <span>IVA Débito Fiscal</span>
+            <select name="cta_iva_debito_id">${ctaOptions(empresa.cta_iva_debito_id, '2.1.02')}</select>
+          </label>
+          <label>
+            <span>Percepciones y Retenciones Sufridas</span>
+            <select name="cta_perc_sufridas_id">${ctaOptions(empresa.cta_perc_sufridas_id, '1.1.05')}</select>
+          </label>
+          <label>
+            <span>Percepciones / Retenciones a Depositar</span>
+            <select name="cta_ret_depositar_id">${ctaOptions(empresa.cta_ret_depositar_id, '2.1.03')}</select>
+          </label>
+          <div class="full modal-footer">
+            <button type="submit" class="btn btn-primary">Guardar Cuentas por Defecto</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
     <section class="config-tab-panel ${activeConfigTab === 'importacion' ? 'active' : ''}" data-config-panel="importacion">
     <div class="card">
       <div class="card-header">
         <div>
           <h2>Importación Masiva de Datos</h2>
-          <p class="muted" style="font-size:0.82rem;">Importá contactos (clientes, proveedores o talleres) y productos desde un archivo CSV. Columnas separadas por coma o punto y coma.</p>
+          <p class="muted text-sm">Importá contactos (clientes, proveedores o talleres) y productos desde un archivo CSV. Columnas separadas por coma o punto y coma.</p>
         </div>
       </div>
       <div class="card-body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;">
-          <div style="border:1px solid var(--color-border);border-radius:8px;padding:14px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
+        <div class="sx-1e4e90">
+          <div class="sx-89030c">
+            <div class="sx-cea59b">
               <strong>Importar Contactos</strong>
               <button type="button" id="btn-tpl-cont" class="btn btn-sm">Descargar Plantilla CSV</button>
             </div>
-            <p class="muted" style="font-size:0.78rem;margin:0 0 10px;">Columnas: <code>nombre, razon_social, cuit, condicion_iva, es_cliente, es_proveedor, es_taller, telefono, email, direccion, localidad, provincia, observaciones</code></p>
+            <p class="muted sx-7b0e4e">Columnas: <code>nombre, razon_social, cuit, condicion_iva, es_cliente, es_proveedor, es_taller, telefono, email, direccion, localidad, provincia, observaciones</code></p>
             <input type="file" id="file-imp-cont" accept=".csv,text/csv" />
-            <div id="status-imp-cont" class="muted" style="font-size:12px;margin-top:8px;">Ningún archivo seleccionado.</div>
-            <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+            <div id="status-imp-cont" class="muted sx-f6314d">Ningún archivo seleccionado.</div>
+            <div class="sx-1c2c18">
               <button type="button" id="btn-imp-cont" class="btn btn-primary btn-sm">Importar Contactos</button>
             </div>
           </div>
-          <div style="border:1px solid var(--color-border);border-radius:8px;padding:14px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
+          <div class="sx-89030c">
+            <div class="sx-cea59b">
               <strong>Importar Productos</strong>
               <button type="button" id="btn-tpl-prod" class="btn btn-sm">Descargar Plantilla CSV</button>
             </div>
-            <p class="muted" style="font-size:0.78rem;margin:0 0 10px;">Columnas: <code>codigo, nombre, descripcion, se_fabrica, se_compra, tipo, categoria, proveedor, udm, precio, alicuota_iva, stock, stock_minimo, minimo_compra</code></p>
+            <p class="muted sx-7b0e4e">Columnas: <code>codigo, nombre, descripcion, se_fabrica, se_compra, tipo, categoria, proveedor, udm, precio, alicuota_iva, stock, stock_minimo, minimo_compra</code></p>
             <input type="file" id="file-imp-prod" accept=".csv,text/csv" />
-            <div id="status-imp-prod" class="muted" style="font-size:12px;margin-top:8px;">Ningún archivo seleccionado.</div>
-            <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+            <div id="status-imp-prod" class="muted sx-f6314d">Ningún archivo seleccionado.</div>
+            <div class="sx-1c2c18">
               <button type="button" id="btn-imp-prod" class="btn btn-primary btn-sm">Importar Productos</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-md">
+      <div class="card-header">
+        <div>
+          <h2>Motor JSON (Importar / Exportar con Plantillas)</h2>
+          <p class="muted text-sm">Ideal para estructuras con relaciones (Recetas, Productos con variantes, Plan de Cuentas, Contactos, Categorías y Variantes).</p>
+        </div>
+      </div>
+      <div class="form-grid">
+        <label>
+          <span>Entidad</span>
+          <select id="json-ex-entidad">
+            <option value="recetas">Recetas (BoM)</option>
+            <option value="productos">Productos (Plantillas y Variantes)</option>
+            <option value="contactos">Contactos</option>
+            <option value="cuentas_contables">Plan de Cuentas</option>
+            <option value="categorias">Categorías</option>
+            <option value="variantes">Variantes</option>
+          </select>
+        </label>
+        <label>
+          <span>Modo al importar</span>
+          <select id="json-ex-mode">
+            <option value="upsert">Crear y actualizar existentes (Upsert)</option>
+            <option value="skip_existing">Solo crear nuevos (omitir existentes)</option>
+          </select>
+        </label>
+        <div class="full flex-row-md">
+          <button type="button" id="btn-json-export" class="btn">Exportar JSON</button>
+          <button type="button" id="btn-json-template" class="btn">Descargar Plantilla JSON</button>
+        </div>
+        <div class="full">
+          <input type="file" id="file-json-import" accept=".json,application/json" />
+          <div id="status-json-import" class="text-sm-muted mt-sm">Ningún archivo JSON seleccionado.</div>
+        </div>
+        <div class="full">
+          <button type="button" id="btn-json-import" class="btn btn-primary" disabled>Importar JSON</button>
         </div>
       </div>
     </div>
@@ -442,8 +541,8 @@ export async function renderConfigView() {
   const logoPreviewEl = root.querySelector('#empresa-logo-preview');
   const renderLogoPreview = (src) => {
     logoPreviewEl.innerHTML = src
-      ? `<img src="${esc(src)}" alt="Logo empresa" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-      : '<span class="muted" style="font-size:11px;">Sin logo</span>';
+      ? `<img src="${esc(src)}" alt="Logo empresa" class="sx-60bb2c" />`
+      : '<span class="muted text-2xs">Sin logo</span>';
   };
   logoFileEl?.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
@@ -480,7 +579,36 @@ export async function renderConfigView() {
     renderLogoPreview('');
   });
 
-  root.querySelector('#form-empresa').addEventListener('submit', async (e) => {
+  root.querySelector('#form-cuentas-defecto')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const numOrNull = (k) => (fd.get(k) ? Number(fd.get(k)) : null);
+    try {
+      await api('/api/empresa', {
+        method: 'PUT',
+        body: JSON.stringify({
+          cta_clientes_id: numOrNull('cta_clientes_id'),
+          cta_proveedores_id: numOrNull('cta_proveedores_id'),
+          cta_ventas_id: numOrNull('cta_ventas_id'),
+          cta_compras_id: numOrNull('cta_compras_id'),
+          cta_mano_obra_id: numOrNull('cta_mano_obra_id'),
+          cta_iva_credito_id: numOrNull('cta_iva_credito_id'),
+          cta_iva_debito_id: numOrNull('cta_iva_debito_id'),
+          cta_perc_sufridas_id: numOrNull('cta_perc_sufridas_id'),
+          cta_ret_depositar_id: numOrNull('cta_ret_depositar_id'),
+        }),
+      });
+      toast('Cuentas contables por defecto guardadas');
+      await renderConfigView();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  const formEmpresa = root.querySelector('#form-empresa');
+  bindDocumentoInput(formEmpresa?.querySelector('input[name="cuit"]'), 'CUIT');
+
+  formEmpresa.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
@@ -489,7 +617,7 @@ export async function renderConfigView() {
         body: JSON.stringify({
           razon_social: fd.get('razon_social'),
           nombre_fantasia: fd.get('nombre_fantasia'),
-          cuit: fd.get('cuit'),
+          cuit: formatDocumento(fd.get('cuit'), 'CUIT'),
           condicion_iva: fd.get('condicion_iva'),
           direccion: fd.get('direccion'),
           localidad: fd.get('localidad'),
@@ -728,6 +856,91 @@ export async function renderConfigView() {
       toast(`Productos importados: ${res.created} creados, ${res.updated || 0} actualizados${res.errors?.length ? `, ${res.errors.length} errores` : ''}`);
     } catch (err) {
       toast(err.message, true);
+    }
+  });
+
+  const downloadJsonObj = (obj, filename) => {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  root.querySelector('#btn-json-export')?.addEventListener('click', async () => {
+    const ent = root.querySelector('#json-ex-entidad')?.value || 'recetas';
+    try {
+      const data = await api(`/api/json/exportar/${encodeURIComponent(ent)}`);
+      downloadJsonObj(data, `vanguard_${ent}_${new Date().toISOString().slice(0, 10)}.json`);
+      toast(`Exportados ${data.count ?? data.items?.length ?? 0} registros de ${ent}`);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  root.querySelector('#btn-json-template')?.addEventListener('click', async () => {
+    const ent = root.querySelector('#json-ex-entidad')?.value || 'recetas';
+    try {
+      const tpl = await api(`/api/json/plantilla/${encodeURIComponent(ent)}`);
+      downloadJsonObj(tpl, `plantilla_${ent}.json`);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  let parsedJsonPayload = null;
+  const jsonFileInp = root.querySelector('#file-json-import');
+  const jsonStatusEl = root.querySelector('#status-json-import');
+  const jsonImpBtn = root.querySelector('#btn-json-import');
+  jsonFileInp?.addEventListener('change', async () => {
+    const f = jsonFileInp.files?.[0];
+    parsedJsonPayload = null;
+    if (jsonImpBtn) jsonImpBtn.disabled = true;
+    if (!f) {
+      if (jsonStatusEl) jsonStatusEl.textContent = 'Ningún archivo JSON seleccionado.';
+      return;
+    }
+    try {
+      const obj = JSON.parse(await f.text());
+      const count = Array.isArray(obj) ? obj.length : (Array.isArray(obj?.items) ? obj.items.length : 0);
+      if (!count && !Array.isArray(obj) && !Array.isArray(obj?.items)) {
+        throw new Error('El JSON debe ser un array o contener { "items": [...] }');
+      }
+      parsedJsonPayload = obj;
+      if (obj?.entidad && root.querySelector(`#json-ex-entidad option[value="${obj.entidad}"]`)) {
+        root.querySelector('#json-ex-entidad').value = obj.entidad;
+      }
+      if (jsonStatusEl) jsonStatusEl.innerHTML = `Archivo: <strong>${esc(f.name)}</strong> (${count} registros listos para importar)`;
+      if (jsonImpBtn) jsonImpBtn.disabled = false;
+    } catch (err) {
+      if (jsonStatusEl) jsonStatusEl.innerHTML = `<span class="text-accent">${esc(err.message)}</span>`;
+      toast(err.message, true);
+    }
+  });
+
+  jsonImpBtn?.addEventListener('click', async () => {
+    if (!parsedJsonPayload) return;
+    const ent = root.querySelector('#json-ex-entidad')?.value || 'recetas';
+    const mode = root.querySelector('#json-ex-mode')?.value || 'upsert';
+    jsonImpBtn.disabled = true;
+    try {
+      const res = await api(`/api/json/importar/${encodeURIComponent(ent)}?mode=${encodeURIComponent(mode)}`, {
+        method: 'POST',
+        body: parsedJsonPayload,
+      });
+      const errMsg = res.errors?.length ? `, ${res.errors.length} errores (ej: ${res.errors[0].error})` : '';
+      toast(`Importación ${ent}: ${res.created} creados, ${res.updated} actualizados, ${res.skipped} omitidos${errMsg}`);
+      if (jsonStatusEl) {
+        jsonStatusEl.innerHTML = `Resultado: <strong>${res.created} creados</strong> · <strong>${res.updated} actualizados</strong> · ${res.skipped} omitidos${res.errors?.length ? ` · <span class="text-accent">${res.errors.length} errores</span>` : ''}`;
+      }
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      jsonImpBtn.disabled = false;
     }
   });
 }

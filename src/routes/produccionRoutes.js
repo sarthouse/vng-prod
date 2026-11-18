@@ -3,6 +3,7 @@ import * as recSvc from '../services/produccion/recetaService.js';
 import * as presSvc from '../services/produccion/presupuestoService.js';
 import * as pedSvc from '../services/produccion/pedidoService.js';
 import * as prodSvc from '../services/produccion/produccionService.js';
+import { buildRecetaFichaPdf } from '../services/print/recetaPdfService.js';
 import { json, parseBody } from './http.js';
 
 export async function handleProduccionRoutes(req, res, pathname, user) {
@@ -104,6 +105,23 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
   if (recMatch && req.method === 'DELETE') {
     recSvc.deleteReceta(Number(recMatch[1]));
     json(res, 200, { ok: true });
+    return true;
+  }
+  const recPdfMatch = pathname.match(/^\/api\/recetas\/(\d+)\/pdf$/);
+  if (recPdfMatch && (req.method === 'GET' || req.method === 'POST')) {
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    const conCostos = qs.get('con_costos') !== '0';
+    const pdfBuf = buildRecetaFichaPdf(Number(recPdfMatch[1]), { conCostos });
+    if (!pdfBuf) {
+      json(res, 404, { error: 'Receta no encontrada' });
+      return true;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="ficha-receta-${recPdfMatch[1]}.pdf"`,
+      'Content-Length': pdfBuf.length,
+    });
+    res.end(pdfBuf);
     return true;
   }
   const recCostoMatch = pathname.match(/^\/api\/recetas\/(\d+)\/calcular-costo$/);

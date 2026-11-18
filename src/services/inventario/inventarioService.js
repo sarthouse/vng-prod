@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { convertUnitFromDb } from '../config/configService.js';
 import { resolveVariantForPlantilla } from '../produccion/presupuestoService.js';
@@ -37,8 +36,26 @@ export const ubicacionRepo = new UbicacionRepository();
 export const loteRepo = new LoteRepository();
 export const stockQuantRepo = new StockQuantRepository();
 
+const movimientoStockRepo = new BaseRepository({
+  table: 'movimientos_stock',
+  columns: [
+    'fecha', 'producto_id', 'ubicacion_origen_id', 'ubicacion_destino_id',
+    'lote_id', 'lote', 'tipo', 'cantidad', 'stock_resultante',
+    'referencia_tipo', 'referencia_id', 'nota',
+    'autor_id', 'autor_nombre', 'actualizado_por_id', 'actualizado_por_nombre',
+  ],
+});
+const productoRepo = new BaseRepository({ table: 'productos', columns: ['stock'] });
+const vProductoRepo = new BaseRepository({ table: 'v_productos' });
+const ordenRepo = new BaseRepository({ table: 'ordenes_produccion' });
+const ordenEtapaRepo = new BaseRepository({ table: 'orden_etapas' });
+const ordenLineaRepo = new BaseRepository({ table: 'orden_lineas' });
+const recetaLineaRepo = new BaseRepository({ table: 'receta_lineas' });
+const operacionStockRepo = new BaseRepository({ table: 'operaciones_stock' });
+const compraRepo = new BaseRepository({ table: 'compras' });
+
 function getUbicacionByCodigo(codigo) {
-  return db.prepare('SELECT * FROM ubicaciones WHERE codigo = ?').get(codigo);
+  return ubicacionRepo.query().where('codigo', codigo).get();
 }
 
 const SYSTEM_UBIC_CODES = new Set([
@@ -51,12 +68,21 @@ function isInternalTipo(tipo) {
 }
 
 export function listUbicaciones() {
-  return db.prepare(`
-    SELECT u.*, p.nombre as parent_nombre, p.codigo as parent_codigo
-    FROM ubicaciones u
-    LEFT JOIN ubicaciones p ON p.id = u.parent_id
-    ORDER BY u.tipo ASC, u.es_default DESC, COALESCE(p.nombre, ''), u.nombre ASC
-  `).all();
+  const rows = ubicacionRepo.query('u')
+    .select('u.*, p.nombre as parent_nombre, p.codigo as parent_codigo')
+    .leftJoin('ubicaciones', 'p', 'p.id', 'u.parent_id')
+    .orderBy('u.tipo', 'ASC')
+    .orderBy('u.es_default', 'DESC')
+    .orderBy('u.nombre', 'ASC')
+    .all();
+  return rows.sort((a, b) => {
+    if (a.tipo !== b.tipo) return String(a.tipo || '').localeCompare(String(b.tipo || ''));
+    if (Number(a.es_default) !== Number(b.es_default)) return Number(b.es_default) - Number(a.es_default);
+    const pa = a.parent_nombre || '';
+    const pb = b.parent_nombre || '';
+    if (pa !== pb) return pa.localeCompare(pb);
+    return String(a.nombre || '').localeCompare(String(b.nombre || ''));
+  });
 }
 
 /**
@@ -168,36 +194,54 @@ export function resolveOrCreateLote(params) {
 }
 
 export function listLotes({ producto_id, ubicacion_id } = {}) {
-  const where = ['1=1'];
-  const params = [];
-  if (producto_id) {
-    where.push('l.producto_id = ?');
-    params.push(Number(producto_id));
-  }
+  const qb = loteRepo.query('l').select('l.*');
+  if (producto_id) qb.where('l.producto_id', Number(producto_id));
+
   if (ubicacion_id) {
-    return db.prepare(`
-      SELECT l.*,
-             COALESCE(sq.cantidad, 0) as cantidad_ubicacion,
-             COALESCE(sq.cantidad_reservada, 0) as reservada_ubicacion,
-             COALESCE(sq.cantidad, 0) - COALESCE(sq.cantidad_reservada, 0) as disponible_ubicacion
-      FROM lotes l
-      LEFT JOIN stock_quants sq ON sq.lote_id = l.id AND sq.ubicacion_id = ?
-      WHERE ${where.join(' AND ')}
-      ORDER BY disponible_ubicacion DESC, l.codigo ASC
-    `).all(Number(ubicacion_id), ...params);
+    const lotes = qb.all();
+    const quants = stockQuantRepo.query('sq')
+      .select('sq.lote_id, sq.cantidad, sq.cantidad_reservada')
+      .where('sq.ubicacion_id', Number(ubicacion_id))
+      .whereNotNull('sq.lote_id')
+      .all();
+    const qMap = new Map();
+    for (const q of quants) {
+      const prev = qMap.get(q.lote_id) || { cantidad: 0, reservada: 0 };
+      prev.cantidad += Number(q.cantidad || 0);
+      prev.reservada += Number(q.cantidad_reservada || 0);
+      qMap.set(q.lote_id, prev);
+    }
+    return lotes.map(l => {
+      const q = qMap.get(l.id) || { cantidad: 0, reservada: 0 };
+      return {
+        ...l,
+        cantidad_ubicacion: q.cantidad,
+        reservada_ubicacion: q.reservada,
+        disponible_ubicacion: q.cantidad - q.reservada,
+      };
+    }).sort((a, b) => {
+      if (b.disponible_ubicacion !== a.disponible_ubicacion) {
+        return b.disponible_ubicacion - a.disponible_ubicacion;
+      }
+      return String(a.codigo || '').localeCompare(String(b.codigo || ''));
+    });
   }
-  return db.prepare(`
-    SELECT l.*,
-           COALESCE((
-             SELECT SUM(sq.cantidad)
-             FROM stock_quants sq
-             JOIN ubicaciones u ON u.id = sq.ubicacion_id
-             WHERE sq.lote_id = l.id AND u.tipo IN ('interna', 'dedicada')
-           ), 0) as stock_total
-    FROM lotes l
-    WHERE ${where.join(' AND ')}
-    ORDER BY l.created_at DESC, l.codigo ASC
-  `).all(...params);
+
+  const lotes = qb.orderBy('l.created_at', 'DESC').orderBy('l.codigo', 'ASC').all();
+  const intQuants = stockQuantRepo.query('sq')
+    .select('sq.lote_id, sq.cantidad')
+    .innerJoin('ubicaciones', 'u', 'u.id', 'sq.ubicacion_id')
+    .whereIn('u.tipo', ['interna', 'dedicada'])
+    .whereNotNull('sq.lote_id')
+    .all();
+  const totalMap = new Map();
+  for (const q of intQuants) {
+    totalMap.set(q.lote_id, (totalMap.get(q.lote_id) || 0) + Number(q.cantidad || 0));
+  }
+  return lotes.map(l => ({
+    ...l,
+    stock_total: totalMap.get(l.id) || 0,
+  }));
 }
 
 export function createLote(b) {
@@ -205,7 +249,7 @@ export function createLote(b) {
   if (!codigo) throw new Error('El código de lote es obligatorio');
   const prodId = b.producto_id ? Number(b.producto_id) : null;
   if (!prodId) throw new Error('El lote debe asociarse a un producto');
-  const existing = db.prepare('SELECT id FROM lotes WHERE producto_id = ? AND codigo = ?').get(prodId, codigo);
+  const existing = loteRepo.query().select('id').where('producto_id', prodId).where('codigo', codigo).get();
   if (existing) return existing.id;
   return loteRepo.create({
     codigo,
@@ -219,30 +263,36 @@ function upsertQuant({ producto_id, ubicacion_id, lote = '', lote_id = null, del
   const loteRow = resolveOrCreateLote({ producto_id, lote, lote_id });
   const cleanLote = loteRow ? loteRow.codigo : String(lote || '').trim();
   const resolvedLoteId = loteRow ? loteRow.id : null;
-  const existing = db.prepare(`
-    SELECT id, cantidad FROM stock_quants
-    WHERE producto_id = ? AND ubicacion_id = ? AND lote = ?
-  `).get(producto_id, ubicacion_id, cleanLote);
+  const existing = stockQuantRepo.query()
+    .select('id, cantidad, lote_id')
+    .where('producto_id', producto_id)
+    .where('ubicacion_id', ubicacion_id)
+    .where('lote', cleanLote)
+    .get();
   if (existing) {
     const nextQty = Number(((Number(existing.cantidad) || 0) + delta).toFixed(4));
-    db.prepare("UPDATE stock_quants SET cantidad = ?, lote_id = COALESCE(lote_id, ?), updated_at = datetime('now') WHERE id = ?").run(
-      nextQty, resolvedLoteId, existing.id
-    );
+    stockQuantRepo.update(existing.id, {
+      cantidad: nextQty,
+      lote_id: existing.lote_id ?? resolvedLoteId,
+    });
   } else {
-    db.prepare('INSERT INTO stock_quants (producto_id, ubicacion_id, lote_id, lote, cantidad) VALUES (?, ?, ?, ?, ?)').run(
-      producto_id, ubicacion_id, resolvedLoteId, cleanLote, Number(delta.toFixed(4))
-    );
+    stockQuantRepo.create({
+      producto_id,
+      ubicacion_id,
+      lote_id: resolvedLoteId,
+      lote: cleanLote,
+      cantidad: Number(delta.toFixed(4)),
+    });
   }
 }
 
 function getInternalStockTotal(producto_id) {
-  const row = db.prepare(`
-    SELECT COALESCE(SUM(sq.cantidad), 0) as total
-    FROM stock_quants sq
-    JOIN ubicaciones u ON u.id = sq.ubicacion_id
-    WHERE u.tipo IN ('interna', 'dedicada') AND sq.producto_id = ?
-  `).get(producto_id);
-  return Number((Number(row?.total) || 0).toFixed(4));
+  const total = stockQuantRepo.query('sq')
+    .innerJoin('ubicaciones', 'u', 'u.id', 'sq.ubicacion_id')
+    .whereIn('u.tipo', ['interna', 'dedicada'])
+    .where('sq.producto_id', producto_id)
+    .sum('sq.cantidad');
+  return Number((Number(total) || 0).toFixed(4));
 }
 
 function resolveOrigenDestino({ tipo, cantidad, ubicacion_origen_id, ubicacion_destino_id }) {
@@ -299,12 +349,11 @@ export function registrarMovimientoStock({
   user = null,
 }) {
   const prod = producto_id
-    ? db.prepare(`
-        SELECT p.id, p.sku, p.nombre, p.stock, pt.tipo, pt.udm, pt.categoria
-        FROM v_productos p
-        JOIN v_plantillas pt ON pt.id = p.plantilla_id
-        WHERE p.id = ?
-      `).get(Number(producto_id))
+    ? vProductoRepo.query('p')
+        .select('p.id, p.sku, p.nombre, p.stock, pt.tipo, pt.udm, pt.categoria')
+        .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+        .where('p.id', Number(producto_id))
+        .get()
     : null;
   if (!prod || prod.tipo === 'servicio') return null;
 
@@ -327,79 +376,59 @@ export function registrarMovimientoStock({
   if (destinoId) upsertQuant({ producto_id: prodId, ubicacion_id: destinoId, lote: cleanLote, lote_id: resolvedLoteId, delta: qty });
 
   const nuevoStock = getInternalStockTotal(prodId);
-  db.prepare(`UPDATE productos SET stock = ?, updated_at = datetime('now') WHERE id = ?`).run(nuevoStock, prodId);
+  productoRepo.update(prodId, { stock: nuevoStock });
 
-  const origenTipo = origenId ? db.prepare('SELECT tipo FROM ubicaciones WHERE id = ?').get(origenId)?.tipo : null;
-  const destinoTipo = destinoId ? db.prepare('SELECT tipo FROM ubicaciones WHERE id = ?').get(destinoId)?.tipo : null;
+  const origenTipo = origenId ? ubicacionRepo.query().select('tipo').where('id', origenId).get()?.tipo : null;
+  const destinoTipo = destinoId ? ubicacionRepo.query().select('tipo').where('id', destinoId).get()?.tipo : null;
   let signedDelta = rawQty;
   if (origenTipo === 'virtual' && isInternalTipo(destinoTipo)) signedDelta = qty;
   else if (isInternalTipo(origenTipo) && destinoTipo === 'virtual') signedDelta = -qty;
   else if (isInternalTipo(origenTipo) && isInternalTipo(destinoTipo)) signedDelta = qty;
 
-  const info = db.prepare(`
-    INSERT INTO movimientos_stock (
-      fecha, producto_id, ubicacion_origen_id, ubicacion_destino_id, lote_id, lote,
-      tipo, cantidad, stock_resultante, referencia_tipo, referencia_id, nota,
-      autor_id, autor_nombre, actualizado_por_id, actualizado_por_nombre, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `).run(
-    fecha || new Date().toISOString().slice(0, 10),
-    prodId,
-    origenId,
-    destinoId,
-    resolvedLoteId,
-    cleanLote,
+  return movimientoStockRepo.create({
+    fecha: fecha || new Date().toISOString().slice(0, 10),
+    producto_id: prodId,
+    ubicacion_origen_id: origenId,
+    ubicacion_destino_id: destinoId,
+    lote_id: resolvedLoteId,
+    lote: cleanLote,
     tipo,
-    Number(signedDelta.toFixed(4)),
-    nuevoStock,
+    cantidad: Number(signedDelta.toFixed(4)),
+    stock_resultante: nuevoStock,
     referencia_tipo,
-    referencia_id ? Number(referencia_id) : null,
+    referencia_id: referencia_id ? Number(referencia_id) : null,
     nota,
-    user?.id || null,
-    user?.nombre || 'Sistema',
-    user?.id || null,
-    user?.nombre || 'Sistema'
-  );
-  return Number(info.lastInsertRowid);
+    autor_id: user?.id || null,
+    autor_nombre: user?.nombre || 'Sistema',
+    actualizado_por_id: user?.id || null,
+    actualizado_por_nombre: user?.nombre || 'Sistema',
+  });
 }
 
 export function listStockQuants({ ubicacion_id, solo_internas } = {}) {
-  const where = ['sq.cantidad != 0'];
-  const params = [];
-  if (ubicacion_id) {
-    where.push('sq.ubicacion_id = ?');
-    params.push(Number(ubicacion_id));
-  }
-  if (solo_internas) {
-    where.push("u.tipo IN ('interna', 'dedicada')");
-  }
-  return db.prepare(`
-    SELECT sq.*,
-           u.codigo as ubicacion_codigo, u.nombre as ubicacion_nombre, u.tipo as ubicacion_tipo,
-           p.nombre as item_nombre,
-           COALESCE(pt.udm, 'unidades') as udm,
-           COALESCE(pt.categoria, '') as categoria
-    FROM stock_quants sq
-    JOIN ubicaciones u ON u.id = sq.ubicacion_id
-    JOIN v_productos p ON p.id = sq.producto_id
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    WHERE ${where.join(' AND ')}
-    ORDER BY u.tipo ASC, u.nombre ASC, item_nombre ASC, sq.lote ASC
-  `).all(...params);
+  const qb = stockQuantRepo.query('sq')
+    .select("sq.*, u.codigo as ubicacion_codigo, u.nombre as ubicacion_nombre, u.tipo as ubicacion_tipo, p.nombre as item_nombre, COALESCE(pt.udm, 'unidades') as udm, COALESCE(pt.categoria, '') as categoria")
+    .innerJoin('ubicaciones', 'u', 'u.id', 'sq.ubicacion_id')
+    .innerJoin('v_productos', 'p', 'p.id', 'sq.producto_id')
+    .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .where('sq.cantidad', '!=', 0);
+  if (ubicacion_id) qb.where('sq.ubicacion_id', Number(ubicacion_id));
+  if (solo_internas) qb.whereIn('u.tipo', ['interna', 'dedicada']);
+  return qb.orderBy('u.tipo', 'ASC').orderBy('u.nombre', 'ASC').orderBy('item_nombre', 'ASC').orderBy('sq.lote', 'ASC').all();
 }
 
 export function computeStockReservadoPorOrdenes() {
-  const ordenes = db.prepare(`
-    SELECT op.*
-    FROM ordenes_produccion op
-    WHERE op.estado IN ('Planificada', 'En Proceso')
-  `).all();
+  const ordenes = ordenRepo.query('op')
+    .select('op.*')
+    .whereIn('op.estado', ['Planificada', 'En Proceso'])
+    .all();
 
   const reservado = new Map();
   for (const op of ordenes) {
-    const etapasPendientes = db.prepare(`
-      SELECT * FROM orden_etapas WHERE orden_id = ? AND stock_consumido = 0
-    `).all(op.id);
+    const etapasPendientes = ordenEtapaRepo.query()
+      .where('orden_id', op.id)
+      .where('stock_consumido', 0)
+      .all();
     if (etapasPendientes.length === 0) continue;
 
     const pendingEtapaIds = new Set(etapasPendientes.map(e => e.etapa_id).filter(Boolean));
@@ -407,21 +436,20 @@ export function computeStockReservadoPorOrdenes() {
     const recetaId = op.receta_id || getActiveRecetaForPlantilla(op.plantilla_id)?.id;
     const usedPlantillas = new Set();
 
-    const ordenLineas = db.prepare(`
-      SELECT ol.*, p.combinacion_json
-      FROM orden_lineas ol
-      JOIN productos p ON p.id = ol.producto_id
-      WHERE ol.orden_id = ?
-    `).all(op.id);
+    const ordenLineas = ordenLineaRepo.query('ol')
+      .select('ol.*, p.combinacion_json')
+      .innerJoin('productos', 'p', 'p.id', 'ol.producto_id')
+      .where('ol.orden_id', op.id)
+      .all();
 
     if (recetaId) {
-      const lineas = db.prepare(`
-        SELECT rl.*, p.plantilla_id as prod_plantilla_id, pt.udm
-        FROM receta_lineas rl
-        JOIN productos p ON p.id = rl.producto_id
-        JOIN v_plantillas pt ON pt.id = p.plantilla_id
-        WHERE rl.receta_id = ? AND pt.tipo != 'servicio'
-      `).all(recetaId);
+      const lineas = recetaLineaRepo.query('rl')
+        .select('rl.*, p.plantilla_id as prod_plantilla_id, pt.udm')
+        .innerJoin('productos', 'p', 'p.id', 'rl.producto_id')
+        .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+        .where('rl.receta_id', recetaId)
+        .where('pt.tipo', '!=', 'servicio')
+        .all();
 
       for (const l of lineas) {
         usedPlantillas.add(`plt:${l.prod_plantilla_id}`);
@@ -441,16 +469,15 @@ export function computeStockReservadoPorOrdenes() {
 }
 
 export function getInventarioResumen() {
-  const productos = db.prepare(`
-    SELECT p.*, pt.tipo, pt.categoria, pt.udm, pt.alicuota_iva, pt.se_compra, pt.se_fabrica,
-           COALESCE(pt.lead_time_dias, 0) as lead_time_dias,
-           pt.proveedor_id, COALESCE(c.nombre, '') as proveedor_nombre
-    FROM v_productos p
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    LEFT JOIN contactos c ON c.id = pt.proveedor_id
-    WHERE p.activo = 1 AND pt.tipo != 'servicio'
-    ORDER BY pt.categoria ASC, p.nombre ASC
-  `).all();
+  const productos = vProductoRepo.query('p')
+    .select("p.*, pt.tipo, pt.categoria, pt.udm, pt.alicuota_iva, pt.se_compra, pt.se_fabrica, COALESCE(pt.lead_time_dias, 0) as lead_time_dias, pt.proveedor_id, COALESCE(c.nombre, '') as proveedor_nombre")
+    .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
+    .where('p.activo', 1)
+    .where('pt.tipo', '!=', 'servicio')
+    .orderBy('pt.categoria', 'ASC')
+    .orderBy('p.nombre', 'ASC')
+    .all();
 
   const reservadoMap = computeStockReservadoPorOrdenes();
 
@@ -480,33 +507,15 @@ export function getInventarioResumen() {
 }
 
 export function listMovimientosStock({ producto_id, tipo } = {}) {
-  const where = [];
-  const params = [];
-  if (producto_id) {
-    where.push('ms.producto_id = ?');
-    params.push(Number(producto_id));
-  }
-  if (tipo) {
-    where.push('ms.tipo = ?');
-    params.push(tipo);
-  }
-  const sqlWhere = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  return db.prepare(`
-    SELECT ms.*,
-           p.nombre as producto_nombre,
-           p.nombre as componente_nombre,
-           pt.udm,
-           uo.nombre as origen_nombre, uo.tipo as origen_tipo,
-           ud.nombre as destino_nombre, ud.tipo as destino_tipo
-    FROM movimientos_stock ms
-    JOIN productos p ON p.id = ms.producto_id
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    LEFT JOIN ubicaciones uo ON uo.id = ms.ubicacion_origen_id
-    LEFT JOIN ubicaciones ud ON ud.id = ms.ubicacion_destino_id
-    ${sqlWhere}
-    ORDER BY ms.fecha DESC, ms.id DESC
-    LIMIT 300
-  `).all(...params);
+  const qb = movimientoStockRepo.query('ms')
+    .select('ms.*, p.nombre as producto_nombre, p.nombre as componente_nombre, pt.udm, uo.nombre as origen_nombre, uo.tipo as origen_tipo, ud.nombre as destino_nombre, ud.tipo as destino_tipo')
+    .innerJoin('productos', 'p', 'p.id', 'ms.producto_id')
+    .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .leftJoin('ubicaciones', 'uo', 'uo.id', 'ms.ubicacion_origen_id')
+    .leftJoin('ubicaciones', 'ud', 'ud.id', 'ms.ubicacion_destino_id');
+  if (producto_id) qb.where('ms.producto_id', Number(producto_id));
+  if (tipo) qb.where('ms.tipo', tipo);
+  return qb.orderBy('ms.fecha', 'DESC').orderBy('ms.id', 'DESC').limit(300).all();
 }
 
 function addDaysStockIso(iso, days) {
@@ -652,17 +661,16 @@ export function getFlujoStockMatriz({
   };
 
   // 1. Movimientos históricos reales (que cambian el stock interno total)
-  const movs = db.prepare(`
-    SELECT ms.*, p.nombre as producto_nombre, pt.udm,
-           uo.tipo as origen_tipo, ud.tipo as destino_tipo
-    FROM movimientos_stock ms
-    JOIN productos p ON p.id = ms.producto_id
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    LEFT JOIN ubicaciones uo ON uo.id = ms.ubicacion_origen_id
-    LEFT JOIN ubicaciones ud ON ud.id = ms.ubicacion_destino_id
-    WHERE ms.fecha >= ?
-    ORDER BY ms.fecha ASC, ms.id ASC
-  `).all(firstStart);
+  const movs = movimientoStockRepo.query('ms')
+    .select('ms.*, p.nombre as producto_nombre, pt.udm, uo.tipo as origen_tipo, ud.tipo as destino_tipo')
+    .innerJoin('productos', 'p', 'p.id', 'ms.producto_id')
+    .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .leftJoin('ubicaciones', 'uo', 'uo.id', 'ms.ubicacion_origen_id')
+    .leftJoin('ubicaciones', 'ud', 'ud.id', 'ms.ubicacion_destino_id')
+    .where('ms.fecha', '>=', firstStart)
+    .orderBy('ms.fecha', 'ASC')
+    .orderBy('ms.id', 'ASC')
+    .all();
 
   for (const m of movs) {
     const pid = Number(m.producto_id);
@@ -705,15 +713,13 @@ export function getFlujoStockMatriz({
   }
 
   // 2. Proyecciones: Operaciones de Stock en Borrador (recepciones de compra y entregas de venta)
-  const opsBorrador = db.prepare(`
-    SELECT os.id, os.numero, os.fecha, os.tipo, os.referencia_tipo, os.referencia_id,
-           COALESCE(co.nombre, '') as contacto_nombre,
-           osl.producto_id, osl.cantidad
-    FROM operaciones_stock os
-    JOIN operacion_stock_lineas osl ON osl.operacion_id = os.id
-    LEFT JOIN contactos co ON co.id = os.contacto_id
-    WHERE os.estado = 'Borrador' AND os.tipo IN ('recepcion', 'recepcion_compra', 'entrega', 'entrega_venta')
-  `).all();
+  const opsBorrador = operacionStockRepo.query('os')
+    .select("os.id, os.numero, os.fecha, os.tipo, os.referencia_tipo, os.referencia_id, COALESCE(co.nombre, '') as contacto_nombre, osl.producto_id, osl.cantidad")
+    .innerJoin('operacion_stock_lineas', 'osl', 'osl.operacion_id', 'os.id')
+    .leftJoin('contactos', 'co', 'co.id', 'os.contacto_id')
+    .where('os.estado', 'Borrador')
+    .whereIn('os.tipo', ['recepcion', 'recepcion_compra', 'entrega', 'entrega_venta'])
+    .all();
 
   const comprasConRecepcionBorrador = new Set();
   for (const op of opsBorrador) {
@@ -755,14 +761,13 @@ export function getFlujoStockMatriz({
   }
 
   // 2b. Compras en Borrador (aún sin operación de recepción emitida)
-  const comprasBorrador = db.prepare(`
-    SELECT c.id, c.numero, c.fecha, COALESCE(co.nombre, '') as proveedor_nombre,
-           cl.producto_id, cl.cantidad
-    FROM compras c
-    JOIN compra_lineas cl ON cl.compra_id = c.id
-    LEFT JOIN contactos co ON co.id = c.contacto_id
-    WHERE c.estado = 'Borrador' AND cl.producto_id IS NOT NULL
-  `).all();
+  const comprasBorrador = compraRepo.query('c')
+    .select("c.id, c.numero, c.fecha, COALESCE(co.nombre, '') as proveedor_nombre, cl.producto_id, cl.cantidad")
+    .innerJoin('compra_lineas', 'cl', 'cl.compra_id', 'c.id')
+    .leftJoin('contactos', 'co', 'co.id', 'c.contacto_id')
+    .where('c.estado', 'Borrador')
+    .whereNotNull('cl.producto_id')
+    .all();
 
   for (const cb of comprasBorrador) {
     if (comprasConRecepcionBorrador.has(Number(cb.id))) continue;
@@ -793,27 +798,31 @@ export function getFlujoStockMatriz({
   // 3. Órdenes de Producción activas:
   //    a) Ingreso proyectado de producto terminado (cantidad_pendiente en fecha_objetivo)
   //    b) Consumo proyectado de insumos por etapa pendiente (en fecha_inicio_est de la etapa)
-  const ordenesActivas = db.prepare(`
-    SELECT op.*
-    FROM ordenes_produccion op
-    WHERE op.estado IN ('Planificada', 'En Proceso')
-  `).all();
+  const ordenesActivas = ordenRepo.query('op')
+    .select('op.*')
+    .whereIn('op.estado', ['Planificada', 'En Proceso'])
+    .all();
 
   for (const op of ordenesActivas) {
-    const opLineas = db.prepare(`
-      SELECT ol.*, p.nombre as producto_nombre, p.combinacion_json,
-             COALESCE((
-               SELECT SUM(ms.cantidad)
-               FROM movimientos_stock ms
-               WHERE ms.referencia_tipo = 'orden_produccion'
-                 AND ms.referencia_id = ol.orden_id
-                 AND ms.tipo = 'ingreso_produccion'
-                 AND ms.producto_id = ol.producto_id
-             ), 0) as ingresada
-      FROM orden_lineas ol
-      JOIN productos p ON p.id = ol.producto_id
-      WHERE ol.orden_id = ?
-    `).all(op.id);
+    const rawOpLineas = ordenLineaRepo.query('ol')
+      .select('ol.*, p.nombre as producto_nombre, p.combinacion_json')
+      .innerJoin('productos', 'p', 'p.id', 'ol.producto_id')
+      .where('ol.orden_id', op.id)
+      .all();
+    const ingresosOp = movimientoStockRepo.query('ms')
+      .select('ms.producto_id, ms.cantidad')
+      .where('ms.referencia_tipo', 'orden_produccion')
+      .where('ms.referencia_id', op.id)
+      .where('ms.tipo', 'ingreso_produccion')
+      .all();
+    const ingresadaMap = new Map();
+    for (const ing of ingresosOp) {
+      ingresadaMap.set(Number(ing.producto_id), (ingresadaMap.get(Number(ing.producto_id)) || 0) + Number(ing.cantidad || 0));
+    }
+    const opLineas = rawOpLineas.map(ol => ({
+      ...ol,
+      ingresada: ingresadaMap.get(Number(ol.producto_id)) || 0,
+    }));
 
     const fechaObj = op.fecha_objetivo || addDaysStockIso(op.fecha_inicio || hoyIso, 7);
     if (fechaObj <= lastEnd) {
@@ -842,21 +851,24 @@ export function getFlujoStockMatriz({
     }
 
     // Consumos por etapa pendiente
-    const etapasPend = db.prepare(`
-      SELECT * FROM orden_etapas WHERE orden_id = ? AND stock_consumido = 0 ORDER BY orden_num ASC, id ASC
-    `).all(op.id);
+    const etapasPend = ordenEtapaRepo.query()
+      .where('orden_id', op.id)
+      .where('stock_consumido', 0)
+      .orderBy('orden_num', 'ASC')
+      .orderBy('id', 'ASC')
+      .all();
     if (!etapasPend.length) continue;
 
     const recetaId = op.receta_id || getActiveRecetaForPlantilla(op.plantilla_id)?.id;
     if (!recetaId) continue;
 
-    const rLineas = db.prepare(`
-      SELECT rl.*, p.plantilla_id as prod_plantilla_id, pt.udm
-      FROM receta_lineas rl
-      JOIN productos p ON p.id = rl.producto_id
-      JOIN v_plantillas pt ON pt.id = p.plantilla_id
-      WHERE rl.receta_id = ? AND pt.tipo != 'servicio'
-    `).all(recetaId);
+    const rLineas = recetaLineaRepo.query('rl')
+      .select('rl.*, p.plantilla_id as prod_plantilla_id, pt.udm')
+      .innerJoin('productos', 'p', 'p.id', 'rl.producto_id')
+      .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+      .where('rl.receta_id', recetaId)
+      .where('pt.tipo', '!=', 'servicio')
+      .all();
 
     for (const l of rLineas) {
       let targetEtapa = null;

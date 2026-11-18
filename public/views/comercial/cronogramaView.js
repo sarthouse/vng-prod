@@ -63,7 +63,7 @@ export async function renderCronogramaView() {
       { label: 'Lead Time', render: c => `${c.lead_time_dias} días` },
       { label: 'Producto', render: c => `<strong>${esc(c.producto_nombre)}</strong>` },
       { label: 'Proveedor', render: c => esc(c.proveedor_nombre || '-') },
-      { label: 'Orígenes', render: c => (c.origenes || []).map(o => `<span class="badge badge-muted" style="margin-right:3px;">${esc(o)}</span>`).join('') },
+      { label: 'Orígenes', render: c => (c.origenes || []).map(o => `<span class="badge badge-muted sx-4aa43e">${esc(o)}</span>`).join('') },
       { label: 'Demanda OPs', align: 'right', render: c => `${fmtNum(c.demanda_ordenes)} ${esc(c.udm)}` },
       { label: 'Disponible', align: 'right', render: c => fmtNum(c.stock_disponible) },
       { label: 'Stock Mín.', align: 'right', render: c => fmtNum(c.stock_minimo) },
@@ -85,7 +85,7 @@ export async function renderCronogramaView() {
           ${r.orden_id
             ? `<a href="/ordenes/${r.orden_id}" data-link class="link-primary"><strong>${esc(r.origen)}</strong></a>`
             : `<span class="badge badge-warn">${esc(r.origen)}</span>`}
-          <div class="muted" style="font-size:0.78rem;">${esc(r.etapa)}</div>
+          <div class="muted sx-978ebc">${esc(r.etapa)}</div>
         `,
       },
       { label: 'Producto', render: r => `<strong>${esc(r.producto_nombre)}</strong>` },
@@ -102,7 +102,7 @@ export async function renderCronogramaView() {
     columns: [
       { label: 'Componente', render: a => `<strong>${esc(a.nombre)}</strong>` },
       { label: 'Proveedor', render: a => esc(a.proveedor_nombre || '-') },
-      { label: 'Disponible', align: 'right', render: a => `<strong style="color:var(--color-accent);">${fmtNum(a.disponible)} ${esc(a.udm)}</strong>` },
+      { label: 'Disponible', align: 'right', render: a => `<strong class="text-accent">${fmtNum(a.disponible)} ${esc(a.udm)}</strong>` },
       { label: 'Stock Mínimo', align: 'right', render: a => fmtNum(a.stock_minimo) },
       { label: 'A Comprar', align: 'right', render: a => `<strong>${fmtNum(a.a_comprar)} ${esc(a.udm)}</strong>` },
     ],

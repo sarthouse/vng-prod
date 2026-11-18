@@ -1,4 +1,3 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 
@@ -19,6 +18,13 @@ export const productoRepo = new ProductoRepository();
 export const historialPreciosRepo = new BaseRepository({ model: MODELS.producto_historial_precios });
 const plantillaImpuestoRepo = new BaseRepository({ model: MODELS.plantilla_impuestos });
 const impuestoConfigRepo = new BaseRepository({ model: MODELS.impuestos_config });
+const categoriaRepo = new BaseRepository({ model: MODELS.categorias });
+const unidadRepo = new BaseRepository({ model: MODELS.unidades_medida });
+const varianteRepo = new BaseRepository({ model: MODELS.variantes });
+const productoVarianteRepo = new BaseRepository({ model: MODELS.producto_variantes });
+const recetaRepo = new BaseRepository({ model: MODELS.recetas });
+const vPlantillaRepo = new BaseRepository({ table: 'v_plantillas', defaultOrder: 'nombre ASC' });
+const vProductoRepo = new BaseRepository({ table: 'v_productos', defaultOrder: 'id ASC' });
 
 function normalizeImpuestoIds(raw) {
   if (!raw) return [];
@@ -75,46 +81,53 @@ function comboKey(obj) {
 function resolveCategoriaId(categoriaId, categoriaNombre, fallbackNombre = 'Otros insumos') {
   if (categoriaId) return Number(categoriaId);
   const name = (categoriaNombre || fallbackNombre).trim();
+  const allCats = categoriaRepo.findWhere({}, { orderBy: 'id ASC' });
+  const byId = new Map(allCats.map(c => [Number(c.id), c]));
   if (name.includes(' / ')) {
     const parts = name.split(' / ').map(s => s.trim()).filter(Boolean);
     if (parts.length >= 2) {
       const childName = parts[parts.length - 1];
       const parentName = parts[parts.length - 2];
-      const match = db.prepare(`
-        SELECT c.id FROM categorias c
-        JOIN categorias p ON p.id = c.padre_id
-        WHERE LOWER(c.nombre) = LOWER(?) AND LOWER(p.nombre) = LOWER(?)
-      `).get(childName, parentName);
+      const match = allCats.find(c => {
+        const p = c.padre_id ? byId.get(Number(c.padre_id)) : null;
+        return p && c.nombre.toLowerCase() === childName.toLowerCase() && p.nombre.toLowerCase() === parentName.toLowerCase();
+      });
       if (match) return match.id;
       const parentId = resolveCategoriaId(null, parentName);
-      const info = db.prepare('INSERT INTO categorias (nombre, padre_id) VALUES (?, ?)').run(childName, parentId);
-      return Number(info.lastInsertRowid);
+      return categoriaRepo.create({ nombre: childName, padre_id: parentId });
     }
   }
-  const row = db.prepare('SELECT id FROM categorias WHERE LOWER(nombre) = LOWER(?)').get(name);
+  const row = allCats.find(c => c.nombre.toLowerCase() === name.toLowerCase());
   if (row) return row.id;
-  const info = db.prepare('INSERT INTO categorias (nombre) VALUES (?)').run(name);
-  return Number(info.lastInsertRowid);
+  return categoriaRepo.create({ nombre: name });
 }
 
 function resolveUnidadId(unidadId, udmNombre, fallbackNombre = 'unidades') {
   if (unidadId) return Number(unidadId);
   const name = (udmNombre || fallbackNombre).trim();
-  const row = db.prepare('SELECT id FROM unidades_medida WHERE LOWER(nombre) = LOWER(?)').get(name);
+  const row = unidadRepo.findWhere({}).find(u => u.nombre.toLowerCase() === name.toLowerCase());
   if (row) return row.id;
-  const info = db.prepare("INSERT INTO unidades_medida (nombre, grupo, factor) VALUES (?, 'unidad', 1)").run(name);
-  return Number(info.lastInsertRowid);
+  return unidadRepo.create({ nombre: name, grupo: 'unidad', factor: 1 });
 }
 
 function syncProductoVariantesJoin(productoId, combo) {
-  db.prepare('DELETE FROM producto_variantes WHERE producto_id = ?').run(productoId);
-  const insVar = db.prepare('INSERT OR IGNORE INTO variantes (atributo, valor) VALUES (?, ?)');
-  const getVar = db.prepare('SELECT id FROM variantes WHERE atributo = ? AND valor = ?');
-  const insJoin = db.prepare('INSERT OR IGNORE INTO producto_variantes (producto_id, variante_id) VALUES (?, ?)');
+  productoVarianteRepo.query().where('producto_id', Number(productoId)).delete();
   for (const [atributo, valor] of Object.entries(combo || {})) {
-    insVar.run(String(atributo).trim(), String(valor).trim());
-    const v = getVar.get(String(atributo).trim(), String(valor).trim());
-    if (v) insJoin.run(productoId, v.id);
+    const attr = String(atributo).trim();
+    const val = String(valor).trim();
+    let v = varianteRepo.query().select('id').where('atributo', attr).where('valor', val).get();
+    if (!v) {
+      const vid = varianteRepo.create({ atributo: attr, valor: val });
+      v = { id: vid };
+    }
+    const existsJoin = productoVarianteRepo.query()
+      .select('id')
+      .where('producto_id', Number(productoId))
+      .where('variante_id', v.id)
+      .get();
+    if (!existsJoin) {
+      productoVarianteRepo.create({ producto_id: Number(productoId), variante_id: v.id });
+    }
   }
 }
 
@@ -124,7 +137,7 @@ export function syncVariantesForPlantilla(plantillaId, defaults = {}) {
 
   const atributos = parseJson(plantilla.atributos_json, []);
   const combos = cartesianCombinations(atributos);
-  const existing = db.prepare('SELECT * FROM productos WHERE plantilla_id = ?').all(plantillaId);
+  const existing = productoRepo.findWhere({ plantilla_id: Number(plantillaId) });
   const byKey = new Map(existing.map(p => [comboKey(parseJson(p.combinacion_json, {})), p]));
 
   const seenIds = new Set();
@@ -134,7 +147,7 @@ export function syncVariantesForPlantilla(plantillaId, defaults = {}) {
     const nombre = vals.length > 0 ? `${plantilla.nombre} (${vals.join(' · ')})` : plantilla.nombre;
     const prev = byKey.get(key);
     if (prev) {
-      db.prepare("UPDATE productos SET nombre = ?, activo = 1, updated_at = datetime('now') WHERE id = ?").run(nombre, prev.id);
+      productoRepo.update(prev.id, { nombre, activo: 1 });
       syncProductoVariantesJoin(prev.id, combo);
       seenIds.add(prev.id);
     } else {
@@ -163,32 +176,37 @@ export function syncVariantesForPlantilla(plantillaId, defaults = {}) {
       if (Number(p.stock) === 0) {
         productoRepo.delete(p.id);
       } else {
-        db.prepare("UPDATE productos SET activo = 0, updated_at = datetime('now') WHERE id = ?").run(p.id);
+        productoRepo.update(p.id, { activo: 0 });
       }
     }
   }
 
-  return db.prepare('SELECT * FROM v_productos WHERE plantilla_id = ? AND activo = 1 ORDER BY id ASC').all(plantillaId);
+  return vProductoRepo.query()
+    .where('plantilla_id', Number(plantillaId))
+    .where('activo', 1)
+    .orderBy('id', 'ASC')
+    .all();
 }
 
 export function listPlantillas({ se_fabrica, se_compra, se_vende, tipo, categoria, search } = {}) {
-  const rows = db.prepare(`
-    SELECT pt.*,
-           COALESCE(c.nombre, '') as proveedor_nombre,
-           COUNT(CASE WHEN p.activo = 1 THEN 1 END) as variantes_count,
-           COALESCE(SUM(CASE WHEN p.activo = 1 THEN p.stock ELSE 0 END), 0) as stock_total,
-           COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.costo END), 0) as costo_min,
-           COALESCE(MAX(CASE WHEN p.activo = 1 THEN p.costo END), 0) as costo_max,
-           COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.precio END), 0) as precio_min,
-           COALESCE(MAX(CASE WHEN p.activo = 1 THEN p.precio END), 0) as precio_max,
-           COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.stock_minimo END), 0) as stock_minimo,
-           COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.minimo_compra END), 0) as minimo_compra
-    FROM v_plantillas pt
-    LEFT JOIN contactos c ON c.id = pt.proveedor_id
-    LEFT JOIN v_productos p ON p.plantilla_id = pt.id
-    GROUP BY pt.id
-    ORDER BY pt.nombre ASC
-  `).all();
+  const rows = vPlantillaRepo.query('pt')
+    .select(
+      'pt.*',
+      "COALESCE(c.nombre, '') as proveedor_nombre",
+      'COUNT(CASE WHEN p.activo = 1 THEN 1 END) as variantes_count',
+      'COALESCE(SUM(CASE WHEN p.activo = 1 THEN p.stock ELSE 0 END), 0) as stock_total',
+      'COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.costo END), 0) as costo_min',
+      'COALESCE(MAX(CASE WHEN p.activo = 1 THEN p.costo END), 0) as costo_max',
+      'COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.precio END), 0) as precio_min',
+      'COALESCE(MAX(CASE WHEN p.activo = 1 THEN p.precio END), 0) as precio_max',
+      'COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.stock_minimo END), 0) as stock_minimo',
+      'COALESCE(MIN(CASE WHEN p.activo = 1 THEN p.minimo_compra END), 0) as minimo_compra'
+    )
+    .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
+    .leftJoin('v_productos', 'p', 'p.plantilla_id', 'pt.id')
+    .groupBy('pt.id')
+    .orderBy('pt.nombre', 'ASC')
+    .all();
 
   return rows.filter(r => {
     if (se_fabrica !== undefined && Number(r.se_fabrica) !== Number(se_fabrica)) return false;
@@ -209,24 +227,26 @@ export function listPlantillas({ se_fabrica, se_compra, se_vende, tipo, categori
 }
 
 export function getPlantillaById(id) {
-  const plantilla = db.prepare(`
-    SELECT pt.*,
-           COALESCE(c.nombre, '') as proveedor_nombre
-    FROM v_plantillas pt
-    LEFT JOIN contactos c ON c.id = pt.proveedor_id
-    WHERE pt.id = ?
-  `).get(id);
+  const plantilla = vPlantillaRepo.query('pt')
+    .select('pt.*', "COALESCE(c.nombre, '') as proveedor_nombre")
+    .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
+    .where('pt.id', Number(id))
+    .get();
   if (!plantilla) return null;
 
-  const variantes = db.prepare('SELECT * FROM v_productos WHERE plantilla_id = ? AND activo = 1 ORDER BY id ASC').all(id);
-  const recetas = db.prepare(`
-    SELECT r.*, COUNT(rl.id) as lineas_count
-    FROM recetas r
-    LEFT JOIN receta_lineas rl ON rl.receta_id = r.id
-    WHERE r.plantilla_id = ?
-    GROUP BY r.id
-    ORDER BY r.activa DESC, r.id DESC
-  `).all(id);
+  const variantes = vProductoRepo.query()
+    .where('plantilla_id', Number(id))
+    .where('activo', 1)
+    .orderBy('id', 'ASC')
+    .all();
+  const recetas = recetaRepo.query('r')
+    .select('r.*', 'COUNT(rl.id) as lineas_count')
+    .leftJoin('receta_lineas', 'rl', 'rl.receta_id', 'r.id')
+    .where('r.plantilla_id', Number(id))
+    .groupBy('r.id')
+    .orderBy('r.activa', 'DESC')
+    .orderBy('r.id', 'DESC')
+    .all();
 
   return {
     plantilla: {
@@ -286,6 +306,7 @@ export function createPlantilla(b) {
       cuenta_compra_id: b.cuenta_compra_id ? Number(b.cuenta_compra_id) : null,
       moneda: (b.moneda || 'ARS').toUpperCase(),
       peso_kg: Math.max(0, Number(b.peso_kg) || 0),
+      imagen_data: b.imagen_data !== undefined ? String(b.imagen_data || '') : '',
       atributos_json: JSON.stringify(atributos),
     });
 
@@ -346,6 +367,7 @@ export function updatePlantilla(id, b) {
     cuenta_compra_id: b.cuenta_compra_id !== undefined ? (b.cuenta_compra_id ? Number(b.cuenta_compra_id) : null) : (existing.cuenta_compra_id || null),
     moneda: b.moneda !== undefined ? String(b.moneda || 'ARS').toUpperCase() : (existing.moneda || 'ARS'),
     peso_kg: b.peso_kg !== undefined ? Math.max(0, Number(b.peso_kg) || 0) : (existing.peso_kg || 0),
+    imagen_data: b.imagen_data !== undefined ? String(b.imagen_data || '') : (existing.imagen_data || ''),
     atributos_json: b.atributos !== undefined ? JSON.stringify(b.atributos) : existing.atributos_json,
   };
 
@@ -362,22 +384,34 @@ export function deletePlantilla(id) {
 }
 
 export function listProductos({ plantilla_id, se_compra, se_fabrica, se_vende, tipo } = {}) {
-  const rows = db.prepare(`
-    SELECT p.*, pt.nombre as plantilla_nombre, pt.tipo, pt.categoria, pt.udm,
-           pt.alicuota_iva, COALESCE(pt.alicuota_iva_compra, pt.alicuota_iva, 21) as alicuota_iva_compra,
-           pt.impuestos_venta_json, pt.impuestos_compra_json,
-           pt.se_compra, pt.se_fabrica, pt.se_vende, pt.proveedor_id,
-           COALESCE(c.nombre, '') as proveedor_nombre
-    FROM v_productos p
-    JOIN v_plantillas pt ON pt.id = p.plantilla_id
-    LEFT JOIN contactos c ON c.id = pt.proveedor_id
-    WHERE p.activo = 1
-    ORDER BY pt.nombre ASC, p.id ASC
-  `).all().map(r => ({
-    ...r,
-    impuestos_venta_ids: normalizeImpuestoIds(r.impuestos_venta_json),
-    impuestos_compra_ids: normalizeImpuestoIds(r.impuestos_compra_json),
-  }));
+  const rows = vProductoRepo.query('p')
+    .select(
+      'p.*',
+      'pt.nombre as plantilla_nombre',
+      'pt.tipo',
+      'pt.categoria',
+      'pt.udm',
+      'pt.alicuota_iva',
+      'COALESCE(pt.alicuota_iva_compra, pt.alicuota_iva, 21) as alicuota_iva_compra',
+      'pt.impuestos_venta_json',
+      'pt.impuestos_compra_json',
+      'pt.se_compra',
+      'pt.se_fabrica',
+      'pt.se_vende',
+      'pt.proveedor_id',
+      "COALESCE(c.nombre, '') as proveedor_nombre"
+    )
+    .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+    .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
+    .where('p.activo', 1)
+    .orderBy('pt.nombre', 'ASC')
+    .orderBy('p.id', 'ASC')
+    .all()
+    .map(r => ({
+      ...r,
+      impuestos_venta_ids: normalizeImpuestoIds(r.impuestos_venta_json),
+      impuestos_compra_ids: normalizeImpuestoIds(r.impuestos_compra_json),
+    }));
 
   return rows.filter(r => {
     if (plantilla_id && Number(r.plantilla_id) !== Number(plantilla_id)) return false;
@@ -445,7 +479,6 @@ export function updateProducto(id, b, meta = {}) {
     costo: nextCosto,
     precio: nextPrecio,
     minimo_compra: b.minimo_compra !== undefined ? Number(b.minimo_compra) : existing.minimo_compra,
-    stock: b.stock !== undefined ? Number(b.stock) : existing.stock,
     stock_minimo: b.stock_minimo !== undefined ? Number(b.stock_minimo) : existing.stock_minimo,
   });
   registrarHistorialCostoPrecio({

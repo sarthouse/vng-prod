@@ -1,12 +1,38 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 
 export const secuenciaRepo = new BaseRepository({ model: MODELS.secuencias });
 export const etapaConfigRepo = new BaseRepository({ model: MODELS.etapas_config });
+export const empresaRepo = new BaseRepository({ model: MODELS.empresa_config });
+
+const categoriaRepo = new BaseRepository({
+  table: 'categorias',
+  columns: ['nombre', 'padre_id', 'descripcion'],
+});
+const unidadRepo = new BaseRepository({
+  table: 'unidades_medida',
+  columns: ['nombre', 'grupo', 'factor'],
+});
+const varianteRepo = new BaseRepository({
+  table: 'variantes',
+  columns: ['atributo', 'valor'],
+});
+const impuestoConfigRepo = new BaseRepository({
+  table: 'impuestos_config',
+  columns: [
+    'nombre', 'codigo', 'tipo', 'aplica_a', 'alicuota_defecto', 'base_calculo',
+    'jurisdiccion_codigo', 'codigo_regimen', 'minimo_no_imponible', 'cuenta_contable_id', 'activo',
+  ],
+});
+const jurisdiccionRepo = new BaseRepository({ table: 'jurisdicciones' });
+const recetaLineaRepo = new BaseRepository({ table: 'receta_lineas', columns: ['udm_receta'] });
+const puntoVentaRepo = new BaseRepository({
+  table: 'puntos_venta',
+  columns: ['numero', 'nombre', 'es_default', 'es_electronica', 'activo'],
+});
 
 export function getEmpresaConfig() {
-  const row = db.prepare('SELECT * FROM empresa_config WHERE id = 1').get();
+  const row = empresaRepo.findById(1);
   if (!row) {
     return {
       id: 1,
@@ -26,68 +52,78 @@ export function updateEmpresaConfig(b) {
   const ivaCompras = b.alicuota_iva_compras_defecto !== undefined ? Number(b.alicuota_iva_compras_defecto) : (cur.alicuota_iva_compras_defecto ?? cur.alicuota_iva_defecto ?? 21);
   const ivaVentas = b.alicuota_iva_ventas_defecto !== undefined ? Number(b.alicuota_iva_ventas_defecto) : (cur.alicuota_iva_ventas_defecto ?? cur.alicuota_iva_defecto ?? 21);
   const ivaGeneral = b.alicuota_iva_defecto !== undefined ? Number(b.alicuota_iva_defecto) : ivaVentas;
-  db.prepare(`
-    UPDATE empresa_config SET
-      razon_social=?, nombre_fantasia=?, cuit=?, condicion_iva=?, direccion=?, localidad=?, provincia=?, codigo_postal=?, pais=?, telefono=?, email=?,
-      iibb=?, inicio_actividades=?, alicuota_iva_defecto=?, alicuota_iva_compras_defecto=?, alicuota_iva_ventas_defecto=?,
-      prefijo_compra=?, prefijo_remito=?, prefijo_pago=?, prefijo_venta=?, prefijo_cobro=?,
-      prox_num_compra=?, prox_num_remito=?, prox_num_pago=?, prox_num_venta=?, prox_num_cobro=?,
-      logo_data=?, dias_entrega_defecto=?,
-      print_formato=?, print_copias=?, print_mostrar_logo=?, print_modo_economico=?, print_pie_comprobante=?
-    WHERE id = 1
-  `).run(
-    b.razon_social ?? cur.razon_social ?? '',
-    b.nombre_fantasia ?? cur.nombre_fantasia ?? '',
-    b.cuit ?? cur.cuit ?? '',
-    b.condicion_iva ?? cur.condicion_iva ?? 'Responsable Inscripto',
-    b.direccion ?? cur.direccion ?? '',
-    b.localidad ?? cur.localidad ?? '',
-    b.provincia ?? cur.provincia ?? '',
-    b.codigo_postal ?? cur.codigo_postal ?? '',
-    (b.pais !== undefined ? (String(b.pais).trim() || 'Argentina') : (cur.pais || 'Argentina')),
-    b.telefono ?? cur.telefono ?? '',
-    b.email ?? cur.email ?? '',
-    b.iibb ?? cur.iibb ?? '',
-    b.inicio_actividades ?? cur.inicio_actividades ?? '',
-    ivaGeneral,
-    ivaCompras,
-    ivaVentas,
-    b.prefijo_compra ?? cur.prefijo_compra ?? 'FC',
-    b.prefijo_remito ?? cur.prefijo_remito ?? 'REM',
-    b.prefijo_pago ?? cur.prefijo_pago ?? 'OP',
-    b.prefijo_venta ?? cur.prefijo_venta ?? 'FA',
-    b.prefijo_cobro ?? cur.prefijo_cobro ?? 'RC',
-    proxInt(b.prox_num_compra, cur.prox_num_compra),
-    proxInt(b.prox_num_remito, cur.prox_num_remito),
-    proxInt(b.prox_num_pago, cur.prox_num_pago),
-    proxInt(b.prox_num_venta, cur.prox_num_venta),
-    proxInt(b.prox_num_cobro, cur.prox_num_cobro),
-    b.logo_data !== undefined ? String(b.logo_data || '') : (cur.logo_data || ''),
-    b.dias_entrega_defecto !== undefined ? Math.max(0, Number(b.dias_entrega_defecto)) : (cur.dias_entrega_defecto ?? 7),
-    ['A4', 'A5', 'ticket80', 'ticket58'].includes(b.print_formato) ? b.print_formato : (cur.print_formato || 'A4'),
-    ['original', 'duplicado', 'triplicado'].includes(b.print_copias) ? b.print_copias : (cur.print_copias || 'original'),
-    b.print_mostrar_logo !== undefined ? (b.print_mostrar_logo ? 1 : 0) : (cur.print_mostrar_logo ?? 1),
-    b.print_modo_economico !== undefined ? (b.print_modo_economico ? 1 : 0) : (cur.print_modo_economico ?? 0),
-    b.print_pie_comprobante !== undefined ? String(b.print_pie_comprobante) : (cur.print_pie_comprobante ?? ''),
-  );
+  const ctaField = (k) => (b[k] !== undefined ? (b[k] ? Number(b[k]) : null) : (cur[k] ?? null));
+  empresaRepo.update(1, {
+    razon_social: b.razon_social ?? cur.razon_social ?? '',
+    nombre_fantasia: b.nombre_fantasia ?? cur.nombre_fantasia ?? '',
+    cuit: b.cuit ?? cur.cuit ?? '',
+    condicion_iva: b.condicion_iva ?? cur.condicion_iva ?? 'Responsable Inscripto',
+    direccion: b.direccion ?? cur.direccion ?? '',
+    localidad: b.localidad ?? cur.localidad ?? '',
+    provincia: b.provincia ?? cur.provincia ?? '',
+    codigo_postal: b.codigo_postal ?? cur.codigo_postal ?? '',
+    pais: b.pais !== undefined ? (String(b.pais).trim() || 'Argentina') : (cur.pais || 'Argentina'),
+    telefono: b.telefono ?? cur.telefono ?? '',
+    email: b.email ?? cur.email ?? '',
+    iibb: b.iibb ?? cur.iibb ?? '',
+    inicio_actividades: b.inicio_actividades ?? cur.inicio_actividades ?? '',
+    alicuota_iva_defecto: ivaGeneral,
+    alicuota_iva_compras_defecto: ivaCompras,
+    alicuota_iva_ventas_defecto: ivaVentas,
+    prefijo_compra: b.prefijo_compra ?? cur.prefijo_compra ?? 'FC',
+    prefijo_remito: b.prefijo_remito ?? cur.prefijo_remito ?? 'REM',
+    prefijo_pago: b.prefijo_pago ?? cur.prefijo_pago ?? 'OP',
+    prefijo_venta: b.prefijo_venta ?? cur.prefijo_venta ?? 'FA',
+    prefijo_cobro: b.prefijo_cobro ?? cur.prefijo_cobro ?? 'RC',
+    prox_num_compra: proxInt(b.prox_num_compra, cur.prox_num_compra),
+    prox_num_remito: proxInt(b.prox_num_remito, cur.prox_num_remito),
+    prox_num_pago: proxInt(b.prox_num_pago, cur.prox_num_pago),
+    prox_num_venta: proxInt(b.prox_num_venta, cur.prox_num_venta),
+    prox_num_cobro: proxInt(b.prox_num_cobro, cur.prox_num_cobro),
+    logo_data: b.logo_data !== undefined ? String(b.logo_data || '') : (cur.logo_data || ''),
+    dias_entrega_defecto: b.dias_entrega_defecto !== undefined ? Math.max(0, Number(b.dias_entrega_defecto)) : (cur.dias_entrega_defecto ?? 7),
+    print_formato: ['A4', 'A5', 'ticket80', 'ticket58'].includes(b.print_formato) ? b.print_formato : (cur.print_formato || 'A4'),
+    print_copias: ['original', 'duplicado', 'triplicado'].includes(b.print_copias) ? b.print_copias : (cur.print_copias || 'original'),
+    print_mostrar_logo: b.print_mostrar_logo !== undefined ? (b.print_mostrar_logo ? 1 : 0) : (cur.print_mostrar_logo ?? 1),
+    print_modo_economico: b.print_modo_economico !== undefined ? (b.print_modo_economico ? 1 : 0) : (cur.print_modo_economico ?? 0),
+    print_pie_comprobante: b.print_pie_comprobante !== undefined ? String(b.print_pie_comprobante) : (cur.print_pie_comprobante ?? ''),
+    cta_clientes_id: ctaField('cta_clientes_id'),
+    cta_proveedores_id: ctaField('cta_proveedores_id'),
+    cta_ventas_id: ctaField('cta_ventas_id'),
+    cta_compras_id: ctaField('cta_compras_id'),
+    cta_mano_obra_id: ctaField('cta_mano_obra_id'),
+    cta_iva_credito_id: ctaField('cta_iva_credito_id'),
+    cta_iva_debito_id: ctaField('cta_iva_debito_id'),
+    cta_perc_sufridas_id: ctaField('cta_perc_sufridas_id'),
+    cta_ret_depositar_id: ctaField('cta_ret_depositar_id'),
+  });
   return getEmpresaConfig();
 }
 
 export function getConfig() {
+  const rawCats = categoriaRepo.query('c')
+    .select("c.*, COALESCE(p.nombre, '') as padre_nombre")
+    .leftJoin('categorias', 'p', 'p.id', 'c.padre_id')
+    .all();
+  const categorias = rawCats
+    .map(c => ({
+      ...c,
+      display_name: c.padre_nombre ? `${c.padre_nombre} / ${c.nombre}` : c.nombre,
+    }))
+    .sort((a, b) => {
+      const ka = a.padre_nombre || a.nombre || '';
+      const kb = b.padre_nombre || b.nombre || '';
+      const cmp = ka.localeCompare(kb);
+      return cmp !== 0 ? cmp : String(a.nombre || '').localeCompare(String(b.nombre || ''));
+    });
+
   return {
-    categorias: db.prepare(`
-      SELECT c.*,
-             COALESCE(p.nombre, '') as padre_nombre,
-             CASE WHEN p.nombre IS NOT NULL THEN p.nombre || ' / ' || c.nombre ELSE c.nombre END as display_name
-      FROM categorias c
-      LEFT JOIN categorias p ON p.id = c.padre_id
-      ORDER BY COALESCE(p.nombre, c.nombre) ASC, c.nombre ASC
-    `).all(),
-    unidades: db.prepare('SELECT * FROM unidades_medida ORDER BY grupo ASC, factor ASC, nombre ASC').all(),
-    variantes: db.prepare('SELECT * FROM variantes ORDER BY atributo ASC, valor ASC').all(),
-    etapas: db.prepare('SELECT * FROM etapas_config ORDER BY orden ASC, id ASC').all(),
-    impuestos: db.prepare('SELECT * FROM impuestos_config ORDER BY tipo ASC, alicuota_defecto DESC, nombre ASC').all(),
-    jurisdicciones: db.prepare('SELECT * FROM jurisdicciones WHERE activo = 1 ORDER BY codigo ASC').all(),
+    categorias,
+    unidades: unidadRepo.query().orderBy('grupo', 'ASC').orderBy('factor', 'ASC').orderBy('nombre', 'ASC').all(),
+    variantes: varianteRepo.query().orderBy('atributo', 'ASC').orderBy('valor', 'ASC').all(),
+    etapas: etapaConfigRepo.query().orderBy('orden', 'ASC').orderBy('id', 'ASC').all(),
+    impuestos: impuestoConfigRepo.query().orderBy('tipo', 'ASC').orderBy('alicuota_defecto', 'DESC').orderBy('nombre', 'ASC').all(),
+    jurisdicciones: jurisdiccionRepo.query().where('activo', 1).orderBy('codigo', 'ASC').all(),
     empresa: getEmpresaConfig(),
   };
 }
@@ -95,8 +131,8 @@ export function getConfig() {
 export function convertUnitFromDb(value, fromUnit, toUnit) {
   const v = Number(value) || 0;
   if (!fromUnit || !toUnit || fromUnit === toUnit) return v;
-  const fromRow = db.prepare('SELECT grupo, factor FROM unidades_medida WHERE nombre = ?').get(fromUnit);
-  const toRow = db.prepare('SELECT grupo, factor FROM unidades_medida WHERE nombre = ?').get(toUnit);
+  const fromRow = unidadRepo.query().select('grupo, factor').where('nombre', fromUnit).get();
+  const toRow = unidadRepo.query().select('grupo, factor').where('nombre', toUnit).get();
   if (!fromRow || !toRow || fromRow.grupo !== toRow.grupo || !toRow.factor) {
     return v;
   }
@@ -117,80 +153,72 @@ function normalizeCategoriaPayload(data, selfId = null) {
 
 export function createCategoria(data) {
   const { nombre, padreId, descripcion } = normalizeCategoriaPayload(data);
-  const info = db
-    .prepare('INSERT INTO categorias (nombre, padre_id, descripcion) VALUES (?, ?, ?)')
-    .run(nombre, padreId, descripcion);
-  return Number(info.lastInsertRowid);
+  return categoriaRepo.create({ nombre, padre_id: padreId, descripcion });
 }
 
 export function updateCategoria(id, data) {
-  const old = db.prepare('SELECT id FROM categorias WHERE id = ?').get(id);
+  const old = categoriaRepo.query().select('id').where('id', id).get();
   if (!old) return false;
   const { nombre, padreId, descripcion } = normalizeCategoriaPayload(data, id);
-  db.prepare('UPDATE categorias SET nombre = ?, padre_id = ?, descripcion = ? WHERE id = ?')
-    .run(nombre, padreId, descripcion, id);
+  categoriaRepo.update(id, { nombre, padre_id: padreId, descripcion });
   return true;
 }
 
 export function deleteCategoria(id) {
-  db.prepare('DELETE FROM categorias WHERE id = ?').run(id);
+  categoriaRepo.delete(id);
 }
 
 export function createUnidad({ nombre, grupo, factor }) {
-  const info = db.prepare('INSERT INTO unidades_medida (nombre, grupo, factor) VALUES (?, ?, ?)').run(
-    nombre.trim(),
-    grupo.trim(),
-    Number(factor) || 1
-  );
-  return Number(info.lastInsertRowid);
+  return unidadRepo.create({
+    nombre: nombre.trim(),
+    grupo: grupo.trim(),
+    factor: Number(factor) || 1,
+  });
 }
 
 export function updateUnidad(id, { nombre, grupo, factor }) {
-  const old = db.prepare('SELECT nombre FROM unidades_medida WHERE id = ?').get(id);
+  const old = unidadRepo.query().select('nombre').where('id', id).get();
   if (!old) return false;
   const newName = nombre.trim();
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE unidades_medida SET nombre=?, grupo=?, factor=? WHERE id=?').run(
-      newName,
-      grupo.trim(),
-      Number(factor) || 1,
-      id
-    );
+  return unidadRepo.transaction(() => {
+    unidadRepo.update(id, {
+      nombre: newName,
+      grupo: grupo.trim(),
+      factor: Number(factor) || 1,
+    });
     if (newName !== old.nombre) {
-      db.prepare('UPDATE receta_lineas SET udm_receta = ? WHERE udm_receta = ?').run(newName, old.nombre);
+      recetaLineaRepo.query().where('udm_receta', old.nombre).update({ udm_receta: newName });
     }
-    db.exec('COMMIT');
     return true;
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+  });
 }
 
 export function deleteUnidad(id) {
-  db.prepare('DELETE FROM unidades_medida WHERE id = ?').run(id);
+  unidadRepo.delete(id);
 }
 
 export function createVariante({ atributo, valor }) {
-  const info = db.prepare('INSERT INTO variantes (atributo, valor) VALUES (?, ?)').run(
-    atributo.trim(),
-    valor.trim()
-  );
-  return Number(info.lastInsertRowid);
+  return varianteRepo.create({
+    atributo: atributo.trim(),
+    valor: valor.trim(),
+  });
 }
 
 export function seedTallesVariantes() {
-  const ins = db.prepare('INSERT OR IGNORE INTO variantes (atributo, valor) VALUES (?, ?)');
-  for (const s of ['35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45']) ins.run('Talle', s);
+  const existing = new Set(
+    varianteRepo.query().select('valor').where('atributo', 'Talle').all().map(r => String(r.valor))
+  );
+  for (const s of ['35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45']) {
+    if (!existing.has(s)) varianteRepo.create({ atributo: 'Talle', valor: s });
+  }
 }
 
 export function deleteVariante(id) {
-  db.prepare('DELETE FROM variantes WHERE id = ?').run(id);
+  varianteRepo.delete(id);
 }
 
 export function deleteVarianteAtributo(atributo) {
-  db.prepare('DELETE FROM variantes WHERE atributo = ?').run(atributo);
+  varianteRepo.query().where('atributo', atributo).delete();
 }
 
 export function createEtapa({ nombre, descripcion = '', orden, dias_estimados, costo_unidad, taller_id, plan_cuenta_id, depende_de_id }) {
@@ -230,7 +258,7 @@ export function deleteEtapa(id) {
 
 // --- PUNTOS DE VENTA Y SECUENCIAS FISCALES ---
 export function listPuntosVenta() {
-  return db.prepare('SELECT * FROM puntos_venta ORDER BY numero ASC').all();
+  return puntoVentaRepo.query().orderBy('numero', 'ASC').all();
 }
 
 export function createPuntoVenta(b) {
@@ -239,36 +267,43 @@ export function createPuntoVenta(b) {
   const nombre = (b.nombre || `Punto de Venta ${String(numero).padStart(4, '0')}`).trim();
   const esDefault = b.es_default ? 1 : 0;
   const esElectronica = b.es_electronica ? 1 : 0;
-  if (esDefault) db.prepare('UPDATE puntos_venta SET es_default = 0').run();
-  const info = db.prepare('INSERT INTO puntos_venta (numero, nombre, es_default, es_electronica, activo) VALUES (?, ?, ?, ?, 1)').run(
-    numero, nombre, esDefault, esElectronica
-  );
-  return Number(info.lastInsertRowid);
+  if (esDefault) puntoVentaRepo.query().update({ es_default: 0 });
+  return puntoVentaRepo.create({
+    numero,
+    nombre,
+    es_default: esDefault,
+    es_electronica: esElectronica,
+    activo: 1,
+  });
 }
 
 export function updatePuntoVenta(id, b) {
-  const ex = db.prepare('SELECT * FROM puntos_venta WHERE id = ?').get(id);
+  const ex = puntoVentaRepo.findById(id);
   if (!ex) return false;
   const numero = b.numero !== undefined ? Math.max(1, Math.min(9999, parseInt(b.numero, 10) || ex.numero)) : ex.numero;
   const nombre = b.nombre !== undefined ? b.nombre.trim() : ex.nombre;
   const esDefault = b.es_default !== undefined ? (b.es_default ? 1 : 0) : ex.es_default;
   const esElectronica = b.es_electronica !== undefined ? (b.es_electronica ? 1 : 0) : (ex.es_electronica ? 1 : 0);
   const activo = b.activo !== undefined ? (b.activo ? 1 : 0) : ex.activo;
-  if (esDefault) db.prepare('UPDATE puntos_venta SET es_default = 0').run();
-  db.prepare('UPDATE puntos_venta SET numero=?, nombre=?, es_default=?, es_electronica=?, activo=? WHERE id=?').run(
-    numero, nombre, esDefault, esElectronica, activo, id
-  );
+  if (esDefault) puntoVentaRepo.query().update({ es_default: 0 });
+  puntoVentaRepo.update(id, {
+    numero,
+    nombre,
+    es_default: esDefault,
+    es_electronica: esElectronica,
+    activo,
+  });
   return true;
 }
 
 export function deletePuntoVenta(id) {
-  const total = db.prepare('SELECT COUNT(*) as c FROM puntos_venta').get().c;
+  const total = puntoVentaRepo.query().count();
   if (total <= 1) throw new Error('Debe existir al menos un punto de venta.');
-  const ex = db.prepare('SELECT * FROM puntos_venta WHERE id = ?').get(id);
-  db.prepare('DELETE FROM puntos_venta WHERE id = ?').run(id);
+  const ex = puntoVentaRepo.findById(id);
+  puntoVentaRepo.delete(id);
   if (ex?.es_default) {
-    const first = db.prepare('SELECT id FROM puntos_venta ORDER BY numero ASC LIMIT 1').get();
-    if (first) db.prepare('UPDATE puntos_venta SET es_default = 1 WHERE id = ?').run(first.id);
+    const first = puntoVentaRepo.query().select('id').orderBy('numero', 'ASC').limit(1).get();
+    if (first) puntoVentaRepo.update(first.id, { es_default: 1 });
   }
 }
 
@@ -304,7 +339,7 @@ export function deleteSecuencia(id) {
 }
 
 export function getNextNumeroDocumento(tipo, puntoVentaNum, { advance = false } = {}) {
-  const seq = db.prepare('SELECT * FROM secuencias WHERE codigo = ? AND activo = 1').get(tipo);
+  const seq = secuenciaRepo.query().where('codigo', tipo).where('activo', 1).get();
   const emp = getEmpresaConfig();
   const tableMap = {
     compra: 'compras',
@@ -340,18 +375,19 @@ export function getNextNumeroDocumento(tipo, puntoVentaNum, { advance = false } 
 
   let pvNum = parseInt(puntoVentaNum, 10);
   if (usaPv && !pvNum) {
-    const def = db.prepare('SELECT numero FROM puntos_venta WHERE activo = 1 ORDER BY es_default DESC, numero ASC LIMIT 1').get();
+    const def = puntoVentaRepo.query().select('numero').where('activo', 1).orderBy('es_default', 'DESC').orderBy('numero', 'ASC').limit(1).get();
     pvNum = def?.numero || 1;
   }
 
   let max = 0;
   const targetTable = tableMap[tipo];
   if (targetTable) {
-    const col = tipo === 'orden' || tipo === 'operacion_stock' ? 'codigo' : 'numero';
+    const col = tipo === 'orden' ? 'codigo' : 'numero';
     const pvPad = usaPv ? String(pvNum).padStart(4, '0') : '';
-    const rows = usaPv
-      ? db.prepare(`SELECT ${col} as num FROM ${targetTable} WHERE ${col} LIKE ?`).all(`%${pvPad}-%`)
-      : db.prepare(`SELECT ${col} as num FROM ${targetTable}`).all();
+    const targetRepo = new BaseRepository({ table: targetTable });
+    const qb = targetRepo.query().select(`${col} as num`);
+    if (usaPv) qb.where(col, 'LIKE', `%${pvPad}-%`);
+    const rows = qb.all();
     const escRx = prefijo.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escSuf = sufijo.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = usaPv
@@ -368,7 +404,7 @@ export function getNextNumeroDocumento(tipo, puntoVentaNum, { advance = false } 
 
   const nextNumber = Math.max(max + 1, minNext);
   if (advance && seq) {
-    db.prepare('UPDATE secuencias SET siguiente_numero = ? WHERE id = ?').run(nextNumber + 1, seq.id);
+    secuenciaRepo.update(seq.id, { siguiente_numero: nextNumber + 1 });
   }
   const compPad = String(nextNumber).padStart(padding, '0');
   const pvPart = usaPv ? ` ${String(pvNum).padStart(4, '0')}-` : '';
@@ -383,19 +419,30 @@ export function getNextNumeroDocumento(tipo, puntoVentaNum, { advance = false } 
   };
 }
 
+export function resolveNumeroDocumento(tipo, rawNumero, puntoVentaNum = null, { advance = true } = {}) {
+  const raw = String(rawNumero || '').trim();
+  if (!raw || raw.endsWith('-')) {
+    return getNextNumeroDocumento(tipo, puntoVentaNum, { advance }).numero;
+  }
+  if (advance) {
+    const seq = secuenciaRepo.query().where('codigo', tipo).where('activo', 1).get();
+    if (seq) {
+      const m = raw.match(/(\d+)$/);
+      const n = m ? parseInt(m[1], 10) : 0;
+      if (n >= Number(seq.siguiente_numero || 1)) {
+        secuenciaRepo.update(seq.id, { siguiente_numero: n + 1 });
+      }
+    }
+  }
+  return raw;
+}
+
 export function listImpuestos({ aplica_a, tipo, solo_activos } = {}) {
-  const where = ['1=1'];
-  const args = [];
-  if (solo_activos) where.push('activo = 1');
-  if (tipo) {
-    where.push('tipo = ?');
-    args.push(tipo);
-  }
-  if (aplica_a && aplica_a !== 'ambos') {
-    where.push("(aplica_a = 'ambos' OR aplica_a = ?)");
-    args.push(aplica_a);
-  }
-  return db.prepare(`SELECT * FROM impuestos_config WHERE ${where.join(' AND ')} ORDER BY tipo ASC, alicuota_defecto DESC, nombre ASC`).all(...args);
+  const qb = impuestoConfigRepo.query();
+  if (solo_activos) qb.where('activo', 1);
+  if (tipo) qb.where('tipo', tipo);
+  if (aplica_a && aplica_a !== 'ambos') qb.whereIn('aplica_a', ['ambos', aplica_a]);
+  return qb.orderBy('tipo', 'ASC').orderBy('alicuota_defecto', 'DESC').orderBy('nombre', 'ASC').all();
 }
 
 export function createImpuesto(b) {
@@ -404,47 +451,40 @@ export function createImpuesto(b) {
   const tipo = ['iva', 'percepcion', 'retencion', 'otro'].includes(b.tipo) ? b.tipo : 'percepcion';
   const aplicaA = ['compras', 'ventas', 'ambos'].includes(b.aplica_a) ? b.aplica_a : 'ambos';
   const baseCalc = ['neto', 'total', 'manual', 'fijo'].includes(b.base_calculo) ? b.base_calculo : 'neto';
-  const info = db.prepare(`
-    INSERT INTO impuestos_config (nombre, codigo, tipo, aplica_a, alicuota_defecto, base_calculo, jurisdiccion_codigo, codigo_regimen, minimo_no_imponible, cuenta_contable_id, activo)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-  `).run(
+  return impuestoConfigRepo.create({
     nombre,
-    (b.codigo || '').trim().toUpperCase(),
+    codigo: (b.codigo || '').trim().toUpperCase(),
     tipo,
-    aplicaA,
-    Math.max(0, Number(b.alicuota_defecto) || 0),
-    baseCalc,
-    (b.jurisdiccion_codigo || '').trim(),
-    (b.codigo_regimen || '').trim(),
-    Math.max(0, Number(b.minimo_no_imponible) || 0),
-    b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null
-  );
-  return Number(info.lastInsertRowid);
+    aplica_a: aplicaA,
+    alicuota_defecto: Math.max(0, Number(b.alicuota_defecto) || 0),
+    base_calculo: baseCalc,
+    jurisdiccion_codigo: (b.jurisdiccion_codigo || '').trim(),
+    codigo_regimen: (b.codigo_regimen || '').trim(),
+    minimo_no_imponible: Math.max(0, Number(b.minimo_no_imponible) || 0),
+    cuenta_contable_id: b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null,
+    activo: 1,
+  });
 }
 
 export function updateImpuesto(id, b) {
-  const ex = db.prepare('SELECT * FROM impuestos_config WHERE id = ?').get(id);
+  const ex = impuestoConfigRepo.findById(id);
   if (!ex) return false;
-  db.prepare(`
-    UPDATE impuestos_config SET nombre=?, codigo=?, tipo=?, aplica_a=?, alicuota_defecto=?, base_calculo=?, jurisdiccion_codigo=?, codigo_regimen=?, minimo_no_imponible=?, cuenta_contable_id=?, activo=?
-    WHERE id=?
-  `).run(
-    b.nombre !== undefined ? (b.nombre.trim() || ex.nombre) : ex.nombre,
-    b.codigo !== undefined ? b.codigo.trim().toUpperCase() : ex.codigo,
-    ['iva', 'percepcion', 'retencion', 'otro'].includes(b.tipo) ? b.tipo : ex.tipo,
-    ['compras', 'ventas', 'ambos'].includes(b.aplica_a) ? b.aplica_a : ex.aplica_a,
-    b.alicuota_defecto !== undefined ? Math.max(0, Number(b.alicuota_defecto) || 0) : ex.alicuota_defecto,
-    ['neto', 'total', 'manual', 'fijo'].includes(b.base_calculo) ? b.base_calculo : ex.base_calculo,
-    b.jurisdiccion_codigo !== undefined ? (b.jurisdiccion_codigo || '').trim() : (ex.jurisdiccion_codigo || ''),
-    b.codigo_regimen !== undefined ? (b.codigo_regimen || '').trim() : (ex.codigo_regimen || ''),
-    b.minimo_no_imponible !== undefined ? Math.max(0, Number(b.minimo_no_imponible) || 0) : (ex.minimo_no_imponible || 0),
-    b.cuenta_contable_id !== undefined ? (b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null) : ex.cuenta_contable_id,
-    b.activo !== undefined ? (b.activo ? 1 : 0) : ex.activo,
-    id
-  );
+  impuestoConfigRepo.update(id, {
+    nombre: b.nombre !== undefined ? (b.nombre.trim() || ex.nombre) : ex.nombre,
+    codigo: b.codigo !== undefined ? b.codigo.trim().toUpperCase() : ex.codigo,
+    tipo: ['iva', 'percepcion', 'retencion', 'otro'].includes(b.tipo) ? b.tipo : ex.tipo,
+    aplica_a: ['compras', 'ventas', 'ambos'].includes(b.aplica_a) ? b.aplica_a : ex.aplica_a,
+    alicuota_defecto: b.alicuota_defecto !== undefined ? Math.max(0, Number(b.alicuota_defecto) || 0) : ex.alicuota_defecto,
+    base_calculo: ['neto', 'total', 'manual', 'fijo'].includes(b.base_calculo) ? b.base_calculo : ex.base_calculo,
+    jurisdiccion_codigo: b.jurisdiccion_codigo !== undefined ? (b.jurisdiccion_codigo || '').trim() : (ex.jurisdiccion_codigo || ''),
+    codigo_regimen: b.codigo_regimen !== undefined ? (b.codigo_regimen || '').trim() : (ex.codigo_regimen || ''),
+    minimo_no_imponible: b.minimo_no_imponible !== undefined ? Math.max(0, Number(b.minimo_no_imponible) || 0) : (ex.minimo_no_imponible || 0),
+    cuenta_contable_id: b.cuenta_contable_id !== undefined ? (b.cuenta_contable_id ? Number(b.cuenta_contable_id) : null) : ex.cuenta_contable_id,
+    activo: b.activo !== undefined ? (b.activo ? 1 : 0) : ex.activo,
+  });
   return true;
 }
 
 export function deleteImpuesto(id) {
-  db.prepare('DELETE FROM impuestos_config WHERE id = ?').run(id);
+  impuestoConfigRepo.delete(id);
 }

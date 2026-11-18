@@ -68,7 +68,7 @@ export async function renderPlantillasView() {
               return `<option value="${esc(lbl)}" ${filterCat === lbl ? 'selected' : ''}>${esc(lbl)}</option>`;
             }).join('')}
           </select>
-          <input type="search" id="search-pt" placeholder="Buscar por nombre, código o proveedor..." value="${esc(search)}" style="min-width:240px;flex:1;" />
+          <input type="search" id="search-pt" placeholder="Buscar por nombre, código o proveedor..." value="${esc(search)}" class="sx-aca4d0" />
         </div>
 
         <div id="plt-table-wrap"></div>
@@ -101,7 +101,7 @@ export async function renderPlantillasView() {
           label: 'Plantilla',
           render: p => `
             <a href="/plantillas/${p.id}" data-link class="link-primary"><strong>${esc(p.nombre)}</strong></a>
-            ${p.codigo ? `<div class="muted" style="font-size:0.78rem;">Cód: ${esc(p.codigo)}</div>` : ''}
+            ${p.codigo ? `<div class="muted sx-978ebc">Cód: ${esc(p.codigo)}</div>` : ''}
           `,
         },
         {

@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtNum, badgeForTipo } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { printRemito } from '../../lib/remitoPrint.js';
+import { printRemito, openPdfFromEndpoint } from '../../lib/print/index.js';
 import { mountCombobox } from '../../lib/autocomplete.js';
 import { renderDataTable } from '../../lib/engine/index.js';
 
@@ -66,6 +66,7 @@ export async function renderInventarioView() {
           <p class="muted">Saldos por producto, ubicaciones y movimientos de stock.</p>
         </div>
         <div class="actions">
+          <button type="button" id="btn-inv-pdf" class="btn">Exportar PDF</button>
           <a href="/inventario/flujo-stock" data-link class="btn">Flujo de Stock</a>
           <a href="/operaciones-stock" data-link class="btn btn-primary">+ Nueva Operación</a>
           <a href="/cronograma" data-link class="btn">Abastecimiento</a>
@@ -79,7 +80,7 @@ export async function renderInventarioView() {
         </div>
         <div class="summary-card">
           <div class="label">Bajo Stock Mínimo</div>
-          <div class="val" style="color:var(--color-accent);">${alertasCount}</div>
+          <div class="val text-accent">${alertasCount}</div>
         </div>
         <div class="summary-card">
           <div class="label">A Reponer</div>
@@ -96,7 +97,7 @@ export async function renderInventarioView() {
             <input type="checkbox" id="inv-only-alerts" ${onlyAlerts ? 'checked' : ''} />
             <span>Solo alertas de stock mínimo</span>
           </label>
-          <input type="search" id="inv-search" placeholder="Buscar producto o proveedor..." value="${esc(search)}" style="min-width:240px;" />
+          <input type="search" id="inv-search" placeholder="Buscar producto o proveedor..." value="${esc(search)}" class="sx-c1c4e5" />
         </div>
         <div id="inv-stock-table"></div>
       </div>
@@ -184,6 +185,17 @@ export async function renderInventarioView() {
           `,
         },
       ],
+    });
+
+    root.querySelector('#btn-inv-pdf')?.addEventListener('click', async () => {
+      try {
+        await openPdfFromEndpoint('/api/print/existencias-pdf', {
+          items: filteredInv,
+          filtros: { search, onlyAlerts },
+        }, `Existencias_${new Date().toISOString().slice(0, 10)}.pdf`);
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
 
     root.querySelectorAll('[data-meta-mov]').forEach(btn => btn.addEventListener('click', () => {

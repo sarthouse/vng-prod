@@ -1,11 +1,12 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, fmtDate, renderPuntoVentaOptions, bindPuntoVentaSeq, getMetodosForCuenta } from '../../lib/format.js';
+import { esc, fmtMoney, fmtDate, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, getMetodosForCuenta } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { printOrdenPago, printReciboCobro } from '../../lib/tesoreriaPrint.js';
+import { printOrdenPago, printReciboCobro } from '../../lib/print/index.js';
 import { navigate } from '../../router.js';
 import {
   mountPageView,
   renderDataTable,
+  renderSpreadsheetTable,
   showConfirmModal,
 } from '../../lib/engine/index.js';
 
@@ -28,7 +29,7 @@ export async function renderTesoreriaView() {
         <div class="card-header">
           <div>
             <h2>Cuentas de Tesorería</h2>
-            <span class="muted" style="font-size:0.82rem;">Saldos actuales conciliados por partida doble.</span>
+            <span class="muted text-sm">Saldos actuales conciliados por partida doble.</span>
           </div>
           <a href="/tesoreria/cuentas" data-link class="btn btn-sm btn-primary">Gestionar Cuentas</a>
         </div>
@@ -41,7 +42,7 @@ export async function renderTesoreriaView() {
         <div class="card-header">
           <div>
             <h2>Cobros</h2>
-            <span class="muted" style="font-size:0.82rem;">Recibos de cobro a clientes e ingresos de tesorería.</span>
+            <span class="muted text-sm">Recibos de cobro a clientes e ingresos de tesorería.</span>
           </div>
           <a href="/tesoreria/cobros/nuevo" data-link class="btn btn-sm btn-primary">+ Nuevo Cobro</a>
         </div>
@@ -55,7 +56,7 @@ export async function renderTesoreriaView() {
         <div class="card-header">
           <div>
             <h2>Pagos</h2>
-            <span class="muted" style="font-size:0.82rem;">Órdenes de pago a proveedores, talleres y gastos operativos.</span>
+            <span class="muted text-sm">Órdenes de pago a proveedores, talleres y gastos operativos.</span>
           </div>
           <a href="/tesoreria/pagos/nuevo" data-link class="btn btn-sm btn-primary">+ Nuevo Pago</a>
         </div>
@@ -136,7 +137,7 @@ export async function renderTesoreriaView() {
                 {
                   label: 'Monto',
                   align: 'right',
-                  render: c => `<strong style="color:#15803d;">${fmtMoney(c.monto)}</strong>`,
+                  render: c => `<strong class="text-success">${fmtMoney(c.monto)}</strong>`,
                   sum: rows => `<strong>${fmtMoney(rows.reduce((s, r) => s + (Number(r.monto) || 0), 0))}</strong>`,
                 },
                 {
@@ -207,7 +208,7 @@ export async function renderTesoreriaView() {
                 {
                   label: 'Monto',
                   align: 'right',
-                  render: p => `<strong style="color:var(--color-accent);">${fmtMoney(p.monto)}</strong>`,
+                  render: p => `<strong class="text-accent">${fmtMoney(p.monto)}</strong>`,
                   sum: rows => `<strong>${fmtMoney(rows.reduce((s, r) => s + (Number(r.monto) || 0), 0))}</strong>`,
                 },
                 {
@@ -283,115 +284,140 @@ function mountMediosLines(container, cuentas, initialLines, { mode = 'cobro', ch
     ? initialLines.map(l => ({ ...newDefaultLine(), ...l }))
     : [newDefaultLine()];
 
+  const getCuentaOpts = () => [
+    ...cuentas.map(c => ({ value: String(c.id), label: `${c.nombre} (${fmtMoney(c.saldo_actual)})` })),
+    ...(mode === 'cobro' ? [{ value: '__CARTERA__', label: 'Cartera de Cheques (Terceros)' }] : []),
+    ...(mode === 'pago' && chequesEnCartera.length > 0 ? [{ value: '__ENDOSO__', label: `Endosar Cheque de Tercero (${chequesEnCartera.length})` }] : []),
+  ];
+
+  const getMetodosForRow = (l) => {
+    const isCartera = mode === 'cobro' && l.cuenta_id === '__CARTERA__';
+    const isEndoso = mode === 'pago' && l.cuenta_id === '__ENDOSO__';
+    const ctaObj = (!isCartera && !isEndoso) ? cuentas.find(c => String(c.id) === String(l.cuenta_id)) : null;
+    const allowed = isCartera ? ['Cheque'] : isEndoso ? ['Endoso Cheque'] : getMetodosForCuenta(ctaObj);
+    if (!allowed.includes(l.metodo)) l.metodo = allowed[0];
+    return allowed;
+  };
+
   const drawMedios = () => {
+    lineas.forEach(l => getMetodosForRow(l));
     const total = lineas.reduce((s, l) => s + (Number(l.monto) || 0), 0);
-    container.innerHTML = `
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Cuenta / Origen *</th><th>Método</th><th>Referencia</th><th class="num" style="width:130px;">Monto *</th><th style="width:50px;"></th></tr></thead>
-          <tbody>
-            ${lineas.map((l, idx) => {
-              const isCartera = mode === 'cobro' && l.cuenta_id === '__CARTERA__';
-              const isEndoso = mode === 'pago' && l.cuenta_id === '__ENDOSO__';
-              const ctaObj = (!isCartera && !isEndoso) ? cuentas.find(c => String(c.id) === String(l.cuenta_id)) : null;
-              const allowed = isCartera ? ['Cheque'] : isEndoso ? ['Endoso Cheque'] : getMetodosForCuenta(ctaObj);
-              if (!allowed.includes(l.metodo)) l.metodo = allowed[0];
-              const showChequeForm = l.metodo === 'Cheque';
-              return `
-              <tr>
-                <td>
-                  <select class="ml-cta" data-idx="${idx}" required>
-                    ${cuentas.map(c => `<option value="${c.id}" ${String(l.cuenta_id) === String(c.id) ? 'selected' : ''}>${esc(c.nombre)} (${fmtMoney(c.saldo_actual)})</option>`).join('')}
-                    ${mode === 'cobro' ? `<option value="__CARTERA__" ${isCartera ? 'selected' : ''}>Cartera de Cheques (Terceros)</option>` : ''}
-                    ${mode === 'pago' && chequesEnCartera.length > 0 ? `<option value="__ENDOSO__" ${isEndoso ? 'selected' : ''}>Endosar Cheque de Tercero (${chequesEnCartera.length})</option>` : ''}
-                  </select>
-                </td>
-                <td>
-                  <select class="ml-met" data-idx="${idx}">
-                    ${allowed.map(m => `<option value="${m}" ${l.metodo === m ? 'selected' : ''}>${m}</option>`).join('')}
-                  </select>
-                </td>
-                <td><input type="text" class="ml-ref" data-idx="${idx}" value="${esc(l.referencia || '')}" placeholder="Nro cheque / ref..." /></td>
-                <td><input type="number" step="0.01" min="0.01" class="ml-monto num" data-idx="${idx}" value="${l.monto}" ${isEndoso ? 'readonly' : ''} required placeholder="0.00" /></td>
-                <td>${lineas.length > 1 ? `<button type="button" class="btn btn-sm btn-danger ml-del" data-idx="${idx}">×</button>` : ''}</td>
-              </tr>
-              ${showChequeForm ? `
-                <tr style="background:rgba(15,23,42,0.03);">
-                  <td colspan="5">
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0;">
-                      <input type="text" class="ml-ch-num" data-idx="${idx}" value="${esc(l.ch_numero || '')}" placeholder="N° Cheque *" required style="width:130px;" />
-                      ${mode === 'cobro' ? `<input type="text" class="ml-ch-banco" data-idx="${idx}" value="${esc(l.ch_banco || '')}" placeholder="Banco emisor" style="width:140px;" />` : ''}
-                      <select class="ml-ch-mod" data-idx="${idx}" style="width:120px;">
-                        <option value="diferido" ${l.ch_modalidad === 'diferido' ? 'selected' : ''}>Diferido</option>
-                        <option value="comun" ${l.ch_modalidad === 'comun' ? 'selected' : ''}>Común</option>
-                      </select>
-                      <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;">
-                        <span>Vto:</span>
-                        <input type="date" class="ml-ch-fpago" data-idx="${idx}" value="${esc(l.ch_fecha_pago || hoy)}" required />
-                      </label>
-                      ${mode === 'cobro' ? `
-                        <input type="text" class="ml-ch-lib" data-idx="${idx}" value="${esc(l.ch_librador || '')}" placeholder="Librador" style="width:140px;" />
-                        <input type="text" class="ml-ch-cuit" data-idx="${idx}" value="${esc(l.ch_cuit || '')}" placeholder="CUIT librador" style="width:120px;" />
-                      ` : ''}
-                      <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;cursor:pointer;">
-                        <input type="checkbox" class="ml-ch-echeq" data-idx="${idx}" ${l.ch_echeq ? 'checked' : ''} />
-                        <span>E-Cheq</span>
-                      </label>
-                    </div>
-                  </td>
-                </tr>
+
+    const chequePanelsHtml = lineas.map((l, idx) => {
+      const isEndoso = mode === 'pago' && l.cuenta_id === '__ENDOSO__';
+      const showChequeForm = l.metodo === 'Cheque';
+      if (!showChequeForm && !isEndoso) return '';
+      if (showChequeForm) {
+        return `
+          <div class="sx-2b6e94 mt-sm" style="padding:10px;border-radius:8px;border:1px solid var(--color-border);">
+            <div class="text-xs muted mb-xs">Datos del Cheque (Medio #${idx + 1})</div>
+            <div class="sx-372cd4">
+              <input type="text" class="ml-ch-num w-130" data-idx="${idx}" value="${esc(l.ch_numero || '')}" placeholder="N° Cheque *" required />
+              ${mode === 'cobro' ? `<input type="text" class="ml-ch-banco w-140" data-idx="${idx}" value="${esc(l.ch_banco || '')}" placeholder="Banco emisor" />` : ''}
+              <select class="ml-ch-mod w-120" data-idx="${idx}">
+                <option value="diferido" ${l.ch_modalidad === 'diferido' ? 'selected' : ''}>Diferido</option>
+                <option value="comun" ${l.ch_modalidad === 'comun' ? 'selected' : ''}>Común</option>
+              </select>
+              <label class="sx-8be09d">
+                <span>Vto:</span>
+                <input type="date" class="ml-ch-fpago" data-idx="${idx}" value="${esc(l.ch_fecha_pago || hoy)}" required />
+              </label>
+              ${mode === 'cobro' ? `
+                <input type="text" class="ml-ch-lib w-140" data-idx="${idx}" value="${esc(l.ch_librador || '')}" placeholder="Librador" />
+                <input type="text" class="ml-ch-cuit w-120" data-idx="${idx}" value="${esc(l.ch_cuit || '')}" placeholder="CUIT librador" />
               ` : ''}
-              ${isEndoso ? `
-                <tr style="background:rgba(15,23,42,0.03);">
-                  <td colspan="5">
-                    <div style="display:flex;gap:8px;align-items:center;padding:4px 0;">
-                      <span style="font-size:0.82rem;font-weight:600;">Cheque a endosar:</span>
-                      <select class="ml-ch-endoso" data-idx="${idx}" required style="flex:1;">
-                        <option value="">-- Seleccionar cheque en cartera --</option>
-                        ${chequesEnCartera.map(ch => `<option value="${ch.id}" ${String(l.cheque_id) === String(ch.id) ? 'selected' : ''}>N° ${esc(ch.numero)} · ${esc(ch.banco || 'Sin banco')} · Vto ${esc(ch.fecha_pago)} · ${fmtMoney(ch.monto)}</option>`).join('')}
-                      </select>
-                    </div>
-                  </td>
-                </tr>
-              ` : ''}
-            `;
-            }).join('')}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="3"><button type="button" class="btn btn-sm ml-add">+ Agregar medio</button></td>
-              <td class="num"><strong class="ml-total">${fmtMoney(total)}</strong></td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    `;
-    container.querySelectorAll('.ml-cta').forEach(el => el.addEventListener('change', () => {
-      const idx = Number(el.dataset.idx);
-      lineas[idx].cuenta_id = el.value;
-      if (el.value === '__CARTERA__') {
-        lineas[idx].metodo = 'Cheque';
-      } else if (el.value === '__ENDOSO__') {
-        lineas[idx].metodo = 'Endoso Cheque';
-      } else {
-        const ctaObj = cuentas.find(c => String(c.id) === String(el.value));
-        const allowed = getMetodosForCuenta(ctaObj);
-        if (!allowed.includes(lineas[idx].metodo)) lineas[idx].metodo = allowed[0];
+              <label class="sx-487100">
+                <input type="checkbox" class="ml-ch-echeq" data-idx="${idx}" ${l.ch_echeq ? 'checked' : ''} />
+                <span>E-Cheq</span>
+              </label>
+            </div>
+          </div>
+        `;
       }
-      drawMedios();
-    }));
-    container.querySelectorAll('.ml-met').forEach(el => el.addEventListener('change', () => {
-      lineas[Number(el.dataset.idx)].metodo = el.value;
-      drawMedios();
-    }));
-    container.querySelectorAll('.ml-ref').forEach(el => el.addEventListener('input', () => { lineas[Number(el.dataset.idx)].referencia = el.value; }));
-    container.querySelectorAll('.ml-monto').forEach(el => el.addEventListener('input', () => {
-      lineas[Number(el.dataset.idx)].monto = el.value;
-      const t = lineas.reduce((s, l) => s + (Number(l.monto) || 0), 0);
-      const tEl = container.querySelector('.ml-total');
-      if (tEl) tEl.textContent = fmtMoney(t);
-    }));
+      return `
+        <div class="sx-2b6e94 mt-sm" style="padding:10px;border-radius:8px;border:1px solid var(--color-border);">
+          <div class="sx-889c82">
+            <span class="sx-e792ed">Cheque a endosar (Medio #${idx + 1}):</span>
+            <select class="ml-ch-endoso sx-da5cd6" data-idx="${idx}" required>
+              <option value="">-- Seleccionar cheque en cartera --</option>
+              ${chequesEnCartera.map(ch => `<option value="${ch.id}" ${String(l.cheque_id) === String(ch.id) ? 'selected' : ''}>N° ${esc(ch.numero)} · ${esc(ch.banco || 'Sin banco')} · Vto ${esc(ch.fecha_pago)} · ${fmtMoney(ch.monto)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <div id="ml-sheet-host"></div>
+      ${chequePanelsHtml}
+    `;
+
+    const sheetHost = container.querySelector('#ml-sheet-host');
+    renderSpreadsheetTable(sheetHost, {
+      rows: lineas,
+      compact: true,
+      showDirty: false,
+      addRowLabel: '+ Agregar medio',
+      tfootHtml: `<tr><td colspan="3"><strong>Total medios</strong></td><td class="num"><strong class="ml-total">${fmtMoney(total)}</strong></td><td></td></tr>`,
+      columns: [
+        {
+          key: 'cuenta_id',
+          label: 'Cuenta / Origen *',
+          type: 'select',
+          options: getCuentaOpts,
+        },
+        {
+          key: 'metodo',
+          label: 'Método',
+          type: 'select',
+          options: (l) => getMetodosForRow(l).map(m => ({ value: m, label: m })),
+        },
+        {
+          key: 'referencia',
+          label: 'Referencia',
+          type: 'text',
+          render: (l) => l.referencia ? esc(l.referencia) : '<span class="muted">Nro cheque / ref...</span>',
+        },
+        {
+          key: 'monto',
+          label: 'Monto *',
+          type: 'number',
+          step: 0.01,
+          min: 0.01,
+          align: 'right',
+          editable: (l) => !(mode === 'pago' && l.cuenta_id === '__ENDOSO__'),
+          render: (l) => l.monto ? fmtMoney(l.monto) : '<span class="muted">$0,00</span>',
+        },
+      ],
+      onAddRow: () => {
+        lineas.push(newDefaultLine());
+        drawMedios();
+      },
+      onDeleteRow: (_row, idx) => {
+        if (lineas.length <= 1) { toast('Debe haber al menos un medio', true); return; }
+        lineas.splice(idx, 1);
+        drawMedios();
+      },
+      onCellChange: ({ row, key, value }) => {
+        if (key === 'cuenta_id') {
+          if (value === '__CARTERA__') row.metodo = 'Cheque';
+          else if (value === '__ENDOSO__') row.metodo = 'Endoso Cheque';
+          else getMetodosForRow(row);
+          drawMedios();
+          return;
+        }
+        if (key === 'metodo') {
+          drawMedios();
+          return;
+        }
+        if (key === 'monto') {
+          const t = lineas.reduce((s, l) => s + (Number(l.monto) || 0), 0);
+          const tEl = container.querySelector('.ml-total');
+          if (tEl) tEl.textContent = fmtMoney(t);
+        }
+      },
+    });
+
     container.querySelectorAll('.ml-ch-num').forEach(el => el.addEventListener('input', () => { lineas[Number(el.dataset.idx)].ch_numero = el.value; }));
     container.querySelectorAll('.ml-ch-banco').forEach(el => el.addEventListener('input', () => { lineas[Number(el.dataset.idx)].ch_banco = el.value; }));
     container.querySelectorAll('.ml-ch-mod').forEach(el => el.addEventListener('change', () => { lineas[Number(el.dataset.idx)].ch_modalidad = el.value; }));
@@ -409,14 +435,6 @@ function mountMediosLines(container, cuentas, initialLines, { mode = 'cobro', ch
       } else {
         lineas[idx].monto = '';
       }
-      drawMedios();
-    }));
-    container.querySelector('.ml-add')?.addEventListener('click', () => {
-      lineas.push(newDefaultLine());
-      drawMedios();
-    });
-    container.querySelectorAll('.ml-del').forEach(btn => btn.addEventListener('click', () => {
-      lineas.splice(Number(btn.dataset.idx), 1);
       drawMedios();
     }));
   };
@@ -583,12 +601,12 @@ export async function renderPagoFormView() {
           <label class="full"><span>Concepto</span><input type="text" name="concepto" placeholder="Detalle del pago..." /></label>
           <div class="full" id="pag-medios-box"></div>
           <div class="full" id="pag-imputar-box"></div>
-          <div class="full card" style="margin:6px 0;padding:12px;background:var(--bg-soft, #f8fafc);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div class="full card sx-12d3a3">
+            <div class="sx-fbf92c">
               <strong>Retenciones Practicadas (Opcional)</strong>
               <button type="button" class="btn btn-sm" id="btn-add-retencion">+ Agregar Retención</button>
             </div>
-            <div id="pag-retenciones-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+            <div id="pag-retenciones-list" class="sx-685cf0"></div>
           </div>
           <div class="full modal-footer">
             <a href="/tesoreria/pagos" data-link class="btn">Cancelar</a>
@@ -600,6 +618,12 @@ export async function renderPagoFormView() {
     onAfterMount: () => {
       const getPagoLineas = mountMediosLines(root.querySelector('#pag-medios-box'), cuentas, null, { mode: 'pago', chequesEnCartera });
       bindPuntoVentaSeq(root.querySelector('#pag-pv'), root.querySelector('#pag-num'), 'pago', api);
+      bindNumeroPadding(root.querySelector('#pag-num'), () => ({
+        pvDefault: root.querySelector('#pag-pv')?.value || 1,
+        prefijo: nextPagoSeq?.prefijo || '',
+        sufijo: nextPagoSeq?.sufijo || '',
+        padding: nextPagoSeq?.padding || 8,
+      }));
       const getPagoImputaciones = mountFacturasImputarBox(
         root.querySelector('#pag-imputar-box'),
         root.querySelector('#form-nuevo-pago select[name="proveedor_id"]'),
@@ -815,6 +839,12 @@ export async function renderCobroFormView() {
     onAfterMount: () => {
       const getCobroLineas = mountMediosLines(root.querySelector('#cob-medios-box'), cuentas, null, { mode: 'cobro' });
       bindPuntoVentaSeq(root.querySelector('#cob-pv'), root.querySelector('#cob-num'), 'cobro', api);
+      bindNumeroPadding(root.querySelector('#cob-num'), () => ({
+        pvDefault: root.querySelector('#cob-pv')?.value || 1,
+        prefijo: nextCobroSeq?.prefijo || '',
+        sufijo: nextCobroSeq?.sufijo || '',
+        padding: nextCobroSeq?.padding || 8,
+      }));
       const getCobroImputaciones = mountFacturasImputarBox(
         root.querySelector('#cob-imputar-box'),
         root.querySelector('#form-nuevo-cobro select[name="cliente_id"]'),
@@ -858,12 +888,12 @@ function mountFacturasImputarBox(box, selectEl, dominio) {
       const est = await api(`/api/tesoreria/imputaciones/estado-cuenta?contacto_id=${cId}&dominio=${dominio}`);
       facturas = (est.facturas || []).filter(f => f.pendiente > 0.01);
       if (!facturas.length) {
-        box.innerHTML = '<div class="muted" style="font-size:12px;padding:4px 0;">Este contacto no tiene facturas pendientes (el comprobante quedará a cuenta).</div>';
+        box.innerHTML = '<div class="muted sx-9804ae">Este contacto no tiene facturas pendientes (el comprobante quedará a cuenta).</div>';
         return;
       }
       box.innerHTML = `
-        <div class="card" style="margin:6px 0;padding:12px;background:var(--bg-soft, #f8fafc);">
-          <strong style="display:block;margin-bottom:8px;">Imputar a Facturas Pendientes (Opcional)</strong>
+        <div class="card sx-12d3a3">
+          <strong class="sx-292f4a">Imputar a Facturas Pendientes (Opcional)</strong>
           <div class="table-wrap">
             <table class="data-table">
               <thead><tr><th>Imputar</th><th>Fecha</th><th>Número</th><th class="num">Total</th><th class="num">Pendiente</th><th class="num">Monto a Imputar</th></tr></thead>
@@ -875,7 +905,7 @@ function mountFacturasImputarBox(box, selectEl, dominio) {
                     <td><strong>${esc(f.numero || `#${f.id}`)}</strong></td>
                     <td class="num">${fmtMoney(f.total)}</td>
                     <td class="num">${fmtMoney(f.pendiente)}</td>
-                    <td class="num"><input type="number" step="0.01" min="0" max="${f.pendiente}" class="imp-monto" data-fid="${f.id}" value="${f.pendiente.toFixed(2)}" style="width:120px;text-align:right;" disabled /></td>
+                    <td class="num"><input type="number" step="0.01" min="0" max="${f.pendiente}" class="imp-monto sx-b00f41" data-fid="${f.id}" value="${f.pendiente.toFixed(2)}" disabled /></td>
                   </tr>
                 `).join('')}
               </tbody>

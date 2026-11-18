@@ -156,7 +156,7 @@ export function renderKanbanBoard(container, {
                     ${renderCard ? renderCard(r) : `<strong>${esc(r.nombre || r.codigo || r[idKey])}</strong>`}
                   </div>
                 `).join('')
-                : `<div class="muted" style="font-size:0.8rem; padding:12px 6px; text-align:center;">${esc(emptyText)}</div>`}
+                : `<div class="muted sx-46d9e5">${esc(emptyText)}</div>`}
             </div>
           </div>
         `;
@@ -326,7 +326,7 @@ export function renderGanttChart(container, {
                 <div class="ve-gantt-row ve-gantt-row-parent">
                   <div class="ve-gantt-col-info">
                     <div class="ve-gantt-info-main">
-                      ${item.subs.length ? `<button type="button" class="ve-gantt-toggle" data-gantt-toggle="${idx}" title="Mostrar/ocultar etapas">▾</button>` : '<span style="width:18px;display:inline-block;"></span>'}
+                      ${item.subs.length ? `<button type="button" class="ve-gantt-toggle" data-gantt-toggle="${idx}" title="Mostrar/ocultar etapas">▾</button>` : '<span class="sx-bf3efd"></span>'}
                       <div class="ve-gantt-info-text">
                         ${labelRender ? labelRender(r) : `<strong>${esc(r.codigo || r.nombre)}</strong>`}
                       </div>
@@ -352,7 +352,7 @@ export function renderGanttChart(container, {
                       <div class="ve-gantt-col-info ve-gantt-col-sub">
                         ${subLabelRender ? subLabelRender(sr, r) : `
                           <span class="muted">${esc(sr.orden_num ? `${sr.orden_num}. ` : '')}${esc(sr.nombre)}</span>
-                          ${sr.taller_nombre ? `<span class="badge badge-muted" style="font-size:10px;">${esc(sr.taller_nombre)}</span>` : ''}
+                          ${sr.taller_nombre ? `<span class="badge badge-muted sx-bcf88e">${esc(sr.taller_nombre)}</span>` : ''}
                         `}
                       </div>
                       <div class="ve-gantt-timeline-track">

@@ -120,19 +120,19 @@ export async function renderChequesView() {
             label: 'Origen',
             render: c => `
               <span class="badge ${c.origen === 'terceros' ? 'badge-info' : 'badge-warn'}">${c.origen === 'terceros' ? 'Tercero' : 'Propio'}</span>
-              <span class="muted" style="font-size:0.75rem;margin-left:4px;">${c.modalidad === 'comun' ? 'Común' : 'Diferido'}${c.echeq ? ' · E-Cheq' : ''}</span>
+              <span class="muted sx-5a9b7a">${c.modalidad === 'comun' ? 'Común' : 'Diferido'}${c.echeq ? ' · E-Cheq' : ''}</span>
             `,
           },
           {
             label: 'N° / Banco',
-            render: c => `<strong>${esc(c.numero)}</strong>${c.banco ? `<div class="muted" style="font-size:0.78rem;">${esc(c.banco)}</div>` : ''}`,
+            render: c => `<strong>${esc(c.numero)}</strong>${c.banco ? `<div class="muted sx-978ebc">${esc(c.banco)}</div>` : ''}`,
           },
           {
             label: 'Librador / Contraparte',
             render: c => `
               <div>${esc(c.librador_nombre || c.contacto_origen_nombre || '-')}</div>
-              ${c.cuit_librador ? `<div class="muted" style="font-size:0.75rem;">CUIT ${esc(c.cuit_librador)}</div>` : ''}
-              ${c.contacto_destino_nombre ? `<div class="muted" style="font-size:0.75rem;">Endosado a: ${esc(c.contacto_destino_nombre)}</div>` : ''}
+              ${c.cuit_librador ? `<div class="muted text-xs">CUIT ${esc(c.cuit_librador)}</div>` : ''}
+              ${c.contacto_destino_nombre ? `<div class="muted text-xs">Endosado a: ${esc(c.contacto_destino_nombre)}</div>` : ''}
             `,
           },
           { label: 'Emisión', render: c => esc(c.fecha_emision || '-') },
@@ -143,7 +143,7 @@ export async function renderChequesView() {
               const pronto = !vencido && ['En Cartera', 'Depositado', 'Emitido'].includes(c.estado) && c.fecha_pago && c.fecha_pago <= en7Dias;
               return `
                 <span style="${vencido ? 'color:var(--color-accent);font-weight:700;' : pronto ? 'color:#b45309;font-weight:600;' : ''}">${esc(c.fecha_pago || '-')}</span>
-                ${vencido ? '<div class="muted" style="font-size:0.72rem;color:var(--color-accent);">Vencido</div>' : ''}
+                ${vencido ? '<div class="muted sx-3f0fb7">Vencido</div>' : ''}
               `;
             },
           },
@@ -176,7 +176,7 @@ export async function renderChequesView() {
         createModal({
           title: `Depositar Cheque N° ${ch?.numero || ''}`,
           bodyHtml: `
-            <div class="form-grid" style="grid-template-columns:1fr;">
+            <div class="form-grid sx-d7614d">
               <label>
                 <span>Cuenta Bancaria Destino *</span>
                 <select id="mod-dep-cta">
@@ -238,7 +238,7 @@ export async function renderChequesView() {
         createModal({
           title: `Rechazar Cheque N° ${ch?.numero || ''}`,
           bodyHtml: `
-            <div class="form-grid" style="grid-template-columns:1fr;">
+            <div class="form-grid sx-d7614d">
               <label><span>Fecha de Rechazo *</span><input type="date" id="mod-rej-fecha" value="${hoyIso}" /></label>
               <label><span>Motivo del Rechazo</span><input type="text" id="mod-rej-motivo" placeholder="Ej: Sin fondos, firma difiere..." /></label>
               <label><span>Gastos Bancarios ($)</span><input type="number" step="0.01" min="0" id="mod-rej-gastos" value="0" /></label>

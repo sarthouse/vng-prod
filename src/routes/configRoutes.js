@@ -1,5 +1,6 @@
 import * as configSvc from '../services/config/configService.js';
 import * as importSvc from '../services/config/importService.js';
+import * as jsonExSvc from '../services/config/jsonExchangeService.js';
 import * as afipSvc from '../services/afip/afipService.js';
 import { json, parseBody } from './http.js';
 
@@ -227,6 +228,32 @@ export async function handleConfigRoutes(req, res, pathname) {
   if (pathname === '/api/importar/clientes' && req.method === 'POST') {
     const b = await parseBody(req);
     json(res, 200, importSvc.importContactos(b.rows || [], { es_cliente: true }));
+    return true;
+  }
+
+  if (pathname === '/api/json/entidades' && req.method === 'GET') {
+    json(res, 200, jsonExSvc.listExchangeEntities());
+    return true;
+  }
+  const jsonTplMatch = pathname.match(/^\/api\/json\/plantilla\/([a-z_]+)$/);
+  if (jsonTplMatch && req.method === 'GET') {
+    try { json(res, 200, jsonExSvc.getTemplateJson(jsonTplMatch[1])); }
+    catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const jsonExpMatch = pathname.match(/^\/api\/json\/exportar\/([a-z_]+)$/);
+  if (jsonExpMatch && req.method === 'GET') {
+    try { json(res, 200, jsonExSvc.exportEntityJson(jsonExpMatch[1])); }
+    catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const jsonImpMatch = pathname.match(/^\/api\/json\/importar\/([a-z_]+)$/);
+  if (jsonImpMatch && req.method === 'POST') {
+    const b = await parseBody(req, 10e6);
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    const mode = qs.get('mode') || b?.mode || 'upsert';
+    try { json(res, 200, jsonExSvc.importEntityJson(jsonImpMatch[1], b, { mode })); }
+    catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
 

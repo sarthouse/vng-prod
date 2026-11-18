@@ -33,8 +33,8 @@ export async function renderEntregaFormView({ id } = {}) {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;">
-            <a href="/entregas" data-link class="muted" style="font-size:0.85rem;">← Volver a Entregas</a>
+          <div class="mb-xs">
+            <a href="/entregas" data-link class="muted text-md">← Volver a Entregas</a>
           </div>
           <h1>${isEdit ? `Editar Entrega #${entrega.nro_entrega}` : 'Registrar Nueva Entrega'}</h1>
           <p class="muted">Al guardar se recalculan automáticamente los pendientes y el estado del pedido.</p>
@@ -61,7 +61,7 @@ export async function renderEntregaFormView({ id } = {}) {
           </label>
 
           <div class="full">
-            <span style="display:block; font-size:0.82rem; font-weight:600; color:var(--color-secondary); margin-bottom:6px;">
+            <span class="sx-999b07">
               Cantidades Entregadas por Variante
             </span>
             <div class="sizes-grid">

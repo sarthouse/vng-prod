@@ -3,6 +3,7 @@ db/*.sqlite
 db/*.sqlite-wal
 db/*.sqlite-shm
 db/afip_xml/
+db/afip_crts/
 *.crt
 *.key
 *.csr

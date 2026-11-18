@@ -45,41 +45,41 @@ export async function renderMetaPanel(container, { entidadTipo, entidadId, titul
   const adjuntos = bundle.adjuntos || [];
 
   container.innerHTML = `
-    <div class="card" style="border-left:4px solid var(--accent,#2563eb)">
-      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <div class="card sx-60acac">
+      <div class="card-header sx-f390bf">
         <div>
-          <h3 style="margin:0">${esc(titulo || `${entidadTipo} #${entidadId}`)}</h3>
-          <p class="subtitle" style="margin:4px 0 0">Auditoría, notas internas y archivos adjuntos</p>
+          <h3 class="m-0">${esc(titulo || `${entidadTipo} #${entidadId}`)}</h3>
+          <p class="subtitle sx-b11216">Auditoría, notas internas y archivos adjuntos</p>
         </div>
         ${onClose ? `<button type="button" class="btn secondary" id="btn-close-meta">Cerrar</button>` : ''}
       </div>
       <div class="card-body">
 
       ${record ? `
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:10px 12px;margin-bottom:16px;border-radius:8px;background:var(--surface-2,#f8fafc);font-size:12px">
-          <div><span style="color:var(--muted,#64748b)">Creado por:</span> <strong>${esc(record.autor_nombre || 'Sistema')}</strong></div>
-          <div><span style="color:var(--muted,#64748b)">Creación:</span> <strong>${fmtDateTime(record.created_at)}</strong></div>
-          <div><span style="color:var(--muted,#64748b)">Actualizado por:</span> <strong>${esc(record.actualizado_por_nombre || record.autor_nombre || 'Sistema')}</strong></div>
-          <div><span style="color:var(--muted,#64748b)">Últ. actualización:</span> <strong>${fmtDateTime(record.updated_at || record.created_at)}</strong></div>
+        <div class="sx-d5deb5">
+          <div><span class="sx-9b5b0a">Creado por:</span> <strong>${esc(record.autor_nombre || 'Sistema')}</strong></div>
+          <div><span class="sx-9b5b0a">Creación:</span> <strong>${fmtDateTime(record.created_at)}</strong></div>
+          <div><span class="sx-9b5b0a">Actualizado por:</span> <strong>${esc(record.actualizado_por_nombre || record.autor_nombre || 'Sistema')}</strong></div>
+          <div><span class="sx-9b5b0a">Últ. actualización:</span> <strong>${fmtDateTime(record.updated_at || record.created_at)}</strong></div>
         </div>
       ` : ''}
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+      <div class="sx-aef58a">
         <div>
-          <h4 style="margin:0 0 8px">Notas Internas (${notas.length})</h4>
-          <form id="meta-nota-form" style="display:flex;gap:8px;margin-bottom:10px">
-            <input type="text" id="meta-nota-input" placeholder="Escribir nota interna..." required style="flex:1" />
+          <h4 class="sx-4c7b29">Notas Internas (${notas.length})</h4>
+          <form id="meta-nota-form" class="sx-da64e6">
+            <input type="text" id="meta-nota-input" placeholder="Escribir nota interna..." required class="sx-da5cd6" />
             <button type="submit" class="btn primary">Agregar</button>
           </form>
-          ${notas.length === 0 ? `<div class="empty-state" style="padding:14px">Sin notas internas.</div>` : `
-            <div style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto">
+          ${notas.length === 0 ? `<div class="empty-state sx-6069bb">Sin notas internas.</div>` : `
+            <div class="sx-40c28f">
               ${notas.map(n => `
-                <div style="padding:8px 10px;border:1px solid var(--border,#e2e8f0);border-radius:8px;background:#fff">
-                  <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted,#64748b);margin-bottom:4px">
+                <div class="sx-16cf6c">
+                  <div class="sx-132437">
                     <span><strong>${esc(n.autor_nombre || 'Sistema')}</strong> · ${fmtDateTime(n.created_at)}</span>
-                    <button type="button" class="btn danger btn-sm" data-del-nota="${n.id}" style="padding:2px 6px;font-size:11px">×</button>
+                    <button type="button" class="btn danger btn-sm sx-50ad51" data-del-nota="${n.id}">×</button>
                   </div>
-                  <div style="font-size:13px;white-space:pre-wrap">${esc(n.contenido)}</div>
+                  <div class="sx-cc9088">${esc(n.contenido)}</div>
                 </div>
               `).join('')}
             </div>
@@ -87,21 +87,21 @@ export async function renderMetaPanel(container, { entidadTipo, entidadId, titul
         </div>
 
         <div>
-          <h4 style="margin:0 0 8px">Archivos Adjuntos (${adjuntos.length})</h4>
-          <div style="margin-bottom:10px">
+          <h4 class="sx-4c7b29">Archivos Adjuntos (${adjuntos.length})</h4>
+          <div class="sx-a7409f">
             <input type="file" id="meta-file-input" multiple />
           </div>
-          ${adjuntos.length === 0 ? `<div class="empty-state" style="padding:14px">Sin archivos adjuntos.</div>` : `
-            <div style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto">
+          ${adjuntos.length === 0 ? `<div class="empty-state sx-6069bb">Sin archivos adjuntos.</div>` : `
+            <div class="sx-40c28f">
               ${adjuntos.map(a => `
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border,#e2e8f0);border-radius:8px;background:#fff">
-                  <div style="min-width:0">
-                    <a href="/api/adjuntos/${a.id}/download" target="_blank" rel="noopener" style="font-weight:600;font-size:13px;word-break:break-all">${esc(a.nombre_original)}</a>
-                    <div style="font-size:11px;color:var(--muted,#64748b)">
+                <div class="sx-eceb43">
+                  <div class="sx-3f9f96">
+                    <a href="/api/adjuntos/${a.id}/download" target="_blank" rel="noopener" class="sx-819219">${esc(a.nombre_original)}</a>
+                    <div class="sx-8f12e5">
                       ${fmtSize(a.tamano)} · ${esc(a.autor_nombre || 'Sistema')} · ${fmtDateTime(a.created_at)}
                     </div>
                   </div>
-                  <button type="button" class="btn danger btn-sm" data-del-adj="${a.id}" style="padding:2px 6px;font-size:11px">×</button>
+                  <button type="button" class="btn danger btn-sm sx-50ad51" data-del-adj="${a.id}">×</button>
                 </div>
               `).join('')}
             </div>

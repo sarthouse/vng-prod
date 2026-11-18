@@ -47,7 +47,7 @@ export function renderMatrixTable(container, {
                 <tr>
                   <td>
                     ${esc(it.fecha || '-')}
-                    ${it.vencido ? '<span class="badge badge-warn" style="margin-left:4px;">Vencido</span>' : ''}
+                    ${it.vencido ? '<span class="badge badge-warn sx-132fb9">Vencido</span>' : ''}
                   </td>
                   <td><span class="badge ${String(it.origen).includes('Real') || it.origen === 'Comprometido' ? 'badge-ok' : 'badge-muted'}">${esc(it.origen || '-')}</span></td>
                   <td><strong>${esc(it.contraparte || '-')}</strong></td>

@@ -1,13 +1,13 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, renderPuntoVentaOptions, bindPuntoVentaSeq, bindCuentaMetodoSync, exportRowsToCSV } from '../../lib/format.js';
+import { esc, fmtMoney, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, bindCuentaMetodoSync, exportRowsToCSV } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { navigate } from '../../router.js';
-import { printRemito } from '../../lib/remitoPrint.js';
-import { printVentaComprobante } from '../../lib/ventaPrint.js';
-import { printReciboCobro } from '../../lib/tesoreriaPrint.js';
+import { printRemito } from '../../lib/print/index.js';
+import { printVentaComprobante } from '../../lib/print/index.js';
+import { printReciboCobro } from '../../lib/print/index.js';
 import { mountCombobox, quickCreateCliente, quickCreateProducto } from '../../lib/autocomplete.js';
 import { getIvaRatesFromConfig, calcDocumentTotals, renderTaxFooterHtml } from '../../lib/taxHelper.js';
-import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
+import { renderKpiStrip, renderFilterBar, renderDataTable, renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
 import { COMPROBANTES_AR, resolveComprobanteMeta, resolveLetraFiscalClient } from '../../lib/comprobantesAr.js';
 
@@ -295,7 +295,7 @@ export async function renderVentaFormView({ id } = {}) {
     fecha_vencimiento: '',
     fecha_entrega_est: '',
     cliente_id: params.get('cliente_id') || (clientes[0]?.id ?? ''),
-    estado: 'Confirmada',
+    estado: 'Borrador',
     caracter: 'fiscal',
     tipo_comprobante: 'FA-A',
     punto_venta: nextSeq?.punto_venta || null,
@@ -373,7 +373,7 @@ export async function renderVentaFormView({ id } = {}) {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/ventas" data-link class="muted" style="font-size:0.85rem;">← Volver a Ventas</a></div>
+          <div class="mb-xs"><a href="/ventas" data-link class="muted text-md">← Volver a Ventas</a></div>
           <h1>${isEdit ? `Venta ${esc(v.numero || '#' + id)}` : 'Nueva Venta'}</h1>
         </div>
         ${isEdit ? `
@@ -447,7 +447,7 @@ export async function renderVentaFormView({ id } = {}) {
             <label>
               <span>Estado *</span>
               <select name="estado">
-                ${['Presupuesto', 'Confirmada', 'Entregada', 'Anulada'].map(st =>
+                ${['Borrador', 'Presupuesto', 'Confirmada', 'Entregada', 'Anulada'].map(st =>
                   `<option value="${st}" ${v.estado === st ? 'selected' : ''}>${st}</option>`
                 ).join('')}
               </select>
@@ -470,70 +470,34 @@ export async function renderVentaFormView({ id } = {}) {
         <div class="card">
           <div class="card-header">
             <h2>Detalle</h2>
-            <button type="button" id="btn-vta-add-line" class="btn btn-sm">+ Agregar Ítem</button>
+            <span class="text-sm-muted">Click en celda para editar · Tab/Enter navega · Ctrl+V pega desde Excel</span>
           </div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Descripción</th>
-                  <th class="num">Cantidad</th>
-                  <th>Unidad</th>
-                  <th class="num">Precio</th>
-                  <th>IVA</th>
-                  <th class="num">Subtotal</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${lineas.map((l, idx) => `
-                  <tr>
-                    <td style="min-width:220px;"><div class="vl-prod-combo" data-idx="${idx}"></div></td>
-                    <td><input type="text" class="vl-desc" data-idx="${idx}" value="${esc(l.descripcion)}" /></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="vl-qty" data-idx="${idx}" value="${l.cantidad}" style="width:90px;text-align:right;" /></td>
-                    <td><span class="badge badge-muted vl-udm-badge" data-idx="${idx}">${esc(l.udm || 'pares')}</span></td>
-                    <td class="num"><input type="number" step="0.01" min="0" class="vl-price" data-idx="${idx}" value="${l.precio_unitario}" style="width:110px;text-align:right;" /></td>
-                    <td>
-                      <select class="vl-iva" data-idx="${idx}" style="width:90px;" ${totals.noIva ? 'disabled' : ''}>
-                        ${ivaRates.map(r => `<option value="${r.value}" ${Number(l.alicuota_iva ?? defaultIva) === r.value ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
-                      </select>
-                    </td>
-                    <td class="num"><strong class="vl-sub" data-idx="${idx}">${fmtMoney(l.subtotal)}</strong></td>
-                    <td><button type="button" class="btn btn-sm btn-danger vl-del" data-idx="${idx}">Quitar</button></td>
-                  </tr>
-                `).join('')}
-              </tbody>
-              <tfoot id="vta-tfoot">
-                ${renderTaxFooterHtml(totals, impuestos, 6)}
-              </tfoot>
-            </table>
-          </div>
-          <div style="padding:12px 16px;border-top:1px solid var(--color-border);display:flex;gap:12px;flex-wrap:wrap;align-items:center;background:var(--color-bg-subtle,#f8fafc);">
-            <div style="display:flex;gap:6px;align-items:center;">
-              <select id="vta-envio-sel" style="min-width:190px;">
+          <div id="vta-lines-sheet"></div>
+          <div class="sx-4a7f9a">
+            <div class="flex-row-sm">
+              <select id="vta-envio-sel" class="mw-190">
                 <option value="">-- Tipo de envío --</option>
                 ${enviosActivos.map(e => `<option value="${e.id}">${esc(e.nombre)} (${fmtMoney(e.precio)})</option>`).join('')}
               </select>
               <button type="button" id="btn-vta-add-envio" class="btn btn-sm">+ Envío</button>
             </div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <input type="text" id="vta-cupon-inp" value="${esc(v.cupon_codigo || '')}" placeholder="Código cupón..." style="width:140px;text-transform:uppercase;" />
+            <div class="flex-row-sm">
+              <input type="text" id="vta-cupon-inp" value="${esc(v.cupon_codigo || '')}" placeholder="Código cupón..." class="sx-a61153" />
               <button type="button" id="btn-vta-add-cupon" class="btn btn-sm">Aplicar Cupón</button>
             </div>
-            <div style="display:flex;gap:6px;align-items:center;">
-              <select id="vta-recargo-sel" style="min-width:190px;">
+            <div class="flex-row-sm">
+              <select id="vta-recargo-sel" class="mw-190">
                 <option value="">-- Recargo pago --</option>
                 ${recargosActivos.map(r => `<option value="${r.id}">${esc(r.nombre)} (${r.tipo === 'porcentaje' ? `${r.valor}%` : fmtMoney(r.valor)})</option>`).join('')}
               </select>
               <button type="button" id="btn-vta-add-recargo" class="btn btn-sm">+ Recargo</button>
             </div>
           </div>
-          <div style="padding:12px 16px;border-top:1px solid var(--color-border);">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <div class="sx-3d5933">
+            <div class="sx-6177c8">
               <strong>Percepciones, Retenciones y Otros Impuestos</strong>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <select id="vta-imp-select" style="min-width:220px;">
+              <div class="flex-row-md">
+                <select id="vta-imp-select" class="mw-220">
                   <option value="">-- Elegir impuesto configurado --</option>
                   ${otrosImpuestosConfig.map(ic => `<option value="${ic.id}">${esc(ic.nombre)} (${Number(ic.alicuota_defecto || 0)}%)</option>`).join('')}
                 </select>
@@ -550,29 +514,29 @@ export async function renderVentaFormView({ id } = {}) {
                       <tr>
                         <td><strong>${esc(imp.nombre)}</strong></td>
                         <td>${esc(imp.tipo)}</td>
-                        <td class="num"><input type="number" step="0.01" min="0" class="vi-base" data-idx="${iIdx}" value="${Number(imp.base || 0)}" style="width:110px;text-align:right;" /></td>
-                        <td class="num"><input type="number" step="0.01" min="0" class="vi-aliq" data-idx="${iIdx}" value="${Number(imp.alicuota || 0)}" style="width:85px;text-align:right;" /></td>
-                        <td class="num"><input type="number" step="0.01" min="0" class="vi-monto" data-idx="${iIdx}" value="${Number(imp.monto || 0)}" style="width:110px;text-align:right;" /></td>
+                        <td class="num"><input type="number" step="0.01" min="0" class="vi-base w-110-num" data-idx="${iIdx}" value="${Number(imp.base || 0)}" /></td>
+                        <td class="num"><input type="number" step="0.01" min="0" class="vi-aliq sx-c0ca1e" data-idx="${iIdx}" value="${Number(imp.alicuota || 0)}" /></td>
+                        <td class="num"><input type="number" step="0.01" min="0" class="vi-monto w-110-num" data-idx="${iIdx}" value="${Number(imp.monto || 0)}" /></td>
                         <td><button type="button" class="btn btn-sm btn-danger vi-del" data-idx="${iIdx}">Quitar</button></td>
                       </tr>
                     `).join('')}
                   </tbody>
                 </table>
               </div>
-            ` : '<p class="muted" style="font-size:0.82rem;margin:0;">Sin percepciones ni retenciones adicionales.</p>'}
+            ` : '<p class="muted sx-681911">Sin percepciones ni retenciones adicionales.</p>'}
           </div>
-          <div class="form-footer" style="padding:14px 16px;">
+          <div class="form-footer sx-bd546a">
             <a href="/ventas" data-link class="btn">Cancelar</a>
             <button type="submit" class="btn btn-primary">${isEdit ? 'Guardar Venta' : 'Registrar Venta'}</button>
           </div>
         </div>
       </form>
       ${isEdit ? `
-        <div class="card" style="border-left:4px solid var(--color-primary);">
+        <div class="card sx-a005fc">
           <div class="card-header">
             <div>
               <h2>Cobros Asociados</h2>
-              <p class="muted" style="font-size:0.84rem;">
+              <p class="muted sx-a3099f">
                 Total: <strong>${fmtMoney(cobroBundle?.venta?.total ?? v.total ?? 0)}</strong> ·
                 Cobrado: <strong>${fmtMoney(cobroBundle?.venta?.cobrado ?? 0)}</strong> ·
                 Saldo Pendiente: <strong style="color:${Number(cobroBundle?.venta?.saldo_pendiente ?? 0) > 0 ? 'var(--color-accent)' : 'var(--color-success)'};">${fmtMoney(cobroBundle?.venta?.saldo_pendiente ?? 0)}</strong>
@@ -580,7 +544,7 @@ export async function renderVentaFormView({ id } = {}) {
             </div>
           </div>
           <div class="card-body">
-            <form id="form-cobro-venta-det" class="form-grid" style="margin-bottom:0;">
+            <form id="form-cobro-venta-det" class="form-grid mb-0">
               <label>
                 <span>Cuenta *</span>
                 <select name="cuenta_id" required>
@@ -600,11 +564,11 @@ export async function renderVentaFormView({ id } = {}) {
               </label>
               <label><span>Comprobante</span><input type="text" name="numero" id="cob-vta-det-num" value="${esc(nextCobroSeq?.numero || '')}" /></label>
               <label><span>Monto *</span><input type="number" step="0.01" min="0.01" name="monto" required value="${Number(cobroBundle?.venta?.saldo_pendiente ?? 0) > 0 ? cobroBundle.venta.saldo_pendiente : ''}" /></label>
-              <div style="align-self:end;"><button type="submit" class="btn btn-primary">+ Registrar Cobro</button></div>
+              <div class="self-end"><button type="submit" class="btn btn-primary">+ Registrar Cobro</button></div>
             </form>
 
             ${!(cobroBundle?.cobros || []).length ? '<div class="empty-state">Sin cobros asociados todavía.</div>' : `
-              <div class="table-wrap" style="margin-top:12px;">
+              <div class="table-wrap sx-002535">
                 <table class="data-table">
                   <thead><tr><th>Fecha</th><th>Comprobante</th><th>Cuenta</th><th>Método</th><th class="num">Monto</th><th></th></tr></thead>
                   <tbody>
@@ -751,7 +715,8 @@ export async function renderVentaFormView({ id } = {}) {
 
     const onNum = (idx) => {
       lineas[idx].subtotal = Number((lineas[idx].cantidad * lineas[idx].precio_unitario).toFixed(2));
-      root.querySelector(`.vl-sub[data-idx="${idx}"]`).textContent = fmtMoney(lineas[idx].subtotal);
+      const subEl = root.querySelector(`.vl-sub[data-idx="${idx}"]`);
+      if (subEl) subEl.textContent = fmtMoney(lineas[idx].subtotal);
       syncTotals();
     };
 
@@ -832,6 +797,7 @@ export async function renderVentaFormView({ id } = {}) {
       value: v.cliente_id,
       placeholder: 'Buscar o crear cliente...',
       items: clientes.map(c => ({ value: String(c.id), label: c.nombre, sublabel: c.cuit || c.localidad || '', raw: c })),
+      getDetailUrl: (it) => `/contactos/${it.value}`,
       onSelect: async (it) => {
         v.cliente_id = it ? String(it.value) : '';
         if (it?.raw && !isEdit) {
@@ -886,86 +852,136 @@ export async function renderVentaFormView({ id } = {}) {
     });
 
     const prodItems = () => productos.map(p => ({ value: String(p.id), label: p.nombre, sublabel: p.codigo || p.udm, raw: p }));
-    root.querySelectorAll('.vl-prod-combo').forEach(el => {
-      const idx = Number(el.dataset.idx);
-      mountCombobox(el, {
-        value: lineas[idx].producto_id,
-        placeholder: 'Buscar o crear producto...',
-        items: prodItems(),
-        onSelect: async (it) => {
-          if (!it) {
-            lineas[idx].producto_id = '';
-            return;
-          }
-          const p = it.raw;
-          lineas[idx].producto_id = String(p.id);
-          lineas[idx].descripcion = p.nombre;
-          lineas[idx].udm = p.udm || 'pares';
-          let resolvedPrice = Number(p.precio || 0);
-          try {
-            const lpId = root.querySelector('#vta-lp')?.value || v.lista_precio_id || '';
-            const cliId = v.cliente_id || '';
-            const pr = await api(`/api/listas-precios/resolver?producto_id=${p.id}&cantidad=${lineas[idx].cantidad || 1}${lpId ? `&lista_precio_id=${lpId}` : ''}${cliId ? `&contacto_id=${cliId}` : ''}`);
-            if (pr && typeof pr.precio_unitario === 'number') resolvedPrice = pr.precio_unitario;
-          } catch { /* fallback a precio catálogo */ }
-          lineas[idx].precio_unitario = resolvedPrice;
-          lineas[idx].alicuota_iva = Number(p.alicuota_iva ?? defaultIva);
-          lineas[idx].subtotal = Number((lineas[idx].cantidad * lineas[idx].precio_unitario).toFixed(2));
-          let addedTax = false;
-          if (Array.isArray(p.impuestos_venta_ids) && p.impuestos_venta_ids.length) {
-            const t = calcDocumentTotals(lineas, impuestos, v.caracter, v.tipo_comprobante);
-            for (const taxId of p.impuestos_venta_ids) {
-              const cfg = impuestosConfig.find(c => Number(c.id) === Number(taxId) && c.tipo !== 'iva');
-              if (cfg && !impuestos.some(x => Number(x.impuesto_id) === Number(cfg.id))) {
-                const base = cfg.base_calculo === 'total' ? Number((t.neto + t.ivaTotal).toFixed(2)) : cfg.base_calculo === 'fijo' ? 0 : t.neto;
-                const alic = Number(cfg.alicuota_defecto || 0);
-                const monto = cfg.base_calculo === 'fijo' ? alic : Number((base * alic / 100).toFixed(2));
-                impuestos.push({ impuesto_id: cfg.id, nombre: cfg.nombre, tipo: cfg.tipo, base_calculo: cfg.base_calculo, base, alicuota: alic, monto });
-                addedTax = true;
+    const ivaOpts = ivaRates.map(r => ({ value: String(r.value), label: r.label }));
+    const renderVentaSheet = () => {
+      const sheetHost = root.querySelector('#vta-lines-sheet');
+      if (!sheetHost) return;
+      const tNow = calcDocumentTotals(lineas, impuestos, v.caracter, v.tipo_comprobante);
+      renderSpreadsheetTable(sheetHost, {
+        rows: lineas,
+        compact: true,
+        showDirty: false,
+        addRowLabel: '+ Agregar Ítem',
+        tfootId: 'vta-tfoot',
+        tfootHtml: renderTaxFooterHtml(tNow, impuestos, 6),
+        columns: [
+          {
+            key: 'producto_id',
+            label: 'Producto',
+            type: 'combobox',
+            placeholder: 'Buscar producto...',
+            options: () => prodItems(),
+            render: (l) => {
+              const p = prodMap.get(String(l.producto_id));
+              return p ? `<strong>${esc(p.nombre)}</strong>` : '<span class="muted">Seleccionar...</span>';
+            },
+            onPickItem: async (l, p) => {
+              if (!p) return;
+              l.producto_id = String(p.id);
+              l.descripcion = p.nombre;
+              l.udm = p.udm || 'pares';
+              let resolvedPrice = Number(p.precio || 0);
+              try {
+                const lpId = root.querySelector('#vta-lp')?.value || v.lista_precio_id || '';
+                const cliId = v.cliente_id || '';
+                const pr = await api(`/api/listas-precios/resolver?producto_id=${p.id}&cantidad=${l.cantidad || 1}${lpId ? `&lista_precio_id=${lpId}` : ''}${cliId ? `&contacto_id=${cliId}` : ''}`);
+                if (pr && typeof pr.precio_unitario === 'number') resolvedPrice = pr.precio_unitario;
+              } catch {}
+              l.precio_unitario = resolvedPrice;
+              l.alicuota_iva = Number(p.alicuota_iva ?? defaultIva);
+              l.subtotal = Number((l.cantidad * l.precio_unitario).toFixed(2));
+              if (Array.isArray(p.impuestos_venta_ids) && p.impuestos_venta_ids.length) {
+                const t = calcDocumentTotals(lineas, impuestos, v.caracter, v.tipo_comprobante);
+                let addedTax = false;
+                for (const taxId of p.impuestos_venta_ids) {
+                  const cfg = impuestosConfig.find(c => Number(c.id) === Number(taxId) && c.tipo !== 'iva');
+                  if (cfg && !impuestos.some(x => Number(x.impuesto_id) === Number(cfg.id))) {
+                    const base = cfg.base_calculo === 'total' ? Number((t.neto + t.ivaTotal).toFixed(2)) : cfg.base_calculo === 'fijo' ? 0 : t.neto;
+                    const alic = Number(cfg.alicuota_defecto || 0);
+                    const monto = cfg.base_calculo === 'fijo' ? alic : Number((base * alic / 100).toFixed(2));
+                    impuestos.push({ impuesto_id: cfg.id, nombre: cfg.nombre, tipo: cfg.tipo, base_calculo: cfg.base_calculo, base, alicuota: alic, monto });
+                    addedTax = true;
+                  }
+                }
+                if (addedTax) { capture(); render(); }
               }
-            }
-          }
-          if (addedTax) {
-            capture();
-            render();
-            return;
-          }
-          const descInp = root.querySelector(`.vl-desc[data-idx="${idx}"]`);
-          const udmBadge = root.querySelector(`.vl-udm-badge[data-idx="${idx}"]`);
-          const priceInp = root.querySelector(`.vl-price[data-idx="${idx}"]`);
-          const ivaSel = root.querySelector(`.vl-iva[data-idx="${idx}"]`);
-          if (descInp) descInp.value = lineas[idx].descripcion;
-          if (udmBadge) udmBadge.textContent = lineas[idx].udm;
-          if (priceInp) priceInp.value = lineas[idx].precio_unitario;
-          if (ivaSel) ivaSel.value = String(lineas[idx].alicuota_iva);
-          onNum(idx);
+            },
+          },
+          {
+            key: 'descripcion',
+            label: 'Descripción',
+            type: 'text',
+            recomputeOnRowChange: true,
+          },
+          {
+            key: 'cantidad',
+            label: 'Cantidad',
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            align: 'right',
+            parse: (val) => Math.max(0, Number(val) || 0),
+          },
+          {
+            key: 'udm',
+            label: 'Unidad',
+            type: 'readonly',
+            nowrap: true,
+            render: (l) => `<span class="badge badge-muted">${esc(l.udm || 'pares')}</span>`,
+          },
+          {
+            key: 'precio_unitario',
+            label: 'Precio',
+            type: 'number',
+            step: 0.01,
+            min: 0,
+            align: 'right',
+            recomputeOnRowChange: true,
+            parse: (val) => Math.max(0, Number(val) || 0),
+            render: (l) => fmtMoney(l.precio_unitario),
+          },
+          {
+            key: 'alicuota_iva',
+            label: 'IVA',
+            type: 'select',
+            editable: () => !tNow.noIva,
+            recomputeOnRowChange: true,
+            options: ivaOpts,
+            parse: (val) => Number(val) || 0,
+          },
+          {
+            key: 'subtotal',
+            label: 'Subtotal',
+            type: 'readonly',
+            align: 'right',
+            nowrap: true,
+            render: (l) => `<strong>${fmtMoney(l.subtotal)}</strong>`,
+          },
+        ],
+        onAddRow: () => {
+          lineas.push({ producto_id: '', descripcion: '', cantidad: 1, udm: 'pares', precio_unitario: 0, alicuota_iva: defaultIva, subtotal: 0 });
+          renderVentaSheet();
         },
-        onCreate: async (q) => {
-          const created = await quickCreateProducto(q, { se_fabrica: true, se_compra: false, udm: 'pares' });
-          if (created) {
-            productos.push(created.raw);
-            prodMap.set(created.value, created.raw);
-          }
-          return created;
+        onDeleteRow: (_row, idx) => {
+          lineas.splice(idx, 1);
+          if (!lineas.length) lineas.push({ producto_id: '', descripcion: '', cantidad: 1, udm: 'pares', precio_unitario: 0, alicuota_iva: defaultIva, subtotal: 0 });
+          renderVentaSheet();
+          syncTotals();
+        },
+        onCellChange: ({ rowIndex }) => {
+          onNum(rowIndex);
         },
       });
-    });
+    };
+    renderVentaSheet();
 
     if (!isEdit) bindPuntoVentaSeq(root.querySelector('#vta-pv'), root.querySelector('#vta-num'), 'venta', api);
-    root.querySelector('#btn-vta-add-line').addEventListener('click', () => {
-      capture();
-      lineas.push({ producto_id: '', descripcion: '', cantidad: 1, udm: 'pares', precio_unitario: 0, alicuota_iva: defaultIva, subtotal: 0 });
-      render();
-    });
-    root.querySelectorAll('.vl-del').forEach(btn => btn.addEventListener('click', () => {
-      capture();
-      lineas.splice(Number(btn.dataset.idx), 1);
-      render();
+    bindNumeroPadding(root.querySelector('#vta-num'), () => ({
+      padding: nextSeq?.padding || 8,
+      prefijo: nextSeq?.prefijo || '',
+      sufijo: nextSeq?.sufijo || '',
+      pvDefault: Number(root.querySelector('#vta-pv')?.value || nextSeq?.punto_venta || 1),
     }));
-    root.querySelectorAll('.vl-desc').forEach(inp => inp.addEventListener('input', () => { lineas[Number(inp.dataset.idx)].descripcion = inp.value; }));
-    root.querySelectorAll('.vl-qty').forEach(inp => inp.addEventListener('input', () => { const i = Number(inp.dataset.idx); lineas[i].cantidad = Number(inp.value) || 0; onNum(i); }));
-    root.querySelectorAll('.vl-price').forEach(inp => inp.addEventListener('input', () => { const i = Number(inp.dataset.idx); lineas[i].precio_unitario = Number(inp.value) || 0; onNum(i); }));
-    root.querySelectorAll('.vl-iva').forEach(sel => sel.addEventListener('change', () => { const i = Number(sel.dataset.idx); lineas[i].alicuota_iva = Number(sel.value) || 0; syncTotals(); }));
 
     root.querySelector('#btn-vta-add-envio')?.addEventListener('click', () => {
       capture();

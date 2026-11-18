@@ -1,4 +1,4 @@
-import { esc } from './format.js';
+import { esc, formatDocumento, PROVINCIAS_AR, getJurisdiccionByProvincia } from './format.js';
 import { api, toast } from './api.js';
 import { showFormModal } from './engine/modalEngine.js';
 
@@ -25,14 +25,33 @@ export function mountCombobox(container, opts) {
   const currentItem = () => items.find(i => String(i.value) === selectedValue) || null;
 
   container.classList.add('combo-wrap');
-  const initialLabel = currentItem()?.label ?? (opts.allowFreeText && selectedValue ? selectedValue : '');
+  const initialItem = currentItem();
+  const initialLabel = initialItem?.label ?? (opts.allowFreeText && selectedValue ? selectedValue : '');
+  const initialDetailUrl = (opts.getDetailUrl && initialItem) ? opts.getDetailUrl(initialItem) : null;
   container.innerHTML = `
     ${opts.name ? `<input type="hidden" name="${esc(opts.name)}" value="${esc(selectedValue)}" ${opts.required ? 'required' : ''} />` : ''}
-    <input type="text" class="combo-input" role="combobox" autocomplete="off" data-bwignore="true" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="${esc(opts.placeholder || 'Buscar...')}" value="${esc(initialLabel)}" />
+    <input type="text" class="combo-input" role="combobox" autocomplete="off" data-bwignore="true" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="${esc(opts.placeholder || 'Buscar...')}" value="${esc(initialLabel)}" ${initialDetailUrl ? 'style="padding-right:30px;"' : ''} />
+    ${opts.getDetailUrl ? `<a href="${esc(initialDetailUrl || '#')}" data-link class="combo-detail-btn${initialDetailUrl ? '' : ' hidden'}" title="Ir al detalle" tabindex="-1">&#8599;</a>` : ''}
   `;
 
   const hiddenEl = opts.name ? container.querySelector('input[type="hidden"]') : null;
   const inputEl = container.querySelector('.combo-input');
+  const detailBtn = opts.getDetailUrl ? container.querySelector('.combo-detail-btn') : null;
+
+  const syncDetailBtn = (item) => {
+    if (!detailBtn || !opts.getDetailUrl) return;
+    const url = item ? opts.getDetailUrl(item) : null;
+    if (url) {
+      detailBtn.href = url;
+      detailBtn.classList.remove('hidden');
+      inputEl.style.paddingRight = '30px';
+    } else {
+      detailBtn.href = '#';
+      detailBtn.classList.add('hidden');
+      inputEl.style.paddingRight = '';
+    }
+  };
+  detailBtn?.addEventListener('mousedown', (e) => e.stopPropagation());
 
   // Limpiar menús huérfanos cuyo input ya fue removido del DOM
   document.querySelectorAll('body > .combo-menu').forEach(m => {
@@ -69,6 +88,7 @@ export function mountCombobox(container, opts) {
     selectedValue = item ? String(item.value) : '';
     if (hiddenEl) hiddenEl.value = selectedValue;
     inputEl.value = item ? item.label : '';
+    syncDetailBtn(item || null);
     close();
     opts.onSelect?.(item || null);
   };
@@ -118,6 +138,13 @@ export function mountCombobox(container, opts) {
         await handlePick(Number(btn.dataset.idx));
       });
     });
+    menuEl.querySelector('.combo-option.active')?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const syncActiveOption = () => {
+    const optsEls = menuEl.querySelectorAll('.combo-option[data-idx]');
+    optsEls.forEach((btn, idx) => btn.classList.toggle('active', idx === activeIdx));
+    optsEls[activeIdx]?.scrollIntoView({ block: 'nearest' });
   };
 
   const handlePick = async (idx) => {
@@ -157,7 +184,13 @@ export function mountCombobox(container, opts) {
 
   inputEl.addEventListener('focus', () => {
     inputEl.select();
-    open(Boolean(selectedValue));
+    const cur = currentItem();
+    open(!inputEl.value || (cur && inputEl.value.trim() === cur.label));
+  });
+
+  inputEl.addEventListener('click', () => {
+    const cur = currentItem();
+    if (!isOpen) open(!inputEl.value || (cur && inputEl.value.trim() === cur.label));
   });
 
   inputEl.addEventListener('input', () => {
@@ -165,16 +198,19 @@ export function mountCombobox(container, opts) {
     if (!raw && selectedValue) {
       selectedValue = '';
       if (hiddenEl) hiddenEl.value = '';
+      syncDetailBtn(null);
       opts.onSelect?.(null);
     } else if (opts.allowFreeText && raw) {
       const exactMatch = items.find(i => normText(i.label) === normText(raw));
       if (exactMatch) {
         selectedValue = String(exactMatch.value);
         if (hiddenEl) hiddenEl.value = selectedValue;
+        syncDetailBtn(exactMatch);
         opts.onSelect?.(exactMatch);
       } else {
         selectedValue = raw;
         if (hiddenEl) hiddenEl.value = raw;
+        syncDetailBtn(null);
         opts.onSelect?.({ value: raw, label: raw });
       }
     }
@@ -196,13 +232,13 @@ export function mountCombobox(container, opts) {
       e.preventDefault();
       if (visibleEntries.length) {
         activeIdx = (activeIdx + 1) % visibleEntries.length;
-        renderMenu();
+        syncActiveOption();
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (visibleEntries.length) {
         activeIdx = (activeIdx - 1 + visibleEntries.length) % visibleEntries.length;
-        renderMenu();
+        syncActiveOption();
       }
     } else if (e.key === 'Enter') {
       if (visibleEntries.length && activeIdx >= 0) {
@@ -326,19 +362,53 @@ export function mountMultiSelect(container, opts = {}) {
     });
 
     if (!visibleItems.length) {
-      menuEl.innerHTML = `<div class="combo-empty">${items.length && selectedSet.size === items.length ? 'Todos seleccionados' : 'Sin resultados'}</div>`;
+      menuEl.innerHTML = `
+        ${opts.allowSelectAll !== false && selectedSet.size > 0 ? `<button type="button" class="combo-option combo-create" data-clear-all="1">× Quitar todo (${selectedSet.size})</button>` : ''}
+        <div class="combo-empty">${items.length && selectedSet.size === items.length ? 'Todos seleccionados' : 'Sin resultados'}</div>
+      `;
+      menuEl.querySelector('[data-clear-all]')?.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        selectedSet.clear();
+        emitChange();
+        renderChips();
+        positionMenu();
+        renderMenu();
+      });
       return;
     }
     if (activeIdx >= visibleItems.length) activeIdx = 0;
 
-    menuEl.innerHTML = visibleItems.map((it, idx) => `
+    const actionsHtml = opts.allowSelectAll !== false ? `
+      ${visibleItems.length > 1 ? `<button type="button" class="combo-option combo-create" data-select-all="1">✓ Seleccionar todo (${visibleItems.length})</button>` : ''}
+      ${selectedSet.size > 0 ? `<button type="button" class="combo-option sx-6e2b50" data-clear-all="1">× Quitar todo (${selectedSet.size})</button>` : ''}
+    ` : '';
+
+    menuEl.innerHTML = actionsHtml + visibleItems.map((it, idx) => `
       <button type="button" class="combo-option${idx === activeIdx ? ' active' : ''}" data-idx="${idx}">
         <span>${esc(it.label)}</span>
         ${it.sublabel ? `<small class="muted">${esc(it.sublabel)}</small>` : ''}
       </button>
     `).join('');
 
-    menuEl.querySelectorAll('.combo-option').forEach(btn => {
+    menuEl.querySelector('[data-select-all]')?.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      for (const it of visibleItems) selectedSet.add(String(it.value));
+      inputEl.value = '';
+      emitChange();
+      renderChips();
+      positionMenu();
+      renderMenu();
+    });
+    menuEl.querySelector('[data-clear-all]')?.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      selectedSet.clear();
+      emitChange();
+      renderChips();
+      positionMenu();
+      renderMenu();
+    });
+
+    menuEl.querySelectorAll('.combo-option[data-idx]').forEach(btn => {
       btn.addEventListener('mousedown', (e) => {
         e.preventDefault();
         const picked = visibleItems[Number(btn.dataset.idx)];
@@ -352,6 +422,13 @@ export function mountMultiSelect(container, opts = {}) {
         }
       });
     });
+    menuEl.querySelector('.combo-option.active')?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const syncActiveOption = () => {
+    const optsEls = menuEl.querySelectorAll('.combo-option[data-idx]');
+    optsEls.forEach((btn, idx) => btn.classList.toggle('active', idx === activeIdx));
+    optsEls[activeIdx]?.scrollIntoView({ block: 'nearest' });
   };
 
   const open = () => {
@@ -396,11 +473,11 @@ export function mountMultiSelect(container, opts = {}) {
     if (e.key === 'ArrowDown' && visibleItems.length) {
       e.preventDefault();
       activeIdx = (activeIdx + 1) % visibleItems.length;
-      renderMenu();
+      syncActiveOption();
     } else if (e.key === 'ArrowUp' && visibleItems.length) {
       e.preventDefault();
       activeIdx = (activeIdx - 1 + visibleItems.length) % visibleItems.length;
-      renderMenu();
+      syncActiveOption();
     } else if (e.key === 'Enter' && visibleItems.length && activeIdx >= 0) {
       e.preventDefault();
       const picked = visibleItems[activeIdx];
@@ -447,22 +524,48 @@ export function mountMultiSelect(container, opts = {}) {
   };
 }
 
-export function quickCreateProveedor(nombre, { es_taller = false } = {}) {
-  const labelTipo = es_taller ? 'Destinatario / Taller' : 'Proveedor';
+export function quickCreateContacto(nombre, {
+  labelTipo = 'Contacto',
+  es_cliente = false,
+  es_proveedor = false,
+  es_taller = false,
+  defaultCondIva = 'Responsable Inscripto',
+} = {}) {
   return showFormModal({
     title: `Nuevo ${labelTipo}`,
     submitText: `Crear ${labelTipo}`,
     initialState: {
       nombre: nombre || '',
+      razon_social: '',
+      tipo_documento: 'CUIT',
       cuit: '',
-      condicion_iva: 'Responsable Inscripto',
+      condicion_iva: defaultCondIva,
       telefono: '',
       email: '',
       direccion: '',
+      localidad: '',
+      provincia: '',
+      codigo_postal: '',
+      pais: 'Argentina',
     },
     fields: [
-      { name: 'nombre', label: 'Nombre / Razón Social', type: 'text', required: true, full: true },
-      { name: 'cuit', label: 'CUIT / DNI', type: 'text', placeholder: '20-12345678-9' },
+      { name: 'nombre', label: 'Nombre / Fantasía', type: 'text', required: true },
+      { name: 'razon_social', label: 'Razón Social', type: 'text', placeholder: 'Opcional' },
+      {
+        name: 'tipo_documento',
+        label: 'Tipo Documento',
+        type: 'select',
+        searchable: false,
+        options: [
+          { value: 'CUIT', label: 'CUIT' },
+          { value: 'CUIL', label: 'CUIL' },
+          { value: 'DNI', label: 'DNI' },
+          { value: 'CDI', label: 'CDI' },
+          { value: 'Pasaporte', label: 'Pasaporte' },
+          { value: 'Otro', label: 'Otro' },
+        ],
+      },
+      { name: 'cuit', label: 'Nº Documento', type: 'text', placeholder: '20-12345678-9' },
       {
         name: 'condicion_iva',
         label: 'Condición IVA',
@@ -478,20 +581,41 @@ export function quickCreateProveedor(nombre, { es_taller = false } = {}) {
       { name: 'telefono', label: 'Teléfono', type: 'text', placeholder: 'Opcional' },
       { name: 'email', label: 'Email', type: 'email', placeholder: 'Opcional' },
       { name: 'direccion', label: 'Dirección', type: 'text', placeholder: 'Opcional', full: true },
+      { name: 'localidad', label: 'Localidad', type: 'text', placeholder: 'Opcional' },
+      {
+        name: 'provincia',
+        label: 'Provincia',
+        type: 'select',
+        options: [
+          { value: '', label: '-- Seleccionar --' },
+          ...PROVINCIAS_AR.map(p => ({ value: p, label: p })),
+        ],
+      },
+      { name: 'codigo_postal', label: 'Código Postal', type: 'text', placeholder: 'Opcional' },
+      { name: 'pais', label: 'País', type: 'text', placeholder: 'Argentina' },
     ],
     onSubmit: async (data) => {
       const nom = String(data.nombre || '').trim();
       if (!nom) return false;
       try {
+        const tipoDoc = String(data.tipo_documento || 'CUIT');
         const payload = {
           nombre: nom,
-          cuit: String(data.cuit || '').trim(),
-          condicion_iva: String(data.condicion_iva || 'Responsable Inscripto'),
+          razon_social: String(data.razon_social || '').trim(),
+          tipo_documento: tipoDoc,
+          cuit: formatDocumento(data.cuit, tipoDoc),
+          condicion_iva: String(data.condicion_iva || defaultCondIva),
           telefono: String(data.telefono || '').trim(),
           email: String(data.email || '').trim(),
           direccion: String(data.direccion || '').trim(),
-          es_proveedor: true,
-          es_taller,
+          localidad: String(data.localidad || '').trim(),
+          provincia: String(data.provincia || '').trim(),
+          jurisdiccion_codigo: getJurisdiccionByProvincia(data.provincia)?.codigo || '',
+          codigo_postal: String(data.codigo_postal || '').trim(),
+          pais: String(data.pais || '').trim() || 'Argentina',
+          es_cliente: Boolean(es_cliente),
+          es_proveedor: Boolean(es_proveedor),
+          es_taller: Boolean(es_taller),
         };
         const res = await api('/api/contactos', {
           method: 'POST',
@@ -501,7 +625,13 @@ export function quickCreateProveedor(nombre, { es_taller = false } = {}) {
         return {
           value: String(res.id),
           label: nom,
-          raw: { id: res.id, ...payload, es_proveedor: 1, es_taller: es_taller ? 1 : 0 },
+          raw: {
+            id: res.id,
+            ...payload,
+            es_cliente: es_cliente ? 1 : 0,
+            es_proveedor: es_proveedor ? 1 : 0,
+            es_taller: es_taller ? 1 : 0,
+          },
         };
       } catch (err) {
         toast(err.message, true);
@@ -511,19 +641,21 @@ export function quickCreateProveedor(nombre, { es_taller = false } = {}) {
   });
 }
 
-export async function quickCreateCliente(nombre) {
-  try {
-    const res = await api('/api/contactos', {
-      method: 'POST',
-      body: JSON.stringify({ nombre, es_cliente: true }),
-    });
-    const item = { id: res.id, nombre, es_cliente: 1 };
-    toast(`Cliente "${nombre}" creado`);
-    return { value: String(res.id), label: nombre, raw: item };
-  } catch (err) {
-    toast(err.message, true);
-    return null;
-  }
+export function quickCreateProveedor(nombre, { es_taller = false } = {}) {
+  return quickCreateContacto(nombre, {
+    labelTipo: es_taller ? 'Destinatario / Taller' : 'Proveedor',
+    es_proveedor: true,
+    es_taller,
+    defaultCondIva: 'Responsable Inscripto',
+  });
+}
+
+export function quickCreateCliente(nombre) {
+  return quickCreateContacto(nombre, {
+    labelTipo: 'Cliente',
+    es_cliente: true,
+    defaultCondIva: 'Consumidor Final',
+  });
 }
 
 export async function quickCreateCategoria(nombre) {
@@ -642,8 +774,13 @@ export function enhanceSelect(selectEl) {
   if (selectEl.multiple || selectEl.dataset.comboEnhanced === '1' || selectEl.dataset.noSearch === '1') return null;
   if (!selectEl.parentNode) return null;
 
+  const wasFocused = document.activeElement === selectEl;
+  if (wasFocused) selectEl.blur();
   selectEl.dataset.comboEnhanced = '1';
   selectEl.classList.add('select-sr-hidden');
+  selectEl.tabIndex = -1;
+  selectEl.setAttribute('aria-hidden', 'true');
+  if (wasFocused) queueMicrotask(() => wrap.querySelector('input')?.focus());
 
   const wrap = document.createElement('div');
   wrap.className = 'combo-wrap combo-from-select';

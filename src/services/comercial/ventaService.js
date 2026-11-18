@@ -1,7 +1,7 @@
 import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
-import { getNextNumeroDocumento } from '../config/configService.js';
+import { resolveNumeroDocumento } from '../config/configService.js';
 import {
   anularOperacionStock,
   confirmarOperacionStock,
@@ -314,10 +314,7 @@ export function createVenta(b, user = null) {
     const letra = String(tipoComprobante || '').split('-').pop()?.toUpperCase();
     if (letra === 'B' || letra === 'C') seqCode = `${seqBase}_${letra.toLowerCase()}`;
   }
-  const rawNum = (b.numero || '').trim();
-  const numero = (!rawNum || rawNum.endsWith('-'))
-    ? getNextNumeroDocumento(seqCode, puntoVentaFinal).numero
-    : rawNum;
+  const numero = resolveNumeroDocumento(seqCode, b.numero, puntoVentaFinal);
 
   return ventaRepo.transaction(() => {
     const id = ventaRepo.create({

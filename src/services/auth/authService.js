@@ -1,6 +1,23 @@
 import crypto from 'node:crypto';
-import { db } from '../../db.js';
+import { BaseRepository } from '../../core/BaseRepository.js';
 import { ENV } from '../../config/env.js';
+
+const sesionRepo = new BaseRepository({
+  table: 'sesiones',
+  columns: ['token', 'usuario_id', 'expires_at'],
+});
+const usuarioRepo = new BaseRepository({
+  table: 'usuarios',
+  columns: ['username', 'nombre', 'email', 'password_hash', 'grupo_id', 'activo'],
+});
+const grupoRepo = new BaseRepository({
+  table: 'grupos',
+  columns: ['nombre', 'descripcion', 'permisos_json', 'es_admin'],
+});
+const passwordResetRepo = new BaseRepository({
+  table: 'password_resets',
+  columns: ['usuario_id', 'token', 'expira_en', 'usado'],
+});
 
 export function signValue(val) {
   const sig = crypto.createHmac('sha256', ENV.SECRET_TOKEN).update(String(val)).digest('hex');
@@ -92,7 +109,7 @@ export function hasPermission(user, perm) {
 function createSession(userId) {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO sesiones (token, usuario_id, expires_at) VALUES (?, ?, ?)').run(rawToken, userId, expiresAt);
+  sesionRepo.create({ token: rawToken, usuario_id: userId, expires_at: expiresAt });
   return signValue(rawToken);
 }
 
@@ -118,13 +135,14 @@ export function getSessionUser(req) {
   const token = unsignValue(signedOrRaw);
   if (!token) return null;
 
-  const row = db.prepare(`
-    SELECT u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin
-    FROM sesiones s
-    JOIN usuarios u ON u.id = s.usuario_id
-    LEFT JOIN grupos g ON g.id = u.grupo_id
-    WHERE s.token = ? AND s.expires_at > ? AND u.activo = 1
-  `).get(token, new Date().toISOString());
+  const row = sesionRepo.query('s')
+    .select('u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin')
+    .innerJoin('usuarios', 'u', 'u.id', 's.usuario_id')
+    .leftJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+    .where('s.token', token)
+    .where('s.expires_at', '>', new Date().toISOString())
+    .where('u.activo', 1)
+    .get();
 
   return mapUserRow(row);
 }
@@ -132,12 +150,11 @@ export function getSessionUser(req) {
 export function login({ username, password }) {
   const uname = String(username || '').trim().toLowerCase();
   if (!uname || !password) throw new Error('Usuario y contraseña obligatorios');
-  const row = db.prepare(`
-    SELECT u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin
-    FROM usuarios u
-    LEFT JOIN grupos g ON g.id = u.grupo_id
-    WHERE LOWER(u.username) = ?
-  `).get(uname);
+  const row = usuarioRepo.query('u')
+    .select('u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin')
+    .leftJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+    .all()
+    .find(u => String(u.username || '').toLowerCase() === uname);
   if (!row || !verifyPassword(password, row.password_hash)) {
     throw new Error('Usuario o contraseña inválidos');
   }
@@ -156,16 +173,20 @@ export function register({ username, nombre, email, password }) {
   if (!fullName) throw new Error('El nombre es obligatorio');
   if (!password || String(password).length < 4) throw new Error('La contraseña debe tener al menos 4 caracteres');
 
-  const defaultGrp = db.prepare('SELECT id FROM grupos WHERE es_admin = 0 ORDER BY id ASC LIMIT 1').get();
-  const info = db.prepare(`
-    INSERT INTO usuarios (username, nombre, email, password_hash, grupo_id, activo)
-    VALUES (?, ?, ?, ?, ?, 0)
-  `).run(uname, fullName, (email || '').trim(), hashPassword(password), defaultGrp?.id || null);
-  const uid = Number(info.lastInsertRowid);
-  const row = db.prepare(`
-    SELECT u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin
-    FROM usuarios u LEFT JOIN grupos g ON g.id = u.grupo_id WHERE u.id = ?
-  `).get(uid);
+  const defaultGrp = grupoRepo.query().select('id').where('es_admin', 0).orderBy('id', 'ASC').limit(1).get();
+  const uid = usuarioRepo.create({
+    username: uname,
+    nombre: fullName,
+    email: (email || '').trim(),
+    password_hash: hashPassword(password),
+    grupo_id: defaultGrp?.id || null,
+    activo: 0,
+  });
+  const row = usuarioRepo.query('u')
+    .select('u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin')
+    .leftJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+    .where('u.id', uid)
+    .get();
   return { pendingApproval: true, user: mapUserRow(row) };
 }
 
@@ -173,12 +194,12 @@ export function logout(req) {
   const cookies = parseCookies(req);
   if (cookies.calc_sid) {
     const token = unsignValue(cookies.calc_sid) || cookies.calc_sid;
-    db.prepare('DELETE FROM sesiones WHERE token = ?').run(token);
+    sesionRepo.query().where('token', token).delete();
   }
 }
 
 export function needsInitialSetup() {
-  return Number(db.prepare('SELECT COUNT(*) as c FROM usuarios').get()?.c || 0) === 0;
+  return Number(usuarioRepo.query().count() || 0) === 0;
 }
 
 export function setupInitialAdmin({ username, nombre, email = '', password }) {
@@ -191,17 +212,21 @@ export function setupInitialAdmin({ username, nombre, email = '', password }) {
   if (!fullName) throw new Error('El nombre es obligatorio');
   if (!password || String(password).length < 4) throw new Error('La contraseña debe tener al menos 4 caracteres');
 
-  const adminGrp = db.prepare('SELECT id FROM grupos WHERE es_admin = 1 ORDER BY id ASC LIMIT 1').get();
-  const info = db.prepare(`
-    INSERT INTO usuarios (username, nombre, email, password_hash, grupo_id, activo)
-    VALUES (?, ?, ?, ?, ?, 1)
-  `).run(uname, fullName, (email || '').trim(), hashPassword(password), adminGrp?.id || null);
+  const adminGrp = grupoRepo.query().select('id').where('es_admin', 1).orderBy('id', 'ASC').limit(1).get();
+  const uid = usuarioRepo.create({
+    username: uname,
+    nombre: fullName,
+    email: (email || '').trim(),
+    password_hash: hashPassword(password),
+    grupo_id: adminGrp?.id || null,
+    activo: 1,
+  });
 
-  const uid = Number(info.lastInsertRowid);
-  const row = db.prepare(`
-    SELECT u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin
-    FROM usuarios u LEFT JOIN grupos g ON g.id = u.grupo_id WHERE u.id = ?
-  `).get(uid);
+  const row = usuarioRepo.query('u')
+    .select('u.*, g.nombre as grupo_nombre, g.permisos_json, g.es_admin')
+    .leftJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+    .where('u.id', uid)
+    .get();
   const token = createSession(uid);
   return { token, user: mapUserRow(row) };
 }
@@ -210,20 +235,20 @@ export function requestPasswordReset({ identifier, baseUrl }) {
   const q = String(identifier || '').trim().toLowerCase();
   if (!q) throw new Error('Ingresá tu usuario o email');
 
-  const user = db.prepare(`
-    SELECT id, username, nombre, email, activo
-    FROM usuarios
-    WHERE LOWER(username) = ? OR (email != '' AND LOWER(email) = ?)
-    LIMIT 1
-  `).get(q, q);
+  const user = usuarioRepo.query()
+    .select('id, username, nombre, email, activo')
+    .all()
+    .find(u => String(u.username || '').toLowerCase() === q || (u.email && String(u.email).toLowerCase() === q));
 
   if (user && user.activo) {
     const token = crypto.randomBytes(24).toString('hex');
-    db.prepare("DELETE FROM password_resets WHERE usuario_id = ? AND usado = 0").run(user.id);
-    db.prepare(`
-      INSERT INTO password_resets (usuario_id, token, expira_en)
-      VALUES (?, ?, datetime('now', '+30 minutes'))
-    `).run(user.id, token);
+    passwordResetRepo.query().where('usuario_id', user.id).where('usado', 0).delete();
+    const expiraEn = new Date(Date.now() + 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    passwordResetRepo.create({
+      usuario_id: user.id,
+      token,
+      expira_en: expiraEn,
+    });
 
     const resetUrl = `${String(baseUrl || 'http://localhost:3000').replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
     console.log('');
@@ -245,38 +270,42 @@ export function resetPasswordWithToken({ token, password }) {
   if (!tk) throw new Error('Token de recuperación faltante');
   if (!password || String(password).length < 4) throw new Error('La contraseña debe tener al menos 4 caracteres');
 
-  const row = db.prepare(`
-    SELECT pr.id, pr.usuario_id, pr.usado, pr.expira_en
-    FROM password_resets pr
-    WHERE pr.token = ?
-  `).get(tk);
+  const row = passwordResetRepo.query()
+    .select('id, usuario_id, usado, expira_en')
+    .where('token', tk)
+    .get();
 
   if (!row) throw new Error('El enlace de recuperación no es válido');
   if (row.usado) throw new Error('Este enlace ya fue utilizado');
 
-  const valid = db.prepare("SELECT datetime('now') < ? as ok").get(row.expira_en);
-  if (!valid?.ok) throw new Error('El enlace de recuperación expiró. Solicitá uno nuevo.');
-
-  db.exec('BEGIN');
-  try {
-    db.prepare("UPDATE usuarios SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(hashPassword(password), row.usuario_id);
-    db.prepare('UPDATE password_resets SET usado = 1 WHERE id = ?').run(row.id);
-    db.prepare('DELETE FROM sesiones WHERE usuario_id = ?').run(row.usuario_id);
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+  const nowSql = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  if (!(nowSql < String(row.expira_en || ''))) {
+    throw new Error('El enlace de recuperación expiró. Solicitá uno nuevo.');
   }
+
+  usuarioRepo.transaction(() => {
+    usuarioRepo.update(row.usuario_id, { password_hash: hashPassword(password) });
+    passwordResetRepo.update(row.id, { usado: 1 });
+    sesionRepo.query().where('usuario_id', row.usuario_id).delete();
+  });
   return { ok: true };
 }
 
 export function listGrupos() {
-  return db.prepare(`
-    SELECT g.*, (SELECT COUNT(*) FROM usuarios u WHERE u.grupo_id = g.id) as usuarios_count
-    FROM grupos g
-    ORDER BY g.es_admin DESC, g.nombre ASC
-  `).all().map(g => ({ ...g, permisos: parsePermisos(g.permisos_json) }));
+  const grupos = grupoRepo.query()
+    .orderBy('es_admin', 'DESC')
+    .orderBy('nombre', 'ASC')
+    .all();
+  const usuarios = usuarioRepo.query().select('grupo_id').all();
+  const countMap = new Map();
+  for (const u of usuarios) {
+    if (u.grupo_id) countMap.set(u.grupo_id, (countMap.get(u.grupo_id) || 0) + 1);
+  }
+  return grupos.map(g => ({
+    ...g,
+    usuarios_count: countMap.get(g.id) || 0,
+    permisos: parsePermisos(g.permisos_json),
+  }));
 }
 
 export function createGrupo(b) {
@@ -284,92 +313,89 @@ export function createGrupo(b) {
   if (!nombre) throw new Error('El nombre del grupo es obligatorio');
   const permisos = Array.isArray(b.permisos) ? b.permisos : [];
   const esAdmin = b.es_admin ? 1 : 0;
-  const info = db.prepare('INSERT INTO grupos (nombre, descripcion, permisos_json, es_admin) VALUES (?, ?, ?, ?)').run(
-    nombre, (b.descripcion || '').trim(), JSON.stringify(esAdmin ? ['*'] : permisos), esAdmin
-  );
-  return Number(info.lastInsertRowid);
+  return grupoRepo.create({
+    nombre,
+    descripcion: (b.descripcion || '').trim(),
+    permisos_json: JSON.stringify(esAdmin ? ['*'] : permisos),
+    es_admin: esAdmin,
+  });
 }
 
 export function updateGrupo(id, b) {
-  const ex = db.prepare('SELECT * FROM grupos WHERE id = ?').get(id);
+  const ex = grupoRepo.findById(id);
   if (!ex) return false;
   const esAdmin = b.es_admin !== undefined ? (b.es_admin ? 1 : 0) : ex.es_admin;
-  if (ex.es_admin && !esAdmin && db.prepare('SELECT COUNT(*) as c FROM grupos WHERE es_admin = 1').get().c <= 1) {
+  if (ex.es_admin && !esAdmin && grupoRepo.query().where('es_admin', 1).count() <= 1) {
     throw new Error('No se puede quitar privilegios al único grupo Administrador.');
   }
   const permisos = b.permisos !== undefined ? (Array.isArray(b.permisos) ? b.permisos : []) : parsePermisos(ex.permisos_json);
-  db.prepare('UPDATE grupos SET nombre=?, descripcion=?, permisos_json=?, es_admin=? WHERE id=?').run(
-    b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
-    b.descripcion !== undefined ? b.descripcion.trim() : ex.descripcion,
-    JSON.stringify(esAdmin ? ['*'] : permisos),
-    esAdmin,
-    id
-  );
+  grupoRepo.update(id, {
+    nombre: b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
+    descripcion: b.descripcion !== undefined ? b.descripcion.trim() : ex.descripcion,
+    permisos_json: JSON.stringify(esAdmin ? ['*'] : permisos),
+    es_admin: esAdmin,
+  });
   return true;
 }
 
 export function deleteGrupo(id) {
-  const ex = db.prepare('SELECT * FROM grupos WHERE id = ?').get(id);
+  const ex = grupoRepo.findById(id);
   if (!ex) return;
-  if (ex.es_admin && db.prepare('SELECT COUNT(*) as c FROM grupos WHERE es_admin = 1').get().c <= 1) {
+  if (ex.es_admin && grupoRepo.query().where('es_admin', 1).count() <= 1) {
     throw new Error('No se puede eliminar el único grupo Administrador.');
   }
-  db.prepare('DELETE FROM grupos WHERE id = ?').run(id);
+  grupoRepo.delete(id);
 }
 
 export function listUsuarios() {
-  return db.prepare(`
-    SELECT u.id, u.username, u.nombre, u.email, u.grupo_id, u.activo, u.created_at, u.updated_at,
-           COALESCE(g.nombre, 'Sin grupo') as grupo_nombre, COALESCE(g.es_admin, 0) as es_admin
-    FROM usuarios u
-    LEFT JOIN grupos g ON g.id = u.grupo_id
-    ORDER BY u.id ASC
-  `).all();
+  return usuarioRepo.query('u')
+    .select("u.id, u.username, u.nombre, u.email, u.grupo_id, u.activo, u.created_at, u.updated_at, COALESCE(g.nombre, 'Sin grupo') as grupo_nombre, COALESCE(g.es_admin, 0) as es_admin")
+    .leftJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+    .orderBy('u.id', 'ASC')
+    .all();
 }
 
 export function createUsuario(b) {
   const uname = String(b.username || '').trim().toLowerCase();
   const nombre = String(b.nombre || '').trim();
   if (!uname || !nombre || !b.password) throw new Error('Usuario, nombre y contraseña obligatorios');
-  const info = db.prepare(`
-    INSERT INTO usuarios (username, nombre, email, password_hash, grupo_id, activo)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(uname, nombre, (b.email || '').trim(), hashPassword(b.password), b.grupo_id ? Number(b.grupo_id) : null, b.activo === false ? 0 : 1);
-  return Number(info.lastInsertRowid);
+  return usuarioRepo.create({
+    username: uname,
+    nombre,
+    email: (b.email || '').trim(),
+    password_hash: hashPassword(b.password),
+    grupo_id: b.grupo_id ? Number(b.grupo_id) : null,
+    activo: b.activo === false ? 0 : 1,
+  });
 }
 
 export function updateUsuario(id, b) {
-  const ex = db.prepare(`
-    SELECT u.*, COALESCE(g.es_admin, 0) as es_admin
-    FROM usuarios u
-    LEFT JOIN grupos g ON g.id = u.grupo_id
-    WHERE u.id = ?
-  `).get(id);
+  const ex = usuarioRepo.query('u')
+    .select('u.*, COALESCE(g.es_admin, 0) as es_admin')
+    .leftJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+    .where('u.id', id)
+    .get();
   if (!ex) return false;
   const nextGrupoId = b.grupo_id !== undefined ? (b.grupo_id ? Number(b.grupo_id) : null) : ex.grupo_id;
   const nextActivo = b.activo !== undefined ? (b.activo ? 1 : 0) : ex.activo;
-  const nextIsAdmin = nextGrupoId ? Boolean(db.prepare('SELECT es_admin FROM grupos WHERE id = ?').get(nextGrupoId)?.es_admin) : false;
+  const nextIsAdmin = nextGrupoId ? Boolean(grupoRepo.query().select('es_admin').where('id', nextGrupoId).get()?.es_admin) : false;
   if (ex.es_admin && ex.activo && (!nextActivo || !nextIsAdmin)) {
-    const activeAdmins = db.prepare(`
-      SELECT COUNT(*) as c FROM usuarios u
-      JOIN grupos g ON g.id = u.grupo_id
-      WHERE g.es_admin = 1 AND u.activo = 1
-    `).get().c;
+    const activeAdmins = usuarioRepo.query('u')
+      .innerJoin('grupos', 'g', 'g.id', 'u.grupo_id')
+      .where('g.es_admin', 1)
+      .where('u.activo', 1)
+      .count();
     if (activeAdmins <= 1) {
       throw new Error('No se puede desactivar o degradar al único Administrador activo.');
     }
   }
   const pwHash = b.password && String(b.password).length >= 4 ? hashPassword(b.password) : ex.password_hash;
-  db.prepare(`
-    UPDATE usuarios SET nombre=?, email=?, grupo_id=?, activo=?, password_hash=?, updated_at=datetime('now')
-    WHERE id=?
-  `).run(
-    b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
-    b.email !== undefined ? b.email.trim() : ex.email,
-    nextGrupoId,
-    nextActivo,
-    pwHash,
-    id
-  );
+  usuarioRepo.update(id, {
+    nombre: b.nombre !== undefined ? b.nombre.trim() : ex.nombre,
+    email: b.email !== undefined ? b.email.trim() : ex.email,
+    grupo_id: nextGrupoId,
+    activo: nextActivo,
+    password_hash: pwHash,
+  });
   return true;
 }

@@ -1,5 +1,6 @@
 import { BaseRepository } from '../core/BaseRepository.js';
 import { MODELS } from './models.js';
+import { JURISDICCIONES_AR } from '../../public/lib/jurisdicciones.js';
 
 const DEFAULT_UNITS = [
   { nombre: 'g', grupo: 'Masa', factor: 1 },
@@ -113,32 +114,7 @@ const DEFAULT_IMPUESTOS = [
   { nombre: 'Impuesto Interno / Otro', codigo: 'OTRO-IMP', tipo: 'otro', aplica_a: 'ambos', alicuota_defecto: 0, base_calculo: 'neto', jurisdiccion_codigo: '', codigo_regimen: '' },
 ];
 
-const DEFAULT_JURISDICCIONES = [
-  { codigo: '901', nombre: 'Ciudad Autónoma de Buenos Aires', activo: 1 },
-  { codigo: '902', nombre: 'Buenos Aires', activo: 1 },
-  { codigo: '903', nombre: 'Catamarca', activo: 1 },
-  { codigo: '904', nombre: 'Córdoba', activo: 1 },
-  { codigo: '905', nombre: 'Corrientes', activo: 1 },
-  { codigo: '906', nombre: 'Chaco', activo: 1 },
-  { codigo: '907', nombre: 'Chubut', activo: 1 },
-  { codigo: '908', nombre: 'Entre Ríos', activo: 1 },
-  { codigo: '909', nombre: 'Formosa', activo: 1 },
-  { codigo: '910', nombre: 'Jujuy', activo: 1 },
-  { codigo: '911', nombre: 'La Pampa', activo: 1 },
-  { codigo: '912', nombre: 'La Rioja', activo: 1 },
-  { codigo: '913', nombre: 'Mendoza', activo: 1 },
-  { codigo: '914', nombre: 'Misiones', activo: 1 },
-  { codigo: '915', nombre: 'Neuquén', activo: 1 },
-  { codigo: '916', nombre: 'Río Negro', activo: 1 },
-  { codigo: '917', nombre: 'Salta', activo: 1 },
-  { codigo: '918', nombre: 'San Juan', activo: 1 },
-  { codigo: '919', nombre: 'San Luis', activo: 1 },
-  { codigo: '920', nombre: 'Santa Cruz', activo: 1 },
-  { codigo: '921', nombre: 'Santa Fe', activo: 1 },
-  { codigo: '922', nombre: 'Santiago del Estero', activo: 1 },
-  { codigo: '923', nombre: 'Tucumán', activo: 1 },
-  { codigo: '924', nombre: 'Tierra del Fuego', activo: 1 },
-];
+const DEFAULT_JURISDICCIONES = JURISDICCIONES_AR.map(j => ({ ...j, activo: 1 }));
 
 const DEFAULT_UBICACIONES = [
   { codigo: 'DEP-CENTRAL', nombre: 'Depósito Central', tipo: 'interna', es_default: 1, activa: 1 },
@@ -207,7 +183,12 @@ export function runSeeds(db) {
   seedIfEmpty(repoFor(MODELS.puntos_venta), DEFAULT_PUNTOS_VENTA);
   seedMissingByKey(repoFor(MODELS.secuencias), 'codigo', DEFAULT_SECUENCIAS);
   seedMissingByKey(repoFor(MODELS.plan_cuentas), 'codigo', DEFAULT_PLAN_CUENTAS);
-  seedMissingByKey(repoFor(MODELS.jurisdicciones), 'codigo', DEFAULT_JURISDICCIONES);
+  const jurRepo = repoFor(MODELS.jurisdicciones);
+  seedMissingByKey(jurRepo, 'codigo', DEFAULT_JURISDICCIONES);
+  for (const j of DEFAULT_JURISDICCIONES) {
+    const ex = jurRepo.query().select('id, letra').where('codigo', j.codigo).get();
+    if (ex && !ex.letra && j.letra) jurRepo.update(ex.id, { letra: j.letra });
+  }
   seedMissingByKey(repoFor(MODELS.impuestos_config), 'codigo', DEFAULT_IMPUESTOS);
   seedMissingByKey(repoFor(MODELS.ubicaciones), 'codigo', DEFAULT_UBICACIONES);
   seedIfEmpty(repoFor(MODELS.grupos), DEFAULT_GRUPOS);

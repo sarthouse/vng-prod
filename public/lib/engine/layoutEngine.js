@@ -15,7 +15,7 @@ export function renderKpiStrip(container, items = []) {
     danger: 'tone-danger',
   };
   container.innerHTML = `
-    <div class="ve-detail-kpis" style="margin-bottom:1rem;">
+    <div class="ve-detail-kpis mb-1r">
       ${items.map(it => {
         const toneCls = toneMap[it.tone] || '';
         const sub = it.sublabel || it.hint || '';
@@ -80,16 +80,16 @@ export function renderFilterBar(container, { searchValue = '', searchPlaceholder
   container.__veFilterOnChange = onChange;
 
   container.innerHTML = `
-    <div class="toolbar ve-filterbar" style="margin-bottom:0.75rem;">
-      <input type="search" class="ve-search" value="${esc(searchValue)}" placeholder="${esc(searchPlaceholder)}" style="min-width:220px;" />
+    <div class="toolbar ve-filterbar sx-402564">
+      <input type="search" class="ve-search mw-220" value="${esc(searchValue)}" placeholder="${esc(searchPlaceholder)}" />
       ${filters.map(f => `
         <select class="ve-filter" data-filter="${esc(f.name)}">
           ${(f.options || []).map(o => `<option value="${esc(o.value)}" ${String(o.value) === String(f.value ?? '') ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
         </select>
       `).join('')}
       ${dateRange ? `
-        <input type="date" class="ve-date-from" value="${esc(dateRange.from || '')}" title="Desde" style="width:auto;" />
-        <input type="date" class="ve-date-to" value="${esc(dateRange.to || '')}" title="Hasta" style="width:auto;" />
+        <input type="date" class="ve-date-from w-auto" value="${esc(dateRange.from || '')}" title="Desde" />
+        <input type="date" class="ve-date-to w-auto" value="${esc(dateRange.to || '')}" title="Hasta" />
       ` : ''}
       <button type="button" class="btn btn-sm ve-filter-clear" data-ve-filter-clear hidden title="Restablecer búsqueda y filtros">× Limpiar</button>
     </div>

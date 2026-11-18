@@ -76,6 +76,14 @@ export class QueryBuilder {
     return this;
   }
 
+  whereNotIn(col, values = []) {
+    const c = safeIdent(col);
+    if (!Array.isArray(values) || values.length === 0) return this;
+    this._wheres.push(`${c} NOT IN (${values.map(() => '?').join(', ')})`);
+    this._params.push(...values);
+    return this;
+  }
+
   whereNull(col) {
     this._wheres.push(`${safeIdent(col)} IS NULL`);
     return this;

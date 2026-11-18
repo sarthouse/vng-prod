@@ -1,11 +1,11 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindCuentaMetodoSync, exportRowsToCSV } from '../../lib/format.js';
+import { esc, fmtMoney, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, bindCuentaMetodoSync, exportRowsToCSV } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
-import { printRemito } from '../../lib/remitoPrint.js';
-import { printOrdenPago } from '../../lib/tesoreriaPrint.js';
+import { printRemito } from '../../lib/print/index.js';
+import { printOrdenPago } from '../../lib/print/index.js';
 import { mountCombobox, quickCreateProveedor, quickCreateProducto } from '../../lib/autocomplete.js';
 import { getIvaRatesFromConfig, calcDocumentTotals, renderTaxFooterHtml } from '../../lib/taxHelper.js';
-import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
+import { renderKpiStrip, renderFilterBar, renderDataTable, renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { showConfirmModal, showPromptModal } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 
@@ -332,10 +332,10 @@ export async function renderCompraFormView({ id } = {}) {
     root.innerHTML = `
       <div class="page-header">
         <div>
-          <div style="margin-bottom:6px;"><a href="/compras" data-link class="muted" style="font-size:0.85rem;">← Volver a Compras</a></div>
+          <div class="mb-xs"><a href="/compras" data-link class="muted text-md">← Volver a Compras</a></div>
           <h1>${isEdit ? `Compra ${esc(c?.numero || '#' + id)}` : 'Nueva Compra'}</h1>
           ${isEdit && c ? `
-            <p class="muted" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <p class="muted sx-36eedc">
               ${badgeForEstado(c.estado)}
               <span>${esc(c.proveedor_nombre || '')}</span>
               ${c.afip_constatado ? `<span class="badge badge-ok">AFIP Constatado</span>` : ''}
@@ -390,11 +390,11 @@ export async function renderCompraFormView({ id } = {}) {
               </select>
             </label>
             <label><span>Nº Factura Proveedor</span><input type="text" name="numero" id="cmp-num" value="${esc(numero)}" placeholder="0001-00012345" ${editable ? '' : 'disabled'} /></label>
-            <label style="min-width:0;">
+            <label class="sx-3f9f96">
               <span>CAE</span>
-              <div style="display:flex;gap:6px;align-items:center;min-width:0;">
-                <input type="text" name="cae" id="cmp-cae" value="${esc(cae)}" placeholder="Opcional" style="flex:1;min-width:0;width:auto;" ${editable ? '' : 'disabled'} />
-                ${editable ? `<button type="button" class="btn btn-sm" id="btn-cmp-constatar" title="Constatar comprobante en AFIP (WSCDC)" style="flex-shrink:0;white-space:nowrap;">Constatar</button>` : ''}
+              <div class="sx-a59865">
+                <input type="text" name="cae" id="cmp-cae" value="${esc(cae)}" placeholder="Opcional" class="sx-fc7f9d" ${editable ? '' : 'disabled'} />
+                ${editable ? `<button type="button" class="btn btn-sm sx-d062a8" id="btn-cmp-constatar" title="Constatar comprobante en AFIP (WSCDC)">Constatar</button>` : ''}
               </div>
             </label>
           ` : `
@@ -405,6 +405,13 @@ export async function renderCompraFormView({ id } = {}) {
             <label><span>Número Interno</span><input type="text" name="numero" id="cmp-num" value="${esc(numero || nextCompraSeq?.numero || '')}" ${editable ? '' : 'disabled'} /></label>
           `}
           <label><span>Fecha *</span><input type="date" name="fecha" id="cmp-fecha" required value="${esc(fecha)}" ${editable ? '' : 'disabled'} /></label>
+          <label>
+            <span>Estado *</span>
+            <select name="estado" id="cmp-estado" ${editable ? '' : 'disabled'}>
+              <option value="Borrador" ${(!isEdit || c?.estado === 'Borrador') ? 'selected' : ''}>Borrador</option>
+              <option value="Confirmado" ${(isEdit && c?.estado === 'Confirmado') ? 'selected' : ''}>Confirmado</option>
+            </select>
+          </label>
           <label>
             <span>Término de Pago</span>
             <select name="termino_pago_id" id="cmp-tp" ${editable ? '' : 'disabled'}>
@@ -429,50 +436,19 @@ export async function renderCompraFormView({ id } = {}) {
           </label>
 
           <div class="full">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div class="sx-fbf92c mb-sm">
               <strong>Detalle</strong>
-              ${editable ? '<button type="button" id="btn-cmp-add-line" class="btn btn-sm">+ Agregar Ítem</button>' : ''}
+              ${editable ? '<span class="text-sm-muted">Click en celda para editar · Tab/Enter navega · Ctrl+V pega desde Excel</span>' : ''}
             </div>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Producto</th><th>Descripción</th><th>Cuenta Gasto</th><th class="num">Cant.</th><th>Unidad</th><th class="num">Precio</th><th>IVA</th><th class="num">Subtotal</th>${editable ? '<th></th>' : ''}</tr></thead>
-                <tbody>
-                  ${lineas.map((l, idx) => `
-                    <tr>
-                      <td style="min-width:190px;">${editable ? `<div class="cl-prod-combo" data-idx="${idx}"></div>` : esc(prodMap.get(String(l.producto_id))?.nombre || '-')}</td>
-                      <td><input type="text" class="cl-desc" data-idx="${idx}" value="${esc(l.descripcion)}" placeholder="Ej: Servicio de luz / ítem" ${editable ? '' : 'disabled'} /></td>
-                      <td>
-                        <select class="cl-cta" data-idx="${idx}" style="min-width:165px;" ${editable ? '' : 'disabled'}>
-                          <option value="">-- Por defecto --</option>
-                          ${cuentasEgreso.map(pc => `<option value="${pc.id}" ${String(l.plan_cuenta_id || '') === String(pc.id) ? 'selected' : ''}>${esc(pc.codigo)} ${esc(pc.nombre)}</option>`).join('')}
-                        </select>
-                      </td>
-                      <td class="num"><input type="number" step="0.01" min="0" class="cl-qty" data-idx="${idx}" value="${l.cantidad}" style="width:80px;text-align:right;" ${editable ? '' : 'disabled'} /></td>
-                      <td><span class="badge badge-muted cl-udm-badge" data-idx="${idx}">${esc(l.udm || 'unidades')}</span></td>
-                      <td class="num"><input type="number" step="0.01" min="0" class="cl-price" data-idx="${idx}" value="${l.precio_unitario}" style="width:100px;text-align:right;" ${editable ? '' : 'disabled'} /></td>
-                      <td>
-                        <select class="cl-iva" data-idx="${idx}" style="width:85px;" ${(!editable || totals.noIva) ? 'disabled' : ''}>
-                          ${ivaRates.map(r => `<option value="${r.value}" ${Number(l.alicuota_iva ?? defaultIva) === r.value ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
-                        </select>
-                      </td>
-                      <td class="num"><strong class="cl-sub" data-idx="${idx}">${fmtMoney(l.subtotal)}</strong></td>
-                      ${editable ? `<td><button type="button" class="btn btn-sm btn-danger cl-del" data-idx="${idx}">Quitar</button></td>` : ''}
-                    </tr>
-                  `).join('')}
-                </tbody>
-                <tfoot id="cmp-tfoot">
-                  ${renderTaxFooterHtml(totals, impuestos, editable ? 7 : 6)}
-                </tfoot>
-              </table>
-            </div>
+            <div id="cmp-lines-sheet"></div>
           </div>
 
-          <div class="full" style="border-top:1px solid var(--color-border);padding-top:12px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <div class="full sx-97cf5f">
+            <div class="sx-6177c8">
               <strong>Percepciones, Retenciones y Otros Impuestos</strong>
               ${editable ? `
-                <div style="display:flex;gap:8px;align-items:center;">
-                  <select id="cmp-imp-select" style="min-width:220px;">
+                <div class="flex-row-md">
+                  <select id="cmp-imp-select" class="mw-220">
                     <option value="">-- Elegir impuesto configurado --</option>
                     ${otrosImpuestosConfig.map(ic => `<option value="${ic.id}">${esc(ic.nombre)} (${Number(ic.alicuota_defecto || 0)}%)</option>`).join('')}
                   </select>
@@ -490,16 +466,16 @@ export async function renderCompraFormView({ id } = {}) {
                       <tr>
                         <td><strong>${esc(imp.nombre)}</strong></td>
                         <td>${esc(imp.tipo)}</td>
-                        <td class="num"><input type="number" step="0.01" min="0" class="ci-base" data-idx="${iIdx}" value="${Number(imp.base || 0)}" style="width:110px;text-align:right;" ${editable ? '' : 'disabled'} /></td>
-                        <td class="num"><input type="number" step="0.01" min="0" class="ci-aliq" data-idx="${iIdx}" value="${Number(imp.alicuota || 0)}" style="width:85px;text-align:right;" ${editable ? '' : 'disabled'} /></td>
-                        <td class="num"><input type="number" step="0.01" min="0" class="ci-monto" data-idx="${iIdx}" value="${Number(imp.monto || 0)}" style="width:110px;text-align:right;" ${editable ? '' : 'disabled'} /></td>
+                        <td class="num"><input type="number" step="0.01" min="0" class="ci-base w-110-num" data-idx="${iIdx}" value="${Number(imp.base || 0)}" ${editable ? '' : 'disabled'} /></td>
+                        <td class="num"><input type="number" step="0.01" min="0" class="ci-aliq sx-c0ca1e" data-idx="${iIdx}" value="${Number(imp.alicuota || 0)}" ${editable ? '' : 'disabled'} /></td>
+                        <td class="num"><input type="number" step="0.01" min="0" class="ci-monto w-110-num" data-idx="${iIdx}" value="${Number(imp.monto || 0)}" ${editable ? '' : 'disabled'} /></td>
                         ${editable ? `<td><button type="button" class="btn btn-sm btn-danger ci-del" data-idx="${iIdx}">Quitar</button></td>` : ''}
                       </tr>
                     `).join('')}
                   </tbody>
                 </table>
               </div>
-            ` : '<p class="muted" style="font-size:0.82rem;margin:0;">Sin percepciones ni retenciones adicionales.</p>'}
+            ` : '<p class="muted sx-681911">Sin percepciones ni retenciones adicionales.</p>'}
           </div>
 
           ${editable ? `
@@ -512,11 +488,11 @@ export async function renderCompraFormView({ id } = {}) {
       </div>
 
       ${isEdit && c ? `
-        <div class="card" style="border-left:4px solid var(--color-blue);">
+        <div class="card sx-02752b">
           <div class="card-header">
             <div>
               <h2>Pagos Asociados</h2>
-              <p class="muted" style="font-size:0.82rem;">
+              <p class="muted text-sm">
                 Total: <strong>${fmtMoney(c.total)}</strong> ·
                 Pagado: <strong>${fmtMoney(c.pagado)}</strong> ·
                 Saldo Pendiente: <strong style="color:${c.saldo_pendiente > 0 ? 'var(--color-accent)' : 'var(--color-success)'};">${fmtMoney(c.saldo_pendiente)}</strong>
@@ -524,7 +500,7 @@ export async function renderCompraFormView({ id } = {}) {
             </div>
           </div>
 
-          <form id="form-pago-compra" class="form-grid" style="margin-bottom:12px;">
+          <form id="form-pago-compra" class="form-grid mb-md">
             <label><span>Fecha *</span><input type="date" name="fecha" required value="${new Date().toISOString().slice(0, 10)}" /></label>
             <label>
               <span>Cuenta *</span>
@@ -544,7 +520,7 @@ export async function renderCompraFormView({ id } = {}) {
             </label>
             <label><span>Comprobante</span><input type="text" name="numero" id="pago-cmp-num" value="${esc(nextPagoSeq?.numero || '')}" /></label>
             <label><span>Monto *</span><input type="number" step="0.01" min="0.01" name="monto" required value="${c.saldo_pendiente > 0 ? c.saldo_pendiente : ''}" /></label>
-            <div style="align-self:end;"><button type="submit" class="btn btn-primary">+ Registrar Pago</button></div>
+            <div class="self-end"><button type="submit" class="btn btn-primary">+ Registrar Pago</button></div>
           </form>
 
           ${pagos.length === 0 ? '<div class="empty-state">Sin pagos asociados todavía.</div>' : `
@@ -677,6 +653,7 @@ export async function renderCompraFormView({ id } = {}) {
         value: proveedorId,
         placeholder: 'Buscar o crear proveedor...',
         items: proveedores.map(p => ({ value: String(p.id), label: p.nombre, sublabel: p.cuit || (p.es_taller ? 'Taller' : ''), raw: p })),
+        getDetailUrl: (it) => `/contactos/${it.value}`,
         onSelect: (it) => {
           proveedorId = it ? String(it.value) : '';
           if (it?.raw && !isEdit) {
@@ -739,7 +716,8 @@ export async function renderCompraFormView({ id } = {}) {
       };
       const onNum = (i) => {
         lineas[i].subtotal = Number((lineas[i].cantidad * lineas[i].precio_unitario).toFixed(2));
-        root.querySelector(`.cl-sub[data-idx="${i}"]`).textContent = fmtMoney(lineas[i].subtotal);
+        const subEl = root.querySelector(`.cl-sub[data-idx="${i}"]`);
+        if (subEl) subEl.textContent = fmtMoney(lineas[i].subtotal);
         syncTotals();
       };
 
@@ -757,72 +735,147 @@ export async function renderCompraFormView({ id } = {}) {
       });
 
       const prodItems = () => productos.map(p => ({ value: String(p.id), label: p.nombre, sublabel: p.codigo || p.udm, raw: p }));
-      root.querySelectorAll('.cl-prod-combo').forEach(el => {
-        const i = Number(el.dataset.idx);
-        mountCombobox(el, {
-          value: lineas[i].producto_id,
-          placeholder: 'Buscar o crear producto...',
-          items: prodItems(),
-          onSelect: async (it) => {
-            if (!it) {
-              lineas[i].producto_id = '';
-              return;
-            }
-            const p = it.raw;
-            lineas[i].producto_id = String(p.id);
-            lineas[i].descripcion = p.nombre;
-            lineas[i].udm = p.udm || 'unidades';
-            let resolvedCosto = Number(p.costo || p.precio || 0);
-            try {
-              if (proveedorId) {
-                const pr = await api(`/api/producto-proveedores/resolver?contacto_id=${proveedorId}&producto_id=${p.id}&cantidad=${lineas[i].cantidad || 1}`);
-                if (pr && pr.origen !== 'costo_catalogo' && typeof pr.precio_unitario === 'number') {
-                  resolvedCosto = pr.precio_unitario;
+      const cuentaOpts = [
+        { value: '', label: '-- Por defecto --' },
+        ...cuentasEgreso.map(pc => ({ value: String(pc.id), label: `${pc.codigo} ${pc.nombre}` })),
+      ];
+      const ivaOpts = ivaRates.map(r => ({ value: String(r.value), label: r.label }));
+
+      const renderCompraSheet = () => {
+        const sheetHost = root.querySelector('#cmp-lines-sheet');
+        if (!sheetHost) return;
+        const tNow = calcDocumentTotals(lineas, impuestos, caracter, tipoComprobante);
+        renderSpreadsheetTable(sheetHost, {
+          rows: lineas,
+          compact: true,
+          showDirty: false,
+          addRowLabel: '+ Agregar Ítem',
+          tfootId: 'cmp-tfoot',
+          tfootHtml: renderTaxFooterHtml(tNow, impuestos, 7),
+          columns: [
+            {
+              key: 'producto_id',
+              label: 'Producto',
+              type: 'combobox',
+              editable: () => editable,
+              placeholder: 'Buscar producto...',
+              options: () => prodItems(),
+              render: (l) => {
+                const p = prodMap.get(String(l.producto_id));
+                return p ? `<strong>${esc(p.nombre)}</strong>` : '<span class="muted">Seleccionar...</span>';
+              },
+              onPickItem: async (l, p) => {
+                if (!p) return;
+                l.producto_id = String(p.id);
+                l.descripcion = p.nombre;
+                l.udm = p.udm || 'unidades';
+                let resolvedCosto = Number(p.costo || p.precio || 0);
+                try {
+                  if (proveedorId) {
+                    const pr = await api(`/api/producto-proveedores/resolver?contacto_id=${proveedorId}&producto_id=${p.id}&cantidad=${l.cantidad || 1}`);
+                    if (pr && pr.origen !== 'costo_catalogo' && typeof pr.precio_unitario === 'number') {
+                      resolvedCosto = pr.precio_unitario;
+                    }
+                  }
+                } catch {}
+                l.precio_unitario = resolvedCosto;
+                l.alicuota_iva = Number(p.alicuota_iva_compra ?? p.alicuota_iva ?? defaultIva);
+                l.subtotal = Number((l.cantidad * l.precio_unitario).toFixed(2));
+                if (Array.isArray(p.impuestos_compra_ids) && p.impuestos_compra_ids.length) {
+                  const t = calcDocumentTotals(lineas, impuestos, caracter, tipoComprobante);
+                  let addedTax = false;
+                  for (const taxId of p.impuestos_compra_ids) {
+                    const cfg = impuestosConfig.find(x => Number(x.id) === Number(taxId) && x.tipo !== 'iva');
+                    if (cfg && !impuestos.some(x => Number(x.impuesto_id) === Number(cfg.id))) {
+                      const base = cfg.base_calculo === 'total' ? Number((t.neto + t.ivaTotal).toFixed(2)) : cfg.base_calculo === 'fijo' ? 0 : t.neto;
+                      const alic = Number(cfg.alicuota_defecto || 0);
+                      const monto = cfg.base_calculo === 'fijo' ? alic : Number((base * alic / 100).toFixed(2));
+                      impuestos.push({ impuesto_id: cfg.id, nombre: cfg.nombre, tipo: cfg.tipo, base_calculo: cfg.base_calculo, base, alicuota: alic, monto });
+                      addedTax = true;
+                    }
+                  }
+                  if (addedTax) { syncHeaderMeta(); draw(); }
                 }
-              }
-            } catch { /* fallback a costo catálogo */ }
-            lineas[i].precio_unitario = resolvedCosto;
-            lineas[i].alicuota_iva = Number(p.alicuota_iva_compra ?? p.alicuota_iva ?? defaultIva);
-            lineas[i].subtotal = Number((lineas[i].cantidad * lineas[i].precio_unitario).toFixed(2));
-            let addedTax = false;
-            if (Array.isArray(p.impuestos_compra_ids) && p.impuestos_compra_ids.length) {
-              const t = calcDocumentTotals(lineas, impuestos, caracter, tipoComprobante);
-              for (const taxId of p.impuestos_compra_ids) {
-                const cfg = impuestosConfig.find(x => Number(x.id) === Number(taxId) && x.tipo !== 'iva');
-                if (cfg && !impuestos.some(x => Number(x.impuesto_id) === Number(cfg.id))) {
-                  const base = cfg.base_calculo === 'total' ? Number((t.neto + t.ivaTotal).toFixed(2)) : cfg.base_calculo === 'fijo' ? 0 : t.neto;
-                  const alic = Number(cfg.alicuota_defecto || 0);
-                  const monto = cfg.base_calculo === 'fijo' ? alic : Number((base * alic / 100).toFixed(2));
-                  impuestos.push({ impuesto_id: cfg.id, nombre: cfg.nombre, tipo: cfg.tipo, base_calculo: cfg.base_calculo, base, alicuota: alic, monto });
-                  addedTax = true;
-                }
-              }
-            }
-            if (addedTax) {
-              syncHeaderMeta();
-              draw();
-              return;
-            }
-            const descInp = root.querySelector(`.cl-desc[data-idx="${i}"]`);
-            const udmBadge = root.querySelector(`.cl-udm-badge[data-idx="${i}"]`);
-            const priceInp = root.querySelector(`.cl-price[data-idx="${i}"]`);
-            const ivaSel = root.querySelector(`.cl-iva[data-idx="${i}"]`);
-            if (descInp) descInp.value = lineas[i].descripcion;
-            if (udmBadge) udmBadge.textContent = lineas[i].udm;
-            if (priceInp) priceInp.value = lineas[i].precio_unitario;
-            if (ivaSel) ivaSel.value = String(lineas[i].alicuota_iva);
-            onNum(i);
-          },
-          onCreate: async (q) => {
-            const created = await quickCreateProducto(q, { se_compra: true, se_fabrica: false });
-            if (created) {
-              productos.push(created.raw);
-              prodMap.set(created.value, created.raw);
-            }
-            return created;
+              },
+            },
+            {
+              key: 'descripcion',
+              label: 'Descripción',
+              type: 'text',
+              editable: () => editable,
+              recomputeOnRowChange: true,
+            },
+            {
+              key: 'plan_cuenta_id',
+              label: 'Cuenta Gasto',
+              type: 'select',
+              editable: () => editable,
+              options: cuentaOpts,
+              parse: (v) => (v ? Number(v) : ''),
+            },
+            {
+              key: 'cantidad',
+              label: 'Cant.',
+              type: 'number',
+              step: 0.01,
+              min: 0,
+              align: 'right',
+              editable: () => editable,
+              parse: (v) => Math.max(0, Number(v) || 0),
+            },
+            {
+              key: 'udm',
+              label: 'Unidad',
+              type: 'readonly',
+              nowrap: true,
+              render: (l) => `<span class="badge badge-muted">${esc(l.udm || 'unidades')}</span>`,
+            },
+            {
+              key: 'precio_unitario',
+              label: 'Precio',
+              type: 'number',
+              step: 0.01,
+              min: 0,
+              align: 'right',
+              editable: () => editable,
+              recomputeOnRowChange: true,
+              parse: (v) => Math.max(0, Number(v) || 0),
+              render: (l) => fmtMoney(l.precio_unitario),
+            },
+            {
+              key: 'alicuota_iva',
+              label: 'IVA',
+              type: 'select',
+              editable: () => editable && !tNow.noIva,
+              recomputeOnRowChange: true,
+              options: ivaOpts,
+              parse: (v) => Number(v) || 0,
+            },
+            {
+              key: 'subtotal',
+              label: 'Subtotal',
+              type: 'readonly',
+              align: 'right',
+              nowrap: true,
+              render: (l) => `<strong>${fmtMoney(l.subtotal)}</strong>`,
+            },
+          ],
+          onAddRow: editable ? () => {
+            lineas.push({ producto_id: '', plan_cuenta_id: '', descripcion: '', cantidad: 1, udm: 'unidades', precio_unitario: 0, alicuota_iva: defaultIva, subtotal: 0 });
+            renderCompraSheet();
+          } : null,
+          onDeleteRow: editable ? (_row, idx) => {
+            lineas.splice(idx, 1);
+            if (!lineas.length) lineas.push({ producto_id: '', plan_cuenta_id: '', descripcion: '', cantidad: 1, udm: 'unidades', precio_unitario: 0, alicuota_iva: defaultIva, subtotal: 0 });
+            renderCompraSheet();
+            syncTotals();
+          } : null,
+          onCellChange: ({ rowIndex }) => {
+            onNum(rowIndex);
           },
         });
-      });
+      };
+      renderCompraSheet();
 
       root.querySelector('#btn-cmp-constatar')?.addEventListener('click', async () => {
         syncHeaderMeta();
@@ -851,20 +904,9 @@ export async function renderCompraFormView({ id } = {}) {
         }
       });
 
-      root.querySelector('#btn-cmp-add-line')?.addEventListener('click', () => {
-        syncHeaderMeta();
-        lineas.push({ producto_id: '', plan_cuenta_id: '', descripcion: '', cantidad: 1, udm: 'unidades', precio_unitario: 0, alicuota_iva: defaultIva, subtotal: 0 });
-        draw();
-      });
       if (caracter === 'interno') {
         bindPuntoVentaSeq(root.querySelector('#cmp-pv'), root.querySelector('#cmp-num'), 'compra', api);
       }
-      root.querySelectorAll('.cl-del').forEach(b => b.addEventListener('click', () => { syncHeaderMeta(); lineas.splice(Number(b.dataset.idx), 1); draw(); }));
-      root.querySelectorAll('.cl-desc').forEach(inp => inp.addEventListener('input', () => { lineas[Number(inp.dataset.idx)].descripcion = inp.value; }));
-      root.querySelectorAll('.cl-cta').forEach(sel => sel.addEventListener('change', () => { lineas[Number(sel.dataset.idx)].plan_cuenta_id = sel.value ? Number(sel.value) : ''; }));
-      root.querySelectorAll('.cl-qty').forEach(inp => inp.addEventListener('input', () => { const i = Number(inp.dataset.idx); lineas[i].cantidad = Number(inp.value) || 0; onNum(i); }));
-      root.querySelectorAll('.cl-price').forEach(inp => inp.addEventListener('input', () => { const i = Number(inp.dataset.idx); lineas[i].precio_unitario = Number(inp.value) || 0; onNum(i); }));
-      root.querySelectorAll('.cl-iva').forEach(sel => sel.addEventListener('change', () => { const i = Number(sel.dataset.idx); lineas[i].alicuota_iva = Number(sel.value) || 0; syncTotals(); }));
 
       root.querySelector('#btn-cmp-add-imp')?.addEventListener('click', () => {
         syncHeaderMeta();
@@ -938,6 +980,13 @@ export async function renderCompraFormView({ id } = {}) {
         draw();
       }));
 
+      bindNumeroPadding(root.querySelector('#cmp-num'), () => ({
+        padding: nextCompraSeq?.padding || 8,
+        prefijo: nextCompraSeq?.prefijo || '',
+        sufijo: nextCompraSeq?.sufijo || '',
+        pvDefault: Number(root.querySelector('#cmp-pv')?.value || nextCompraSeq?.punto_venta || 1),
+      }));
+
       root.querySelector('#cmp-clase')?.addEventListener('change', (e) => {
         syncHeaderMeta();
         claseDocumento = e.target.value;
@@ -983,7 +1032,7 @@ export async function renderCompraFormView({ id } = {}) {
           } else {
             const res = await api('/api/compras', {
               method: 'POST',
-              body: JSON.stringify({ ...payload, estado: 'Confirmado' }),
+              body: JSON.stringify({ ...payload, estado: fd.get('estado') || 'Borrador' }),
             });
             toast('Compra registrada');
             navigate(res?.id ? `/compras/${res.id}` : '/compras');

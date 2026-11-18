@@ -1,12 +1,12 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
-import { db } from '../../db.js';
 import { MODELS } from '../../db/models.js';
-import { getNextNumeroDocumento } from '../config/configService.js';
+import { getEmpresaConfig, getNextNumeroDocumento } from '../config/configService.js';
 
 export const asientoRepo = new BaseRepository({ model: MODELS.asientos, defaultOrder: 'fecha DESC, id DESC' });
 export const asientoLineaRepo = new BaseRepository({ model: MODELS.asiento_lineas, defaultOrder: 'id ASC' });
 export const planCuentaRepo = new BaseRepository({ model: MODELS.plan_cuentas, defaultOrder: 'codigo ASC' });
 export const diarioRepo = new BaseRepository({ model: MODELS.diarios, defaultOrder: 'codigo ASC' });
+const cierreRepo = new BaseRepository({ model: MODELS.cierres_ejercicio });
 
 function round2(n) {
   return Number((Number(n) || 0).toFixed(2));
@@ -35,6 +35,14 @@ export class AsientoService {
     return this.planCuentas.query().where('codigo', String(codigoOrId).trim()).get() || null;
   }
 
+  resolveDefaultCuenta(field, fallbackCodigo) {
+    let customId = null;
+    try {
+      customId = getEmpresaConfig()?.[field] || null;
+    } catch { customId = null; }
+    return (customId ? this.resolvePlanCuenta(customId) : null) || this.resolvePlanCuenta(fallbackCodigo);
+  }
+
   resolveDiario({ codigo, tipo, caracter } = {}) {
     if (codigo) return this.diarios.query().where('codigo', codigo).get() || null;
     const q = this.diarios.query().where('activo', 1);
@@ -56,9 +64,12 @@ export class AsientoService {
     if (fecha && tipo_origen !== 'cierre_ejercicio') {
       let closed = null;
       try {
-        closed = db.prepare(
-          "SELECT id, descripcion, fecha_desde, fecha_hasta FROM cierres_ejercicio WHERE estado = 'cerrado' AND ? >= fecha_desde AND ? <= fecha_hasta LIMIT 1"
-        ).get(fecha, fecha);
+        closed = cierreRepo.query()
+          .select('id', 'descripcion', 'fecha_desde', 'fecha_hasta')
+          .where('estado', 'cerrado')
+          .where('fecha_desde', '<=', fecha)
+          .where('fecha_hasta', '>=', fecha)
+          .get();
       } catch (_) { /* En tests unitarios en memoria sin SQLite activo */ }
       if (closed) {
         throw new Error(`El período ${closed.fecha_desde} a ${closed.fecha_hasta} está cerrado (${closed.descripcion || 'Cierre de ejercicio'}).`);
@@ -291,10 +302,12 @@ export class AsientoService {
       ? this.diarios.findById(Number(compra.diario_id))
       : this.resolveDiario({ tipo: 'compras', caracter: compra.caracter || 'fiscal' });
 
-    const ctaGastoDefault = this.resolvePlanCuenta(diario?.cuenta_contable_id || '5.1.01');
-    const ctaIva = this.resolvePlanCuenta('1.1.04');
-    const ctaPerc = this.resolvePlanCuenta('1.1.05');
-    const ctaProv = this.resolvePlanCuenta('2.1.01');
+    const ctaGastoDefault = diario?.cuenta_contable_id
+      ? this.resolvePlanCuenta(diario.cuenta_contable_id)
+      : this.resolveDefaultCuenta('cta_compras_id', '5.1.01');
+    const ctaIva = this.resolveDefaultCuenta('cta_iva_credito_id', '1.1.04');
+    const ctaPerc = this.resolveDefaultCuenta('cta_perc_sufridas_id', '1.1.05');
+    const ctaProv = this.resolveDefaultCuenta('cta_proveedores_id', '2.1.01');
 
     const neto = round2(compra.neto);
     const iva = round2(compra.iva_monto);
@@ -341,7 +354,7 @@ export class AsientoService {
       ...gastoLines,
       addSide(ctaIva, '1.1.04 IVA Crédito Fiscal', iva, 'debe'),
       addSide(ctaPerc, '1.1.05 Percepciones y Retenciones Sufridas', perc, 'debe'),
-      addSide(this.resolvePlanCuenta('2.1.03'), '2.1.03 Retenciones a Depositar', ret, 'haber'),
+      addSide(this.resolveDefaultCuenta('cta_ret_depositar_id', '2.1.03'), '2.1.03 Retenciones a Depositar', ret, 'haber'),
       addSide(ctaProv, '2.1.01 Proveedores', total, 'haber', compra.contacto_id),
     ].filter(Boolean);
 
@@ -364,10 +377,12 @@ export class AsientoService {
       ? this.diarios.findById(Number(venta.diario_id))
       : this.resolveDiario({ tipo: 'ventas', caracter: venta.caracter || 'fiscal' });
 
-    const ctaCli = this.resolvePlanCuenta('1.1.03');
-    const ctaVentas = this.resolvePlanCuenta(diario?.cuenta_contable_id || '4.1.01');
-    const ctaIva = this.resolvePlanCuenta('2.1.02');
-    const ctaPerc = this.resolvePlanCuenta('2.1.03');
+    const ctaCli = this.resolveDefaultCuenta('cta_clientes_id', '1.1.03');
+    const ctaVentas = diario?.cuenta_contable_id
+      ? this.resolvePlanCuenta(diario.cuenta_contable_id)
+      : this.resolveDefaultCuenta('cta_ventas_id', '4.1.01');
+    const ctaIva = this.resolveDefaultCuenta('cta_iva_debito_id', '2.1.02');
+    const ctaPerc = this.resolveDefaultCuenta('cta_ret_depositar_id', '2.1.03');
 
     const neto = round2(venta.neto);
     const iva = round2(venta.iva_monto);
@@ -408,7 +423,7 @@ export class AsientoService {
 
     const lineas = [
       addSide(ctaCli, '1.1.03 Deudores por Ventas (Clientes)', total, 'debe', venta.contacto_id),
-      addSide(this.resolvePlanCuenta('1.1.05'), '1.1.05 Retenciones Sufridas', ret, 'debe'),
+      addSide(this.resolveDefaultCuenta('cta_perc_sufridas_id', '1.1.05'), '1.1.05 Retenciones Sufridas', ret, 'debe'),
       ...ventaNetoLines,
       addSide(ctaIva, '2.1.02 IVA Débito Fiscal', iva, 'haber'),
       addSide(ctaPerc, '2.1.03 Percepciones a Depositar', perc, 'haber'),

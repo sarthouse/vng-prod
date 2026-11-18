@@ -1,32 +1,56 @@
-import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
 import { defaultAsientoService } from './asientoService.js';
 
 const impRepo = new BaseRepository({ model: MODELS.imputaciones });
+const pagoRepo = new BaseRepository({ model: MODELS.pagos });
+const cobroRepo = new BaseRepository({ model: MODELS.cobros });
+const compraRepo = new BaseRepository({ model: MODELS.compras });
+const ventaRepo = new BaseRepository({ model: MODELS.ventas });
+const planCuentaRepo = new BaseRepository({ model: MODELS.plan_cuentas });
+const asientoLineaRepo = new BaseRepository({ model: MODELS.asiento_lineas });
 
 export function getFacturaImputado(dominio, facturaId) {
   const fId = Number(facturaId);
-  const impSum = db.prepare(
-    'SELECT COALESCE(SUM(monto_imputado), 0) AS t FROM imputaciones WHERE dominio = ? AND factura_id = ?'
-  ).get(dominio, fId).t;
+  const impSum = impRepo.query()
+    .where('dominio', dominio)
+    .where('factura_id', fId)
+    .sum('monto_imputado');
 
   // Compatibilidad con registros anteriores que usaban compra_id / venta_id sin fila en imputaciones
   let legacySum = 0;
   if (dominio === 'compras') {
-    legacySum = db.prepare(`
-      SELECT COALESCE(SUM(COALESCE(NULLIF(p.total_bruto, 0), p.monto)), 0) AS t
-      FROM pagos p
-      WHERE p.compra_id = ? AND p.estado = 'Confirmado'
-        AND NOT EXISTS (SELECT 1 FROM imputaciones i WHERE i.dominio = 'compras' AND i.comprobante_tipo = 'pago' AND i.comprobante_id = p.id)
-    `).get(fId).t;
+    const imputedPagoIds = new Set(
+      impRepo.query()
+        .select('comprobante_id')
+        .where('dominio', 'compras')
+        .where('comprobante_tipo', 'pago')
+        .all()
+        .map(r => Number(r.comprobante_id))
+    );
+    legacySum = pagoRepo.query()
+      .select('id', 'monto', 'total_bruto')
+      .where('compra_id', fId)
+      .where('estado', 'Confirmado')
+      .all()
+      .filter(p => !imputedPagoIds.has(Number(p.id)))
+      .reduce((s, p) => s + Number(p.total_bruto || p.monto || 0), 0);
   } else {
-    legacySum = db.prepare(`
-      SELECT COALESCE(SUM(cb.monto), 0) AS t
-      FROM cobros cb
-      WHERE cb.venta_id = ? AND cb.estado = 'Confirmado'
-        AND NOT EXISTS (SELECT 1 FROM imputaciones i WHERE i.dominio = 'ventas' AND i.comprobante_tipo = 'cobro' AND i.comprobante_id = cb.id)
-    `).get(fId).t;
+    const imputedCobroIds = new Set(
+      impRepo.query()
+        .select('comprobante_id')
+        .where('dominio', 'ventas')
+        .where('comprobante_tipo', 'cobro')
+        .all()
+        .map(r => Number(r.comprobante_id))
+    );
+    legacySum = cobroRepo.query()
+      .select('id', 'monto')
+      .where('venta_id', fId)
+      .where('estado', 'Confirmado')
+      .all()
+      .filter(cb => !imputedCobroIds.has(Number(cb.id)))
+      .reduce((s, cb) => s + Number(cb.monto || 0), 0);
   }
   return Number((Number(impSum || 0) + Number(legacySum || 0)).toFixed(2));
 }
@@ -39,15 +63,17 @@ export function getComprobanteDisponible(dominio, tipo, comprobanteId) {
   let contactoId = null;
 
   if (tipo === 'pago') {
-    const p = db.prepare('SELECT id, contacto_id, compra_id, monto, total_bruto, moneda, tipo_cambio, estado FROM pagos WHERE id = ?').get(cId);
+    const p = pagoRepo.query().select('id', 'contacto_id', 'compra_id', 'monto', 'total_bruto', 'moneda', 'tipo_cambio', 'estado').where('id', cId).get();
     if (!p || p.estado !== 'Confirmado') return { total: 0, imputado: 0, disponible: 0 };
     totalDoc = Number(p.total_bruto || p.monto || 0);
     moneda = p.moneda || 'ARS';
     tipoCambio = Number(p.tipo_cambio || 1);
     contactoId = p.contacto_id;
-    const impSum = db.prepare(
-      "SELECT COALESCE(SUM(monto_imputado), 0) AS t FROM imputaciones WHERE dominio = 'compras' AND comprobante_tipo = 'pago' AND comprobante_id = ?"
-    ).get(cId).t;
+    const impSum = impRepo.query()
+      .where('dominio', 'compras')
+      .where('comprobante_tipo', 'pago')
+      .where('comprobante_id', cId)
+      .sum('monto_imputado');
     const imputado = impSum > 0 ? impSum : (p.compra_id ? totalDoc : 0);
     return {
       total: Number(totalDoc.toFixed(2)),
@@ -60,15 +86,17 @@ export function getComprobanteDisponible(dominio, tipo, comprobanteId) {
   }
 
   if (tipo === 'cobro') {
-    const cb = db.prepare('SELECT id, contacto_id, venta_id, monto, moneda, tipo_cambio, estado FROM cobros WHERE id = ?').get(cId);
+    const cb = cobroRepo.query().select('id', 'contacto_id', 'venta_id', 'monto', 'moneda', 'tipo_cambio', 'estado').where('id', cId).get();
     if (!cb || cb.estado !== 'Confirmado') return { total: 0, imputado: 0, disponible: 0 };
     totalDoc = Number(cb.monto || 0);
     moneda = cb.moneda || 'ARS';
     tipoCambio = Number(cb.tipo_cambio || 1);
     contactoId = cb.contacto_id;
-    const impSum = db.prepare(
-      "SELECT COALESCE(SUM(monto_imputado), 0) AS t FROM imputaciones WHERE dominio = 'ventas' AND comprobante_tipo = 'cobro' AND comprobante_id = ?"
-    ).get(cId).t;
+    const impSum = impRepo.query()
+      .where('dominio', 'ventas')
+      .where('comprobante_tipo', 'cobro')
+      .where('comprobante_id', cId)
+      .sum('monto_imputado');
     const imputado = impSum > 0 ? impSum : (cb.venta_id ? totalDoc : 0);
     return {
       total: Number(totalDoc.toFixed(2)),
@@ -81,15 +109,17 @@ export function getComprobanteDisponible(dominio, tipo, comprobanteId) {
   }
 
   // nota_credito
-  const table = dominio === 'compras' ? 'compras' : 'ventas';
-  const nc = db.prepare(`SELECT id, contacto_id, total, moneda, tipo_cambio, clase_documento, estado FROM ${table} WHERE id = ?`).get(cId);
+  const docRepo = dominio === 'compras' ? compraRepo : ventaRepo;
+  const nc = docRepo.query().select('id', 'contacto_id', 'total', 'moneda', 'tipo_cambio', 'clase_documento', 'estado').where('id', cId).get();
   if (!nc || nc.clase_documento !== 'nota_credito' || ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado'].includes(nc.estado)) {
     return { total: 0, imputado: 0, disponible: 0 };
   }
   totalDoc = Number(nc.total || 0);
-  const impSum = db.prepare(
-    "SELECT COALESCE(SUM(monto_imputado), 0) AS t FROM imputaciones WHERE dominio = ? AND comprobante_tipo = 'nota_credito' AND comprobante_id = ?"
-  ).get(dominio, cId).t;
+  const impSum = impRepo.query()
+    .where('dominio', dominio)
+    .where('comprobante_tipo', 'nota_credito')
+    .where('comprobante_id', cId)
+    .sum('monto_imputado');
   return {
     total: Number(totalDoc.toFixed(2)),
     imputado: Number(impSum.toFixed(2)),
@@ -107,8 +137,8 @@ export function crearImputacion({ fecha, dominio, comprobante_tipo, comprobante_
   const monto = Number(Number(monto_imputado || 0).toFixed(2));
   if (monto <= 0) throw new Error('El monto a imputar debe ser mayor a 0');
 
-  const table = dominio === 'compras' ? 'compras' : 'ventas';
-  const factura = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(Number(factura_id));
+  const docRepo = dominio === 'compras' ? compraRepo : ventaRepo;
+  const factura = docRepo.findById(Number(factura_id));
   if (!factura) throw new Error('Factura no encontrada');
   if (factura.clase_documento === 'nota_credito') throw new Error('No se puede imputar sobre una Nota de Crédito');
 
@@ -139,10 +169,11 @@ export function crearImputacion({ fecha, dominio, comprobante_tipo, comprobante_
     const tcComp = Number(compInfo.tipo_cambio || 1);
     const diffArs = Number((monto * (tcComp - tcFac)).toFixed(2));
     if (Math.abs(diffArs) >= 0.01) {
-      const ctaDeudores = db.prepare("SELECT id, codigo, nombre FROM plan_cuentas WHERE codigo = '1.1.03' LIMIT 1").get();
-      const ctaProv = db.prepare("SELECT id, codigo, nombre FROM plan_cuentas WHERE codigo = '2.1.01' LIMIT 1").get();
-      const ctaDcPos = db.prepare("SELECT id, codigo, nombre FROM plan_cuentas WHERE codigo = '4.2.01' LIMIT 1").get();
-      const ctaDcNeg = db.prepare("SELECT id, codigo, nombre FROM plan_cuentas WHERE codigo = '5.2.08' LIMIT 1").get();
+      const findCta = (cod) => planCuentaRepo.query().select('id', 'codigo', 'nombre').where('codigo', cod).limit(1).get();
+      const ctaDeudores = findCta('1.1.03');
+      const ctaProv = findCta('2.1.01');
+      const ctaDcPos = findCta('4.2.01');
+      const ctaDcNeg = findCta('5.2.08');
       const absDiff = Math.abs(diffArs);
 
       const lineasDc = [];
@@ -187,59 +218,70 @@ export function getEstadoCuentaContacto(contactoId, dominio = 'ventas') {
   const cId = Number(contactoId);
   const isVentas = dominio !== 'compras';
   const table = isVentas ? 'ventas' : 'compras';
+  const docRepo = isVentas ? ventaRepo : compraRepo;
 
-  const facturas = db.prepare(`
-    SELECT id, fecha, numero, tipo_comprobante, clase_documento, moneda, tipo_cambio, total, estado
-    FROM ${table}
-    WHERE contacto_id = ? AND clase_documento != 'nota_credito' AND estado NOT IN ('Borrador', 'Presupuesto', 'Anulada', 'Cancelado')
-    ORDER BY fecha ASC, id ASC
-  `).all(cId).map(f => {
-    const imputado = getFacturaImputado(dominio, f.id);
-    const pendiente = Number(Math.max(0, Number(f.total || 0) - imputado).toFixed(2));
-    return { ...f, imputado, pendiente };
-  });
+  const facturas = docRepo.query()
+    .select('id', 'fecha', 'numero', 'tipo_comprobante', 'clase_documento', 'moneda', 'tipo_cambio', 'total', 'estado')
+    .where('contacto_id', cId)
+    .where('clase_documento', '!=', 'nota_credito')
+    .whereNotIn('estado', ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado'])
+    .orderBy('fecha', 'ASC')
+    .orderBy('id', 'ASC')
+    .all()
+    .map(f => {
+      const imputado = getFacturaImputado(dominio, f.id);
+      const pendiente = Number(Math.max(0, Number(f.total || 0) - imputado).toFixed(2));
+      return { ...f, imputado, pendiente };
+    });
 
   const comprobantes = [];
   if (isVentas) {
-    const cobros = db.prepare(`
-      SELECT id, fecha, numero, metodo, monto, moneda, tipo_cambio
-      FROM cobros WHERE contacto_id = ? AND estado = 'Confirmado'
-      ORDER BY fecha ASC, id ASC
-    `).all(cId);
+    const cobros = cobroRepo.query()
+      .select('id', 'fecha', 'numero', 'metodo', 'monto', 'moneda', 'tipo_cambio')
+      .where('contacto_id', cId)
+      .where('estado', 'Confirmado')
+      .orderBy('fecha', 'ASC')
+      .orderBy('id', 'ASC')
+      .all();
     for (const c of cobros) {
       const disp = getComprobanteDisponible('ventas', 'cobro', c.id);
       comprobantes.push({ ...c, comprobante_tipo: 'cobro', total: disp.total, imputado: disp.imputado, disponible: disp.disponible });
     }
   } else {
-    const pagos = db.prepare(`
-      SELECT id, fecha, numero, metodo, monto, total_retenciones, total_bruto, moneda, tipo_cambio
-      FROM pagos WHERE contacto_id = ? AND estado = 'Confirmado'
-      ORDER BY fecha ASC, id ASC
-    `).all(cId);
+    const pagos = pagoRepo.query()
+      .select('id', 'fecha', 'numero', 'metodo', 'monto', 'total_retenciones', 'total_bruto', 'moneda', 'tipo_cambio')
+      .where('contacto_id', cId)
+      .where('estado', 'Confirmado')
+      .orderBy('fecha', 'ASC')
+      .orderBy('id', 'ASC')
+      .all();
     for (const p of pagos) {
       const disp = getComprobanteDisponible('compras', 'pago', p.id);
       comprobantes.push({ ...p, comprobante_tipo: 'pago', total: disp.total, imputado: disp.imputado, disponible: disp.disponible });
     }
   }
 
-  const ncs = db.prepare(`
-    SELECT id, fecha, numero, tipo_comprobante, total, moneda, tipo_cambio
-    FROM ${table}
-    WHERE contacto_id = ? AND clase_documento = 'nota_credito' AND estado NOT IN ('Borrador', 'Presupuesto', 'Anulada', 'Cancelado')
-    ORDER BY fecha ASC, id ASC
-  `).all(cId);
+  const ncs = docRepo.query()
+    .select('id', 'fecha', 'numero', 'tipo_comprobante', 'total', 'moneda', 'tipo_cambio')
+    .where('contacto_id', cId)
+    .where('clase_documento', 'nota_credito')
+    .whereNotIn('estado', ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado'])
+    .orderBy('fecha', 'ASC')
+    .orderBy('id', 'ASC')
+    .all();
   for (const nc of ncs) {
     const disp = getComprobanteDisponible(dominio, 'nota_credito', nc.id);
     comprobantes.push({ ...nc, comprobante_tipo: 'nota_credito', total: disp.total, imputado: disp.imputado, disponible: disp.disponible });
   }
 
-  const imputaciones = db.prepare(`
-    SELECT i.*, f.numero AS factura_numero, f.total AS factura_total
-    FROM imputaciones i
-    JOIN ${table} f ON f.id = i.factura_id
-    WHERE i.dominio = ? AND f.contacto_id = ?
-    ORDER BY i.fecha DESC, i.id DESC
-  `).all(dominio, cId);
+  const imputaciones = impRepo.query('i')
+    .select('i.*', 'f.numero AS factura_numero', 'f.total AS factura_total')
+    .innerJoin(table, 'f', 'f.id', 'i.factura_id')
+    .where('i.dominio', dominio)
+    .where('f.contacto_id', cId)
+    .orderBy('i.fecha', 'DESC')
+    .orderBy('i.id', 'DESC')
+    .all();
 
   return { contacto_id: cId, dominio, facturas, comprobantes, imputaciones };
 }
@@ -264,24 +306,24 @@ export function getCuadreCuentasCorrientes({
 
   const calcDominio = (dominio, codigoCuenta) => {
     const isVentas = dominio === 'ventas';
-    const table = isVentas ? 'ventas' : 'compras';
-    const cta = new BaseRepository({ model: MODELS.plan_cuentas }).query().where('codigo', codigoCuenta).get();
+    const docRepo = isVentas ? ventaRepo : compraRepo;
+    const cta = planCuentaRepo.query().where('codigo', codigoCuenta).get();
     let saldoContable = 0;
     if (cta) {
-      const row = db.prepare(`
-        SELECT COALESCE(SUM(al.debe - al.haber), 0) AS neto
-        FROM asiento_lineas al
-        JOIN asientos a ON a.id = al.asiento_id
-        WHERE al.plan_cuenta_id = ? AND LOWER(a.estado) = 'confirmado'
-      `).get(cta.id);
-      saldoContable = Number((isVentas ? row.neto : -row.neto).toFixed(2));
+      const row = asientoLineaRepo.query('al')
+        .select('COALESCE(SUM(al.debe - al.haber), 0) AS neto')
+        .innerJoin('asientos', 'a', 'a.id', 'al.asiento_id')
+        .where('al.plan_cuenta_id', cta.id)
+        .whereIn('a.estado', ['Confirmado', 'confirmado'])
+        .get();
+      saldoContable = Number((isVentas ? (row?.neto || 0) : -(row?.neto || 0)).toFixed(2));
     }
 
-    const facturas = db.prepare(`
-      SELECT id, fecha, fecha_vencimiento, total
-      FROM ${table}
-      WHERE clase_documento != 'nota_credito' AND estado NOT IN ('Borrador', 'Presupuesto', 'Anulada', 'Cancelado')
-    `).all();
+    const facturas = docRepo.query()
+      .select('id', 'fecha', 'fecha_vencimiento', 'total')
+      .where('clase_documento', '!=', 'nota_credito')
+      .whereNotIn('estado', ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado'])
+      .all();
 
     const aging = { corriente: 0, d1_30: 0, d31_60: 0, d61_90: 0, mas_90: 0 };
     let totalPendienteFacturas = 0;
@@ -296,13 +338,17 @@ export function getCuadreCuentasCorrientes({
     // Restar anticipos / cobros / pagos / NC sin imputar
     let totalSinImputar = 0;
     if (isVentas) {
-      const cobros = db.prepare("SELECT id FROM cobros WHERE estado = 'Confirmado'").all();
+      const cobros = cobroRepo.query().select('id').where('estado', 'Confirmado').all();
       for (const c of cobros) totalSinImputar += getComprobanteDisponible('ventas', 'cobro', c.id).disponible;
     } else {
-      const pagos = db.prepare("SELECT id FROM pagos WHERE estado = 'Confirmado'").all();
+      const pagos = pagoRepo.query().select('id').where('estado', 'Confirmado').all();
       for (const p of pagos) totalSinImputar += getComprobanteDisponible('compras', 'pago', p.id).disponible;
     }
-    const ncs = db.prepare(`SELECT id FROM ${table} WHERE clase_documento = 'nota_credito' AND estado NOT IN ('Borrador', 'Presupuesto', 'Anulada', 'Cancelado')`).all();
+    const ncs = docRepo.query()
+      .select('id')
+      .where('clase_documento', 'nota_credito')
+      .whereNotIn('estado', ['Borrador', 'Presupuesto', 'Anulada', 'Cancelado'])
+      .all();
     for (const nc of ncs) totalSinImputar += getComprobanteDisponible(dominio, 'nota_credito', nc.id).disponible;
 
     const saldoOperativo = Number((totalPendienteFacturas - totalSinImputar).toFixed(2));

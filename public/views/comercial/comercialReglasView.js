@@ -1,9 +1,9 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney } from '../../lib/format.js';
-import { showConfirmModal } from '../../lib/engine/index.js';
+import { showConfirmModal, renderSpreadsheetTable } from '../../lib/engine/index.js';
 
-export async function renderComercialReglasView() {
-  const root = document.getElementById('app-view');
+export async function renderComercialReglasView({ embedded = false, container = null } = {}) {
+  const root = container || document.getElementById('app-view');
 
   const draw = async () => {
     const [envios, cupones, recargos] = await Promise.all([
@@ -13,213 +13,213 @@ export async function renderComercialReglasView() {
     ]);
 
     root.innerHTML = `
-      <div class="page-header">
-        <div>
-          <div style="margin-bottom:6px;"><a href="/ventas" data-link class="muted" style="font-size:0.85rem;">← Volver a Ventas</a></div>
-          <h1>Envíos, Cupones y Recargos</h1>
-          <p class="muted">Reglas comerciales que se agregan como líneas facturables (sin mover stock ni salir en remito) y mapean directo a WooCommerce.</p>
+      ${embedded ? '' : `
+        <div class="page-header">
+          <div>
+            <div class="mb-xs"><a href="/ventas" data-link class="muted text-md">← Volver a Ventas</a></div>
+            <h1>Envíos, Cupones y Recargos</h1>
+            <p class="muted">Reglas comerciales que se agregan como líneas facturables (sin mover stock ni salir en remito) y mapean directo a WooCommerce.</p>
+          </div>
         </div>
-      </div>
+      `}
 
       <div class="card">
         <div class="card-header"><h2>Tipos de Envío</h2></div>
-        <form id="form-add-envio" class="form-grid" style="margin-bottom:1rem;">
-          <label><span>Nombre *</span><input type="text" name="nombre" placeholder="Ej: Correo Argentino / Moto CABA" required /></label>
-          <label><span>Tarifa</span>
-            <select name="tipo_tarifa">
-              <option value="fijo">Precio fijo</option>
-              <option value="gratis_desde">Gratis desde monto mínimo</option>
-            </select>
-          </label>
-          <label><span>Precio Neto</span><input type="number" step="0.01" min="0" name="precio" value="0" required /></label>
-          <label><span>Gratis desde ($)</span><input type="number" step="0.01" min="0" name="monto_minimo_gratis" value="0" /></label>
-          <label><span>IVA %</span><input type="number" step="0.5" min="0" name="alicuota_iva" value="21" /></label>
-          <div style="display:flex; align-items:flex-end;">
-            <button type="submit" class="btn btn-primary btn-sm">+ Agregar Envío</button>
-          </div>
-        </form>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Nombre</th><th>Modalidad</th><th class="num">Precio</th><th class="num">Gratis desde</th><th class="num">IVA</th><th>Estado</th><th></th></tr></thead>
-            <tbody>
-              ${envios.length === 0 ? '<tr><td colspan="7" class="muted">Sin métodos de envío cargados.</td></tr>' : envios.map(e => `
-                <tr>
-                  <td><strong>${esc(e.nombre)}</strong></td>
-                  <td>${e.tipo_tarifa === 'gratis_desde' ? 'Gratis desde mínimo' : 'Fijo'}</td>
-                  <td class="num">${fmtMoney(e.precio)}</td>
-                  <td class="num">${e.tipo_tarifa === 'gratis_desde' ? fmtMoney(e.monto_minimo_gratis) : '-'}</td>
-                  <td class="num">${e.alicuota_iva}%</td>
-                  <td><span class="badge ${e.activo !== 0 ? 'badge-ok' : 'badge-muted'}">${e.activo !== 0 ? 'Activo' : 'Inactivo'}</span></td>
-                  <td class="num">
-                    <button type="button" class="btn btn-sm" data-tog-env="${e.id}" data-act="${e.activo !== 0 ? 1 : 0}">${e.activo !== 0 ? 'Desactivar' : 'Activar'}</button>
-                    <button type="button" class="btn btn-sm btn-danger" data-del-env="${e.id}">Eliminar</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
+        <div id="reglas-envios-sheet"></div>
       </div>
 
       <div class="card">
         <div class="card-header"><h2>Cupones de Descuento</h2></div>
-        <form id="form-add-cupon" class="form-grid" style="margin-bottom:1rem;">
-          <label><span>Código *</span><input type="text" name="codigo" placeholder="Ej: VERANO10" required style="text-transform:uppercase;" /></label>
-          <label><span>Descripción</span><input type="text" name="descripcion" placeholder="Promo lanzamiento..." /></label>
-          <label><span>Tipo</span>
-            <select name="tipo">
-              <option value="porcentaje">% Descuento</option>
-              <option value="fijo">Monto fijo ($)</option>
-              <option value="envio_gratis">Envío gratis</option>
-            </select>
-          </label>
-          <label><span>Valor</span><input type="number" step="0.01" min="0" name="valor" value="10" required /></label>
-          <label><span>IVA %</span><input type="number" step="0.5" min="0" name="alicuota_iva" value="21" /></label>
-          <label><span>Vigencia Hasta</span><input type="date" name="vigencia_hasta" /></label>
-          <label><span>Usos Máx. (0 = ilimitado)</span><input type="number" min="0" name="usos_maximos" value="0" /></label>
-          <div style="display:flex; align-items:flex-end;">
-            <button type="submit" class="btn btn-primary btn-sm">+ Agregar Cupón</button>
-          </div>
-        </form>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Código</th><th>Tipo</th><th class="num">Valor</th><th>Vigencia</th><th class="num">Usos</th><th>Estado</th><th></th></tr></thead>
-            <tbody>
-              ${cupones.length === 0 ? '<tr><td colspan="7" class="muted">Sin cupones cargados.</td></tr>' : cupones.map(c => `
-                <tr>
-                  <td><code>${esc(c.codigo)}</code> ${c.descripcion ? `<span class="muted">${esc(c.descripcion)}</span>` : ''}</td>
-                  <td>${esc(c.tipo)}</td>
-                  <td class="num">${c.tipo === 'porcentaje' ? `${c.valor}%` : c.tipo === 'fijo' ? fmtMoney(c.valor) : 'Envío $0'}</td>
-                  <td>${c.vigencia_hasta ? `Hasta ${esc(c.vigencia_hasta)}` : 'Sin vencimiento'}</td>
-                  <td class="num">${c.usos_actuales}${c.usos_maximos > 0 ? ` / ${c.usos_maximos}` : ''}</td>
-                  <td><span class="badge ${c.activo !== 0 ? 'badge-ok' : 'badge-muted'}">${c.activo !== 0 ? 'Activo' : 'Inactivo'}</span></td>
-                  <td class="num">
-                    <button type="button" class="btn btn-sm" data-tog-cup="${c.id}" data-act="${c.activo !== 0 ? 1 : 0}">${c.activo !== 0 ? 'Desactivar' : 'Activar'}</button>
-                    <button type="button" class="btn btn-sm btn-danger" data-del-cup="${c.id}">Eliminar</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
+        <div id="reglas-cupones-sheet"></div>
       </div>
 
       <div class="card">
         <div class="card-header"><h2>Recargos Financieros / Medios de Pago</h2></div>
-        <form id="form-add-recargo" class="form-grid" style="margin-bottom:1rem;">
-          <label><span>Nombre *</span><input type="text" name="nombre" placeholder="Ej: Recargo 3 cuotas / MercadoPago" required /></label>
-          <label><span>Tipo</span>
-            <select name="tipo">
-              <option value="porcentaje">% sobre neto</option>
-              <option value="fijo">Monto fijo ($)</option>
-            </select>
-          </label>
-          <label><span>Valor</span><input type="number" step="0.01" min="0" name="valor" value="0" required /></label>
-          <label><span>IVA %</span><input type="number" step="0.5" min="0" name="alicuota_iva" value="21" /></label>
-          <div style="display:flex; align-items:flex-end;">
-            <button type="submit" class="btn btn-primary btn-sm">+ Agregar Recargo</button>
-          </div>
-        </form>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Nombre</th><th>Tipo</th><th class="num">Valor</th><th class="num">IVA</th><th>Estado</th><th></th></tr></thead>
-            <tbody>
-              ${recargos.length === 0 ? '<tr><td colspan="6" class="muted">Sin recargos configurados.</td></tr>' : recargos.map(r => `
-                <tr>
-                  <td><strong>${esc(r.nombre)}</strong></td>
-                  <td>${r.tipo === 'porcentaje' ? 'Porcentaje' : 'Fijo'}</td>
-                  <td class="num">${r.tipo === 'porcentaje' ? `${r.valor}%` : fmtMoney(r.valor)}</td>
-                  <td class="num">${r.alicuota_iva}%</td>
-                  <td><span class="badge ${r.activo !== 0 ? 'badge-ok' : 'badge-muted'}">${r.activo !== 0 ? 'Activo' : 'Inactivo'}</span></td>
-                  <td class="num">
-                    <button type="button" class="btn btn-sm" data-tog-rec="${r.id}" data-act="${r.activo !== 0 ? 1 : 0}">${r.activo !== 0 ? 'Desactivar' : 'Activar'}</button>
-                    <button type="button" class="btn btn-sm btn-danger" data-del-rec="${r.id}">Eliminar</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
+        <div id="reglas-recargos-sheet"></div>
       </div>
     `;
 
-    root.querySelector('#form-add-envio')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      try {
-        await api('/api/ventas/envios', {
+    renderSpreadsheetTable(root.querySelector('#reglas-envios-sheet'), {
+      rows: envios,
+      compact: true,
+      defaultNewRow: () => ({ nombre: '', tipo_tarifa: 'fijo', precio: 0, monto_minimo_gratis: 0, alicuota_iva: 21, activo: 1 }),
+      onCreateRow: async ({ row }) => {
+        if (!String(row.nombre || '').trim()) return false;
+        const res = await api('/api/ventas/envios', {
           method: 'POST',
           body: JSON.stringify({
-            nombre: fd.get('nombre'),
-            tipo_tarifa: fd.get('tipo_tarifa'),
-            precio: Number(fd.get('precio')) || 0,
-            monto_minimo_gratis: Number(fd.get('monto_minimo_gratis')) || 0,
-            alicuota_iva: Number(fd.get('alicuota_iva')) || 21,
+            nombre: row.nombre,
+            tipo_tarifa: row.tipo_tarifa || 'fijo',
+            precio: Number(row.precio) || 0,
+            monto_minimo_gratis: Number(row.monto_minimo_gratis) || 0,
+            alicuota_iva: Number(row.alicuota_iva ?? 21),
             activo: 1,
           }),
         });
+        if (res?.id) row.id = res.id;
         toast('Método de envío creado');
+        return true;
+      },
+      columns: [
+        { key: 'nombre', label: 'Nombre', type: 'text', parse: (v) => String(v || '').trim(), render: (e) => e.nombre ? `<strong>${esc(e.nombre)}</strong>` : '<span class="muted">Nuevo envío...</span>' },
+        {
+          key: 'tipo_tarifa',
+          label: 'Modalidad',
+          type: 'select',
+          options: [
+            { value: 'fijo', label: 'Precio fijo' },
+            { value: 'gratis_desde', label: 'Gratis desde $' },
+          ],
+        },
+        { key: 'precio', label: 'Precio Neto', type: 'number', step: 0.01, min: 0, align: 'right', render: (e) => fmtMoney(e.precio || 0), parse: (v) => Math.max(0, Number(v) || 0) },
+        { key: 'monto_minimo_gratis', label: 'Gratis desde ($)', type: 'number', step: 0.01, min: 0, align: 'right', render: (e) => Number(e.monto_minimo_gratis || 0) > 0 ? fmtMoney(e.monto_minimo_gratis) : '-', parse: (v) => Math.max(0, Number(v) || 0) },
+        { key: 'alicuota_iva', label: 'IVA %', type: 'number', step: 0.01, min: 0, align: 'right', render: (e) => `${Number(e.alicuota_iva ?? 21)}%`, parse: (v) => Number(v) || 0 },
+        { key: 'activo', label: 'Activo', type: 'checkbox', align: 'center' },
+      ],
+      onDeleteRow: async (e) => {
+        if (!(await showConfirmModal('¿Eliminar este método de envío?'))) return;
+        await api(`/api/ventas/envios/${e.id}`, { method: 'DELETE' });
+        toast('Envío eliminado');
         await draw();
-      } catch (err) { toast(err.message, true); }
+      },
+      onCellChange: async ({ row, key, value }) => {
+        await api(`/api/ventas/envios/${row.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            nombre: key === 'nombre' ? value : row.nombre,
+            tipo_tarifa: key === 'tipo_tarifa' ? value : row.tipo_tarifa,
+            precio: key === 'precio' ? value : Number(row.precio || 0),
+            monto_minimo_gratis: key === 'monto_minimo_gratis' ? value : Number(row.monto_minimo_gratis || 0),
+            alicuota_iva: key === 'alicuota_iva' ? value : Number(row.alicuota_iva ?? 21),
+            activo: key === 'activo' ? Number(value) : (row.activo ? 1 : 0),
+          }),
+        });
+        toast('Envío actualizado');
+      },
     });
 
-    root.querySelector('#form-add-cupon')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      try {
-        await api('/api/ventas/cupones', {
+    renderSpreadsheetTable(root.querySelector('#reglas-cupones-sheet'), {
+      rows: cupones,
+      compact: true,
+      defaultNewRow: () => ({ codigo: '', descripcion: '', tipo: 'porcentaje', valor: 10, alicuota_iva: 21, vigencia_hasta: '', usos_maximos: 0, usos_actuales: 0, activo: 1 }),
+      onCreateRow: async ({ row }) => {
+        const codigo = String(row.codigo || '').trim().toUpperCase();
+        if (!codigo) return false;
+        row.codigo = codigo;
+        const res = await api('/api/ventas/cupones', {
           method: 'POST',
           body: JSON.stringify({
-            codigo: String(fd.get('codigo') || '').trim().toUpperCase(),
-            descripcion: fd.get('descripcion'),
-            tipo: fd.get('tipo'),
-            valor: Number(fd.get('valor')) || 0,
-            alicuota_iva: Number(fd.get('alicuota_iva')) || 21,
-            vigencia_hasta: fd.get('vigencia_hasta') || '',
-            usos_maximos: Number(fd.get('usos_maximos')) || 0,
+            codigo,
+            descripcion: row.descripcion || '',
+            tipo: row.tipo || 'porcentaje',
+            valor: Number(row.valor) || 0,
+            alicuota_iva: Number(row.alicuota_iva ?? 21),
+            vigencia_hasta: row.vigencia_hasta || '',
+            usos_maximos: Number(row.usos_maximos) || 0,
             activo: 1,
           }),
         });
+        if (res?.id) row.id = res.id;
         toast('Cupón creado');
+        return true;
+      },
+      columns: [
+        { key: 'codigo', label: 'Código', type: 'text', nowrap: true, parse: (v) => String(v || '').trim().toUpperCase(), render: (c) => c.codigo ? `<code>${esc(c.codigo)}</code>` : '<span class="muted">Nuevo código...</span>' },
+        { key: 'descripcion', label: 'Descripción', type: 'text', render: (c) => c.descripcion ? esc(c.descripcion) : '<span class="muted">-</span>' },
+        {
+          key: 'tipo',
+          label: 'Tipo',
+          type: 'select',
+          options: [
+            { value: 'porcentaje', label: '% Descuento' },
+            { value: 'fijo', label: '$ Monto fijo' },
+          ],
+        },
+        { key: 'valor', label: 'Valor', type: 'number', step: 0.01, min: 0, align: 'right', render: (c) => c.tipo === 'porcentaje' ? `${Number(c.valor || 0)}%` : fmtMoney(c.valor || 0), parse: (v) => Math.max(0, Number(v) || 0) },
+        { key: 'alicuota_iva', label: 'IVA %', type: 'number', step: 0.01, min: 0, align: 'right', render: (c) => `${Number(c.alicuota_iva ?? 21)}%`, parse: (v) => Number(v) || 0 },
+        { key: 'vigencia_hasta', label: 'Vigencia (YYYY-MM-DD)', type: 'text', nowrap: true, render: (c) => esc(c.vigencia_hasta || 'Sin límite') },
+        { key: 'usos_maximos', label: 'Usos Máx.', type: 'number', step: 1, min: 0, align: 'right', render: (c) => `${c.usos_actuales || 0} / ${c.usos_maximos || '∞'}`, parse: (v) => Math.max(0, Number(v) || 0) },
+        { key: 'activo', label: 'Activo', type: 'checkbox', align: 'center' },
+      ],
+      onDeleteRow: async (c) => {
+        if (!(await showConfirmModal('¿Eliminar este cupón?'))) return;
+        await api(`/api/ventas/cupones/${c.id}`, { method: 'DELETE' });
+        toast('Cupón eliminado');
         await draw();
-      } catch (err) { toast(err.message, true); }
+      },
+      onCellChange: async ({ row, key, value }) => {
+        await api(`/api/ventas/cupones/${row.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            codigo: key === 'codigo' ? value : row.codigo,
+            descripcion: key === 'descripcion' ? value : (row.descripcion || ''),
+            tipo: key === 'tipo' ? value : row.tipo,
+            valor: key === 'valor' ? value : Number(row.valor || 0),
+            alicuota_iva: key === 'alicuota_iva' ? value : Number(row.alicuota_iva ?? 21),
+            vigencia_hasta: key === 'vigencia_hasta' ? value : (row.vigencia_hasta || ''),
+            usos_maximos: key === 'usos_maximos' ? value : Number(row.usos_maximos || 0),
+            activo: key === 'activo' ? Number(value) : (row.activo ? 1 : 0),
+          }),
+        });
+        toast('Cupón actualizado');
+      },
     });
 
-    root.querySelector('#form-add-recargo')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      try {
-        await api('/api/ventas/recargos', {
+    renderSpreadsheetTable(root.querySelector('#reglas-recargos-sheet'), {
+      rows: recargos,
+      compact: true,
+      defaultNewRow: () => ({ nombre: '', tipo: 'porcentaje', valor: 0, alicuota_iva: 21, activo: 1 }),
+      onCreateRow: async ({ row }) => {
+        if (!String(row.nombre || '').trim()) return false;
+        const res = await api('/api/ventas/recargos', {
           method: 'POST',
           body: JSON.stringify({
-            nombre: fd.get('nombre'),
-            tipo: fd.get('tipo'),
-            valor: Number(fd.get('valor')) || 0,
-            alicuota_iva: Number(fd.get('alicuota_iva')) || 21,
+            nombre: row.nombre,
+            tipo: row.tipo || 'porcentaje',
+            valor: Number(row.valor) || 0,
+            alicuota_iva: Number(row.alicuota_iva ?? 21),
             activo: 1,
           }),
         });
+        if (res?.id) row.id = res.id;
         toast('Recargo creado');
+        return true;
+      },
+      columns: [
+        { key: 'nombre', label: 'Nombre', type: 'text', parse: (v) => String(v || '').trim(), render: (r) => r.nombre ? `<strong>${esc(r.nombre)}</strong>` : '<span class="muted">Nuevo recargo...</span>' },
+        {
+          key: 'tipo',
+          label: 'Tipo',
+          type: 'select',
+          options: [
+            { value: 'porcentaje', label: '% sobre neto' },
+            { value: 'fijo', label: '$ Monto fijo' },
+          ],
+        },
+        { key: 'valor', label: 'Valor', type: 'number', step: 0.01, min: 0, align: 'right', render: (r) => r.tipo === 'porcentaje' ? `${Number(r.valor || 0)}%` : fmtMoney(r.valor || 0), parse: (v) => Math.max(0, Number(v) || 0) },
+        { key: 'alicuota_iva', label: 'IVA %', type: 'number', step: 0.01, min: 0, align: 'right', render: (r) => `${Number(r.alicuota_iva ?? 21)}%`, parse: (v) => Number(v) || 0 },
+        { key: 'activo', label: 'Activo', type: 'checkbox', align: 'center' },
+      ],
+      onDeleteRow: async (r) => {
+        if (!(await showConfirmModal('¿Eliminar este recargo?'))) return;
+        await api(`/api/ventas/recargos/${r.id}`, { method: 'DELETE' });
+        toast('Recargo eliminado');
         await draw();
-      } catch (err) { toast(err.message, true); }
+      },
+      onCellChange: async ({ row, key, value }) => {
+        await api(`/api/ventas/recargos/${row.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            nombre: key === 'nombre' ? value : row.nombre,
+            tipo: key === 'tipo' ? value : row.tipo,
+            valor: key === 'valor' ? value : Number(row.valor || 0),
+            alicuota_iva: key === 'alicuota_iva' ? value : Number(row.alicuota_iva ?? 21),
+            activo: key === 'activo' ? Number(value) : (row.activo ? 1 : 0),
+          }),
+        });
+        toast('Recargo actualizado');
+      },
     });
-
-    const bindToggleDel = (togAttr, delAttr, basePath) => {
-      root.querySelectorAll(`[${togAttr}]`).forEach(btn => btn.addEventListener('click', async () => {
-        const id = btn.getAttribute(togAttr);
-        const activo = btn.dataset.act === '1' ? 0 : 1;
-        await api(`${basePath}/${id}`, { method: 'PUT', body: JSON.stringify({ activo }) });
-        await draw();
-      }));
-      root.querySelectorAll(`[${delAttr}]`).forEach(btn => btn.addEventListener('click', async () => {
-        if (!(await showConfirmModal('¿Eliminar este registro?'))) return;
-        await api(`${basePath}/${btn.getAttribute(delAttr)}`, { method: 'DELETE' });
-        await draw();
-      }));
-    };
-    bindToggleDel('data-tog-env', 'data-del-env', '/api/ventas/envios');
-    bindToggleDel('data-tog-cup', 'data-del-cup', '/api/ventas/cupones');
-    bindToggleDel('data-tog-rec', 'data-del-rec', '/api/ventas/recargos');
   };
 
   await draw();

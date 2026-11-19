@@ -1,6 +1,28 @@
 import { enhanceAllSelects, observeSelects } from './lib/autocomplete.js';
+import { esc } from './lib/format.js';
 
 const routes = [];
+
+function renderStatusPage(container, { code, title, message, pathname }) {
+  if (!container) return;
+  container.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1>${esc(code)} — ${esc(title)}</h1>
+        <p class="muted">${esc(message)}</p>
+      </div>
+      <div class="actions">
+        <a href="/" data-link class="btn btn-primary">Volver al inicio</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="empty-state">
+        <p class="mb-sm">Ruta solicitada: <code>${esc(pathname)}</code></p>
+        <a href="/" data-link class="btn btn-sm">Ir al Dashboard</a>
+      </div>
+    </div>
+  `;
+}
 
 export function addRoute(pattern, handler, permission = null) {
   const keys = [];
@@ -59,13 +81,43 @@ export async function resolveRoute() {
       }
       const params = {};
       r.keys.forEach((k, idx) => { params[k] = decodeURIComponent(match[idx + 1]); });
-      await r.handler(container, params, searchParams);
-      enhanceAllSelects(container);
+      try {
+        await r.handler(container, params, searchParams);
+        enhanceAllSelects(container);
+      } catch (err) {
+        if (err?.status === 404 || /no encontrad[oa]/i.test(err?.message || '')) {
+          renderStatusPage(container, {
+            code: '404',
+            title: 'Recurso no encontrado',
+            message: err?.message || 'El recurso solicitado no existe o fue eliminado.',
+            pathname,
+          });
+        } else if (err?.status === 403) {
+          renderStatusPage(container, {
+            code: '403',
+            title: 'Acceso denegado',
+            message: err?.message || 'No tenés permisos para acceder a este recurso.',
+            pathname,
+          });
+        } else {
+          renderStatusPage(container, {
+            code: String(err?.status || 'Error'),
+            title: 'No se pudo cargar la vista',
+            message: err?.message || 'Ocurrió un error inesperado al cargar el recurso.',
+            pathname,
+          });
+        }
+      }
       return;
     }
   }
 
-  container.innerHTML = `<div class="card"><div class="empty-state">Página no encontrada. <a href="/" data-link>Volver al inicio</a></div></div>`;
+  renderStatusPage(container, {
+    code: '404',
+    title: 'Página no encontrada',
+    message: 'La ruta solicitada no existe en la aplicación.',
+    pathname,
+  });
 }
 
 export function initRouter() {

@@ -49,6 +49,23 @@ export async function handleComprasRoutes(req, res, pathname, user) {
     } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
+  const cmpArchMatch = pathname.match(/^\/api\/compras\/(\d+)\/archivar$/);
+  if (cmpArchMatch && req.method === 'POST') {
+    const b = await parseBody(req).catch(() => ({}));
+    const ok = compraSvc.archivarCompra(Number(cmpArchMatch[1]), b.archivado !== false, user);
+    if (!ok) json(res, 404, { error: 'Compra no encontrada' });
+    else json(res, 200, { ok: true });
+    return true;
+  }
+  const cmpAnulMatch = pathname.match(/^\/api\/compras\/(\d+)\/anular$/);
+  if (cmpAnulMatch && req.method === 'POST') {
+    try {
+      const ok = compraSvc.anularCompra(Number(cmpAnulMatch[1]), user);
+      if (!ok) json(res, 404, { error: 'Compra no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
   const cmpMatch = pathname.match(/^\/api\/compras\/(\d+)$/);
   if (cmpMatch && req.method === 'GET') {
     const d = compraSvc.getCompraById(Number(cmpMatch[1]));

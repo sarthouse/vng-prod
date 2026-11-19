@@ -2,7 +2,7 @@
 
 Documento de referencia para cualquier persona o agente IA que lea el proyecto por primera vez. Resume **qué es**, **cómo se organiza**, **qué reglas no se rompen**, **cómo fluyen los datos entre módulos** y **qué falta implementar**.
 
-> Reglas estrictas de código: [`DEVELOPMENT_RULES.md`](../DEVELOPMENT_RULES.md). Este documento las resume en la sección 11.
+> Reglas estrictas de código: [`DEVELOPMENT_RULES.md`](./DEVELOPMENT_RULES.md). Este documento las resume en la sección 11.
 
 ---
 
@@ -289,6 +289,7 @@ Para mantener consistencia visual, evitar regresiones en mobile y eliminar estil
 3. **Layout Shell y Navegación**:
    - El navbar y el drawer lateral viven exteriorizados en `public/lib/appShell.js` (`mountAppShell()`), manteniendo `public/index.html` mínimo.
    - Sin emojis en botones, tabs o badges de interfaz: usar texto limpio o íconos SVG inline.
+   - En botones de acciones dentro de tablas/grillas, priorizar íconos SVG de interfaz inline (con `title` y `aria-label` descriptivos) en lugar de botones de texto apilados.
    - El estado colapsado del drawer en desktop se persiste en `sessionStorage` (`vng_sidebar_collapsed`).
 4. **Numeración Documental**:
    - Todo documento con secuencia (Ventas, Compras internas, Pagos, Cobros, Retenciones, Órdenes de Producción, Operaciones de Stock y Remitos) debe resolver y avanzar su numeración en backend mediante `resolveNumeroDocumento()` / `getNextNumeroDocumento()` de `src/services/config/configService.js`, y formatear inputs manuales en frontend con `bindNumeroPadding()` + `bindPuntoVentaSeq()` de `public/lib/format.js`.

@@ -4,7 +4,7 @@ import { convertUnitFromDb, getEmpresaConfig, resolveNumeroDocumento } from '../
 import { resolveVariantForPlantilla } from './presupuestoService.js';
 import { applicableQtyForLine, getActiveRecetaForPlantilla } from './recetaService.js';
 import { getInventarioResumen, registrarMovimientoStock } from '../inventario/inventarioService.js';
-import { createOperacionStock } from '../inventario/operacionStockService.js';
+import { createOperacionStock, anularOperacionStock, deleteOperacionStock } from '../inventario/operacionStockService.js';
 import { createCompra } from '../comercial/compraService.js';
 
 class OrdenRepository extends BaseRepository {
@@ -13,7 +13,7 @@ class OrdenRepository extends BaseRepository {
       table: 'ordenes_produccion',
       defaultOrder: 'id DESC',
       audit: true,
-      columns: ['codigo', 'pedido_id', 'plantilla_id', 'receta_id', 'estado', 'fecha_inicio', 'fecha_objetivo', 'notas'],
+      columns: ['codigo', 'pedido_id', 'plantilla_id', 'receta_id', 'estado', 'fecha_inicio', 'fecha_objetivo', 'notas', 'archivado'],
     });
   }
 }
@@ -33,6 +33,69 @@ const pedidoLineaRepo = new BaseRepository({ table: 'pedido_lineas' });
 const ubicacionRepo = new BaseRepository({ table: 'ubicaciones' });
 const stockQuantRepo = new BaseRepository({ table: 'stock_quants' });
 const entregaRepo = new BaseRepository({ table: 'entregas' });
+const compraRepo = new BaseRepository({ table: 'compras' });
+const opLineaRepo = new BaseRepository({ table: 'operacion_stock_lineas' });
+
+function getIngresadoPorOrdenMap(ordenId) {
+  const ingresadaMap = new Map();
+  const ingresosLegacy = movimientoStockRepo.query('ms')
+    .select('ms.producto_id, ms.cantidad')
+    .where('ms.referencia_tipo', 'orden_produccion')
+    .where('ms.referencia_id', ordenId)
+    .where('ms.tipo', 'ingreso_produccion')
+    .all();
+  for (const ing of ingresosLegacy) {
+    ingresadaMap.set(Number(ing.producto_id), (ingresadaMap.get(Number(ing.producto_id)) || 0) + Number(ing.cantidad || 0));
+  }
+  const ingresosOps = opLineaRepo.query('ol')
+    .select('ol.producto_id, ol.cantidad')
+    .innerJoin('operaciones_stock', 'os', 'os.id', 'ol.operacion_id')
+    .where('os.referencia_tipo', 'orden')
+    .where('os.referencia_id', ordenId)
+    .where('os.tipo', 'recepcion')
+    .where('os.estado', 'Confirmado')
+    .all();
+  for (const ing of ingresosOps) {
+    ingresadaMap.set(Number(ing.producto_id), (ingresadaMap.get(Number(ing.producto_id)) || 0) + Number(ing.cantidad || 0));
+  }
+  return ingresadaMap;
+}
+
+function createIngresoTerminadoOperacion(orden, items, { fecha, destUbi = null, lote = '', motivo = '', user = null } = {}) {
+  const validItems = (items || []).filter(it => Number(it.cantidad) > 0);
+  if (validItems.length === 0) return null;
+  const origId = ubicacionRepo.query().select('id').where('codigo', 'VIRT-PROD').get()?.id
+    || ubicacionRepo.query().select('id').where('codigo', 'VIRT-PROV').get()?.id
+    || null;
+  const destId = destUbi
+    ? Number(destUbi)
+    : (ubicacionRepo.query().select('id').where('codigo', 'PROD-TERM').get()?.id
+      || ubicacionRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id
+      || null);
+  return createOperacionStock({
+    fecha: fecha || new Date().toISOString().slice(0, 10),
+    tipo: 'recepcion',
+    ubicacion_origen_id: origId,
+    ubicacion_destino_id: destId,
+    referencia_tipo: 'orden',
+    referencia_id: orden.id,
+    estado: 'Confirmado',
+    motivo: motivo || `Ingreso Prod. Terminado ${orden.codigo}`,
+    lineas: validItems.map(it => {
+      const pInfo = vProductoRepo.query('p')
+        .select('pt.udm')
+        .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+        .where('p.id', Number(it.producto_id))
+        .get();
+      return {
+        producto_id: it.producto_id,
+        cantidad: Number(it.cantidad),
+        udm: pInfo?.udm || 'unidades',
+        lote: lote || orden.codigo || '',
+      };
+    }),
+  }, user);
+}
 const empresaConfigRepo = new BaseRepository({ table: 'empresa_config' });
 const operacionStockRepo = new BaseRepository({ table: 'operaciones_stock' });
 const operacionStockLineaRepo = new BaseRepository({ table: 'operacion_stock_lineas' });
@@ -150,16 +213,7 @@ export function getOrdenDetalle(id) {
     .where('ol.orden_id', id)
     .orderBy('ol.id', 'ASC')
     .all();
-  const ingresosOp = movimientoStockRepo.query('ms')
-    .select('ms.producto_id, ms.cantidad')
-    .where('ms.referencia_tipo', 'orden_produccion')
-    .where('ms.referencia_id', id)
-    .where('ms.tipo', 'ingreso_produccion')
-    .all();
-  const ingresadaMap = new Map();
-  for (const ing of ingresosOp) {
-    ingresadaMap.set(Number(ing.producto_id), (ingresadaMap.get(Number(ing.producto_id)) || 0) + Number(ing.cantidad || 0));
-  }
+  const ingresadaMap = getIngresadoPorOrdenMap(id);
   const lineas = rawLineas.map(l => {
     const pedida = Number(l.cantidad || 0);
     const ingresada = Number(ingresadaMap.get(Number(l.producto_id)) || 0);
@@ -232,7 +286,8 @@ export function getOrdenDetalle(id) {
     }
   }
 
-  const movimientos = movimientoStockRepo.query('ms')
+  const opIds = operacionStockRepo.query().select('id').where('referencia_tipo', 'orden').where('referencia_id', id).all().map(o => o.id);
+  const movLegacy = movimientoStockRepo.query('ms')
     .select('ms.*, p.nombre as producto_nombre, pt.udm')
     .innerJoin('productos', 'p', 'p.id', 'ms.producto_id')
     .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
@@ -240,6 +295,17 @@ export function getOrdenDetalle(id) {
     .where('ms.referencia_id', id)
     .orderBy('ms.id', 'DESC')
     .all();
+  const movOps = opIds.length > 0
+    ? movimientoStockRepo.query('ms')
+      .select('ms.*, p.nombre as producto_nombre, pt.udm')
+      .innerJoin('productos', 'p', 'p.id', 'ms.producto_id')
+      .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
+      .where('ms.referencia_tipo', 'operacion_stock')
+      .whereIn('ms.referencia_id', opIds)
+      .orderBy('ms.id', 'DESC')
+      .all()
+    : [];
+  const movimientos = [...movOps, ...movLegacy].sort((a, b) => Number(b.id) - Number(a.id));
 
   return { orden, lineas, etapas, insumos: insumosPorEtapa, movimientos };
 }
@@ -478,6 +544,11 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
 
         const tallerExtId = ubicacionRepo.query().select('id').where('codigo', 'TALLER-EXT').get()?.id || null;
         const depCentralId = ubicacionRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id || null;
+        const virtProdId = ubicacionRepo.query().select('id').where('codigo', 'VIRT-PROD').get()?.id
+          || ubicacionRepo.query().select('id').where('codigo', 'VIRT-CLI').get()?.id
+          || null;
+        const tallerItems = [];
+        const depItems = [];
 
         for (const l of rLineas) {
           const exploded = explodeRecetaLineForOrden(l, ordenLineas, l.udm);
@@ -492,33 +563,40 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
               const fromDep = Number((item.qty - fromTaller).toFixed(4));
 
               if (fromTaller > 0) {
-                registrarMovimientoStock({
-                  producto_id: item.producto_id,
-                  tipo: 'consumo_produccion',
-                  cantidad: -fromTaller,
-                  fecha: today,
-                  ubicacion_origen_id: tallerExtId,
-                  referencia_tipo: 'orden_produccion',
-                  referencia_id: orden.id,
-                  nota: `${orden.codigo} · Etapa ${etapa.nombre} (Taller)`,
-                  user,
-                });
+                tallerItems.push({ producto_id: item.producto_id, cantidad: fromTaller, udm: l.udm || 'unidades', lote: orden.codigo });
               }
               if (fromDep > 0) {
-                registrarMovimientoStock({
-                  producto_id: item.producto_id,
-                  tipo: 'consumo_produccion',
-                  cantidad: -fromDep,
-                  fecha: today,
-                  ubicacion_origen_id: depCentralId,
-                  referencia_tipo: 'orden_produccion',
-                  referencia_id: orden.id,
-                  nota: `${orden.codigo} · Etapa ${etapa.nombre}`,
-                  user,
-                });
+                depItems.push({ producto_id: item.producto_id, cantidad: fromDep, udm: l.udm || 'unidades', lote: orden.codigo });
               }
             }
           }
+        }
+
+        if (tallerItems.length > 0 && tallerExtId && virtProdId) {
+          createOperacionStock({
+            fecha: today,
+            tipo: 'entrega',
+            ubicacion_origen_id: tallerExtId,
+            ubicacion_destino_id: virtProdId,
+            referencia_tipo: 'orden',
+            referencia_id: orden.id,
+            estado: 'Confirmado',
+            motivo: `Consumo ${orden.codigo} · Etapa ${etapa.nombre} (Taller)`,
+            lineas: tallerItems,
+          }, user);
+        }
+        if (depItems.length > 0 && depCentralId && virtProdId) {
+          createOperacionStock({
+            fecha: today,
+            tipo: 'entrega',
+            ubicacion_origen_id: depCentralId,
+            ubicacion_destino_id: virtProdId,
+            referencia_tipo: 'orden',
+            referencia_id: orden.id,
+            estado: 'Confirmado',
+            motivo: `Consumo ${orden.codigo} · Etapa ${etapa.nombre}`,
+            lineas: depItems,
+          }, user);
         }
       }
       stockConsumido = 1;
@@ -569,32 +647,21 @@ export function updateOrdenEtapa(etapaRowId, b, user = null) {
     const allEtapas = ordenEtapaRepo.query().select('estado').where('orden_id', orden.id).all();
     if (allEtapas.length > 0 && allEtapas.every(e => e.estado === 'Completada')) {
       ordenRepo.update(orden.id, { estado: 'Completada' }, user);
-      const destUbi = ubicacionRepo.query().select('id').where('codigo', 'PROD-TERM').get()?.id
-        || ubicacionRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id
-        || null;
+      const ingresadaMap = getIngresadoPorOrdenMap(orden.id);
       const oLineas = ordenLineaRepo.query().select('producto_id, cantidad').where('orden_id', orden.id).all();
-      for (const ol of oLineas) {
-        const yaIngresado = Number(movimientoStockRepo.query()
-          .where('referencia_tipo', 'orden_produccion')
-          .where('referencia_id', orden.id)
-          .where('tipo', 'ingreso_produccion')
-          .where('producto_id', ol.producto_id)
-          .sum('cantidad') || 0);
-        const rem = Number((Number(ol.cantidad || 0) - yaIngresado).toFixed(4));
-        if (rem > 0) {
-          registrarMovimientoStock({
-            producto_id: ol.producto_id,
-            tipo: 'ingreso_produccion',
-            cantidad: rem,
-            fecha: today,
-            ubicacion_destino_id: destUbi,
-            lote: orden.codigo,
-            referencia_tipo: 'orden_produccion',
-            referencia_id: orden.id,
-            nota: `Ingreso Prod. Terminado ${orden.codigo}`,
-            user,
-          });
-        }
+      const remItems = oLineas
+        .map(ol => ({
+          producto_id: ol.producto_id,
+          cantidad: Number((Number(ol.cantidad || 0) - Number(ingresadaMap.get(Number(ol.producto_id)) || 0)).toFixed(4)),
+        }))
+        .filter(it => it.cantidad > 0);
+      if (remItems.length > 0) {
+        createIngresoTerminadoOperacion(orden, remItems, {
+          fecha: today,
+          lote: orden.codigo,
+          motivo: `Ingreso Prod. Terminado ${orden.codigo}`,
+          user,
+        });
       }
     } else if (allEtapas.some(e => e.estado === 'En Proceso' || e.estado === 'Completada')) {
       if (orden.estado === 'Planificada') ordenRepo.update(orden.id, { estado: 'En Proceso' }, user);
@@ -617,24 +684,14 @@ export function registrarIngresoParcialOrden(ordenId, b = {}, user = null) {
   const reqMap = new Map((Array.isArray(b.lineas) ? b.lineas : []).map(l => [Number(l.producto_id), Number(l.cantidad) || 0]));
 
   return ordenRepo.transaction(() => {
+    const items = [];
     let totalIngresadoAhora = 0;
     for (const ol of lineas) {
       const cant = reqMap.has(Number(ol.producto_id))
         ? Math.max(0, Number(reqMap.get(Number(ol.producto_id))) || 0)
         : 0;
       if (cant <= 0) continue;
-      registrarMovimientoStock({
-        producto_id: ol.producto_id,
-        tipo: 'ingreso_produccion',
-        cantidad: cant,
-        fecha,
-        ubicacion_destino_id: destUbi,
-        lote,
-        referencia_tipo: 'orden_produccion',
-        referencia_id: orden.id,
-        nota: b.nota ? `${orden.codigo} · ${b.nota}` : `Ingreso parcial Prod. Terminado ${orden.codigo}`,
-        user,
-      });
+      items.push({ producto_id: ol.producto_id, cantidad: cant });
       totalIngresadoAhora += cant;
     }
 
@@ -642,15 +699,53 @@ export function registrarIngresoParcialOrden(ordenId, b = {}, user = null) {
       throw new Error('Ingresá una cantidad mayor a 0 en al menos una variante');
     }
 
+    const opId = createIngresoTerminadoOperacion(orden, items, {
+      fecha,
+      destUbi,
+      lote,
+      motivo: b.nota ? `${orden.codigo} · ${b.nota}` : `Ingreso parcial Prod. Terminado ${orden.codigo}`,
+      user,
+    });
+
     if (orden.estado === 'Planificada') {
       ordenRepo.update(orden.id, { estado: 'En Proceso' }, user);
     }
-    return { ok: true, ingresado: totalIngresadoAhora };
+    return { ok: true, ingresado: totalIngresadoAhora, operacion_id: opId };
   });
 }
 
 export function deleteOrden(id) {
   return ordenRepo.delete(id);
+}
+
+export function cancelarOrden(id, user = null) {
+  const existing = ordenRepo.findById(id);
+  if (!existing) return false;
+  if (existing.estado === 'Cancelada') throw new Error('La orden ya está cancelada');
+  if (existing.estado === 'Completada') throw new Error('No se puede cancelar una orden ya completada');
+  const comprasConf = compraRepo.query()
+    .where('orden_id', Number(id))
+    .where('estado', 'Confirmado')
+    .count();
+  if (comprasConf > 0) {
+    throw new Error('La orden tiene compras confirmadas de talleres asociadas; anulalas antes de cancelar la orden');
+  }
+  return ordenRepo.transaction(() => {
+    const ops = operacionStockRepo.query()
+      .where('referencia_tipo', 'orden')
+      .where('referencia_id', Number(id))
+      .all();
+    for (const op of ops) {
+      if (op.estado === 'Confirmado') anularOperacionStock(op.id, user);
+      else if (op.estado === 'Borrador') deleteOperacionStock(op.id);
+    }
+    ordenRepo.update(id, { estado: 'Cancelada' }, user);
+    return true;
+  });
+}
+
+export function archivarOrden(id, archivado = true, user = null) {
+  return ordenRepo.setArchivado(id, archivado, user);
 }
 
 export function computeCronogramaCompras() {

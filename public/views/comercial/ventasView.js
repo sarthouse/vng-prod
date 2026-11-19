@@ -1,5 +1,5 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, bindCuentaMetodoSync, exportRowsToCSV } from '../../lib/format.js';
+import { esc, fmtMoney, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, bindCuentaMetodoSync, exportRowsToCSV, isDocHidden, renderDocEstadoBadges, buildArchivarBulkActions } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { navigate } from '../../router.js';
 import { printRemito } from '../../lib/print/index.js';
@@ -11,6 +11,8 @@ import { renderKpiStrip, renderFilterBar, renderDataTable, renderSpreadsheetTabl
 import { showConfirmModal } from '../../lib/engine/index.js';
 import { COMPROBANTES_AR, resolveComprobanteMeta, resolveLetraFiscalClient } from '../../lib/comprobantesAr.js';
 
+let vtaShowHidden = false;
+
 export async function renderVentasView() {
   const root = document.getElementById('app-view');
   const ventas = await api('/api/ventas');
@@ -21,6 +23,7 @@ export async function renderVentasView() {
   const getFiltered = () => {
     const q = search.trim().toLowerCase();
     return ventas.filter(v => {
+      if (!vtaShowHidden && isDocHidden(v)) return false;
       if (filterEstado && v.estado !== filterEstado) return false;
       if (filterClase && (v.clase_documento || 'factura') !== filterClase) return false;
       if (q) {
@@ -59,17 +62,48 @@ export async function renderVentasView() {
           },
         },
         {
-          id: 'eliminar',
-          label: 'Eliminar seleccionadas',
-          variant: 'danger',
-          confirm: (sel) => `¿Eliminar ${sel.length} venta(s) seleccionada(s)?`,
+          id: 'anular',
+          label: 'Anular seleccionadas',
+          confirm: (sel) => {
+            const n = sel.filter(v => v.estado !== 'Anulada' && !v.cae).length;
+            return n ? `¿Anular ${n} venta(s) sin CAE seleccionada(s)?` : null;
+          },
           onClick: async (sel) => {
+            const targets = sel.filter(v => v.estado !== 'Anulada' && !v.cae);
+            if (!targets.length) { toast('No hay ventas anulables sin CAE en la selección', true); return; }
             let ok = 0; let errs = 0;
-            for (const v of sel) {
+            for (const v of targets) {
+              try { await api(`/api/ventas/${v.id}`, { method: 'PUT', body: JSON.stringify({ estado: 'Anulada' }) }); ok++; }
+              catch { errs++; }
+            }
+            toast(`${ok} anulada(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+            await renderVentasView();
+          },
+        },
+        ...buildArchivarBulkActions({
+          api,
+          toast,
+          endpointPrefix: '/api/ventas',
+          showHidden: vtaShowHidden,
+          onDone: () => renderVentasView(),
+        }),
+        {
+          id: 'eliminar',
+          label: 'Eliminar Borradores',
+          variant: 'danger',
+          confirm: (sel) => {
+            const n = sel.filter(v => ['Borrador', 'Presupuesto'].includes(v.estado)).length;
+            return n ? `¿Eliminar ${n} borrador(es) / presupuesto(s)?` : null;
+          },
+          onClick: async (sel) => {
+            const targets = sel.filter(v => ['Borrador', 'Presupuesto'].includes(v.estado));
+            if (!targets.length) { toast('Solo se pueden eliminar ventas en Borrador o Presupuesto', true); return; }
+            let ok = 0; let errs = 0;
+            for (const v of targets) {
               try { await api(`/api/ventas/${v.id}`, { method: 'DELETE' }); ok++; }
               catch { errs++; }
             }
-            toast(`${ok} venta(s) eliminada(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+            toast(`${ok} eliminada(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
             await renderVentasView();
           },
         },
@@ -80,7 +114,7 @@ export async function renderVentasView() {
           label: 'Número',
           render: v => `<a href="/ventas/${v.id}" data-link class="link-primary"><strong>${esc(v.numero || '#' + v.id)}</strong></a>${v.clase_documento === 'nota_credito' ? ' <span class="badge badge-parcial">NC</span>' : v.clase_documento === 'nota_debito' ? ' <span class="badge badge-muted">ND</span>' : ''}`,
         },
-        { label: 'Estado', render: v => `<span class="badge ${v.estado === 'Entregada' ? 'badge-ok' : v.estado === 'Confirmada' ? 'badge-confirmado' : 'badge-muted'}">${esc(v.estado)}</span>` },
+        { label: 'Estado', render: v => renderDocEstadoBadges(v) },
         {
           label: 'AFIP',
           render: v => v.caracter === 'interno'
@@ -102,10 +136,11 @@ export async function renderVentasView() {
           label: 'Acciones',
           render: v => `
             <div class="actions">
+              ${!['Anulada'].includes(v.estado) && !v.cae && ['Confirmada', 'Entregada'].includes(v.estado) ? `<button type="button" class="btn btn-sm" data-anul-vta="${v.id}">Anular</button>` : ''}
               <button type="button" class="btn btn-sm" data-print-pdf-vta="${v.id}">PDF</button>
               <button type="button" class="btn btn-sm" data-print-vta="${v.id}">Remito</button>
               <a href="/ventas/${v.id}" data-link class="btn btn-sm">Abrir</a>
-              <button type="button" class="btn btn-sm btn-danger" data-del-vta="${v.id}">Eliminar</button>
+              ${['Borrador', 'Presupuesto'].includes(v.estado) ? `<button type="button" class="btn btn-sm btn-danger" data-del-vta="${v.id}">Eliminar</button>` : ''}
             </div>
           `,
         },
@@ -154,6 +189,22 @@ export async function renderVentasView() {
         }
       });
     });
+    root.querySelectorAll('[data-anul-vta]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular esta venta? Se revertirán sus operaciones de stock asociadas si existieran.'))) return;
+        try {
+          await api(`/api/ventas/${btn.dataset.anulVta}`, {
+            method: 'PUT',
+            body: JSON.stringify({ estado: 'Anulada' }),
+          });
+          toast('Venta anulada');
+          await renderVentasView();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+    });
+
     root.querySelectorAll('[data-del-vta]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!(await showConfirmModal('¿Eliminar esta venta?'))) return;
@@ -176,6 +227,9 @@ export async function renderVentasView() {
           <p class="muted">Registro de ventas y cobros.</p>
         </div>
         <div class="actions">
+          <button type="button" id="btn-vta-toggle-hidden" class="btn ${vtaShowHidden ? 'btn-primary' : ''}">
+            ${vtaShowHidden ? 'Ocultar anuladas / archivadas' : 'Mostrar anuladas / archivadas'}
+          </button>
           <a href="/ventas/reglas" data-link class="btn">Envíos, Cupones y Recargos</a>
           <button type="button" id="btn-export-ventas" class="btn">Exportar CSV</button>
           <a href="/ventas/nueva" data-link class="btn btn-primary">+ Nueva Venta</a>
@@ -189,6 +243,10 @@ export async function renderVentasView() {
         <div id="vta-table-wrap"></div>
       </div>
     `;
+    root.querySelector('#btn-vta-toggle-hidden').addEventListener('click', () => {
+      vtaShowHidden = !vtaShowHidden;
+      draw();
+    });
     root.querySelector('#btn-export-ventas').addEventListener('click', () => {
       const rows = getFiltered();
       if (!rows.length) { toast('No hay ventas para exportar', true); return; }
@@ -383,6 +441,9 @@ export async function renderVentaFormView({ id } = {}) {
               : ''}
             ${v.caracter === 'fiscal' && v.cae
               ? `<button type="button" id="btn-vta-xml-afip" class="btn">XML AFIP</button>`
+              : ''}
+            ${v.estado !== 'Anulada' && !v.cae
+              ? `<button type="button" id="btn-vta-anular" class="btn btn-danger">Anular Venta</button>`
               : ''}
             <button type="button" id="btn-vta-print-pdf" class="btn">Imprimir / PDF</button>
             <a href="/ventas/nueva" data-link class="btn btn-primary">+ Nueva Venta</a>
@@ -662,6 +723,20 @@ export async function renderVentaFormView({ id } = {}) {
           window.location.href = `/api/afip/xml/${ok.id}/download?parte=res`;
         } catch (err) { toast(err.message, true); }
       });
+      root.querySelector('#btn-vta-anular')?.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular esta venta? Se revertirán sus operaciones de stock asociadas si existieran.'))) return;
+        try {
+          await api(`/api/ventas/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ estado: 'Anulada' }),
+          });
+          toast('Venta anulada');
+          await renderVentaFormView({ id });
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+
       root.querySelector('#btn-vta-print-pdf')?.addEventListener('click', async () => {
         try {
           const data = await api(`/api/ventas/${id}`);

@@ -3,7 +3,7 @@ import { esc, fmtNum, badgeForTipo } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { printRemito, openPdfFromEndpoint } from '../../lib/print/index.js';
 import { mountCombobox } from '../../lib/autocomplete.js';
-import { renderDataTable } from '../../lib/engine/index.js';
+import { renderDataTable, renderSpreadsheetTable } from '../../lib/engine/index.js';
 
 const MOV_LABEL = {
   compra: '<span class="badge badge-ok">Recepción</span>',
@@ -126,21 +126,46 @@ export async function renderInventarioView() {
       <div id="inv-meta-panel"></div>
     `;
 
-    renderDataTable(root.querySelector('#inv-stock-table'), {
+    const isFiltering = Boolean(search.trim() || onlyAlerts);
+    renderSpreadsheetTable(root.querySelector('#inv-stock-table'), {
       rows: filteredInv,
       emptyText: 'No hay componentes para mostrar.',
-      exportFilename: `stock_actual_${new Date().toISOString().slice(0, 10)}.csv`,
+      compact: true,
+      pasteEnabled: false,
+      showDirty: false,
+      groupBy: (i) => i.plantilla_nombre || i.nombre,
+      defaultCollapsed: !isFiltering,
       columns: [
-        { label: 'Componente', render: i => `<a href="${i.plantilla_id ? `/plantillas/${i.plantilla_id}` : '/productos'}" data-link class="link-primary"><strong>${esc(i.nombre)}</strong></a>` },
-        { label: 'Tipo', render: i => badgeForTipo(i.tipo) },
-        { label: 'Proveedor', render: i => esc(i.proveedor_nombre || '-') },
-        { label: 'Stock Físico', align: 'right', render: i => `${fmtNum(i.stock)} ${esc(i.udm)}` },
-        { label: 'Reservado OP', align: 'right', render: i => fmtNum(i.reservado) },
-        { label: 'Disponible', align: 'right', render: i => `<strong style="${i.disponible < 0 ? 'color:var(--color-accent);' : ''}">${fmtNum(i.disponible)}</strong>` },
-        { label: 'Stock Mínimo', align: 'right', render: i => fmtNum(i.stock_minimo) },
-        { label: 'A Comprar', align: 'right', render: i => `<strong>${i.a_comprar > 0 ? fmtNum(i.a_comprar) : '-'}</strong>` },
-        { label: 'Estado', render: i => i.alerta_minimo ? '<span class="badge badge-cancelado">Stock Bajo</span>' : '<span class="badge badge-ok">OK</span>' },
+        { key: 'nombre', label: 'Componente', type: 'readonly', render: i => `<a href="${i.plantilla_id ? `/plantillas/${i.plantilla_id}` : '/productos'}" data-link class="link-primary" style="padding-left:18px;">${esc(i.nombre)}</a>` },
+        { key: 'tipo', label: 'Tipo', type: 'readonly', render: i => badgeForTipo(i.tipo) },
+        { key: 'proveedor_nombre', label: 'Proveedor', type: 'readonly', render: i => esc(i.proveedor_nombre || '-') },
+        { key: 'stock', label: 'Stock Físico', type: 'readonly', align: 'right', nowrap: true, render: i => `${fmtNum(i.stock)} ${esc(i.udm)}` },
+        { key: 'reservado', label: 'Reservado OP', type: 'readonly', align: 'right', nowrap: true, render: i => fmtNum(i.reservado) },
+        { key: 'disponible', label: 'Disponible', type: 'readonly', align: 'right', nowrap: true, render: i => `<strong style="${i.disponible < 0 ? 'color:var(--color-accent);' : ''}">${fmtNum(i.disponible)}</strong>` },
+        { key: 'stock_minimo', label: 'Stock Mínimo', type: 'readonly', align: 'right', nowrap: true, render: i => fmtNum(i.stock_minimo) },
+        { key: 'a_comprar', label: 'A Comprar', type: 'readonly', align: 'right', nowrap: true, render: i => `<strong>${i.a_comprar > 0 ? fmtNum(i.a_comprar) : '-'}</strong>` },
+        { key: 'alerta_minimo', label: 'Estado', type: 'readonly', render: i => i.alerta_minimo ? '<span class="badge badge-cancelado">Stock Bajo</span>' : '<span class="badge badge-ok">OK</span>' },
       ],
+      renderGroupRow: (groupName, groupRows, _isCollapsed, caretHtml) => {
+        const first = groupRows[0] || {};
+        const sumStock = groupRows.reduce((s, r) => s + Number(r.stock || 0), 0);
+        const sumRes = groupRows.reduce((s, r) => s + Number(r.reservado || 0), 0);
+        const sumDisp = groupRows.reduce((s, r) => s + Number(r.disponible || 0), 0);
+        const sumMin = groupRows.reduce((s, r) => s + Number(r.stock_minimo || 0), 0);
+        const sumComp = groupRows.reduce((s, r) => s + Number(r.a_comprar || 0), 0);
+        const hasAlert = groupRows.some(r => r.alerta_minimo);
+        return `
+          <td>${caretHtml} <strong>${esc(groupName)}</strong> <span class="badge badge-muted">${groupRows.length}</span></td>
+          <td>${badgeForTipo(first.tipo)}</td>
+          <td>${esc(first.proveedor_nombre || '-')}</td>
+          <td class="num nowrap"><strong>${fmtNum(sumStock)} ${esc(first.udm || '')}</strong></td>
+          <td class="num nowrap"><strong>${fmtNum(sumRes)}</strong></td>
+          <td class="num nowrap"><strong style="${sumDisp < 0 ? 'color:var(--color-accent);' : ''}">${fmtNum(sumDisp)}</strong></td>
+          <td class="num nowrap">${fmtNum(sumMin)}</td>
+          <td class="num nowrap"><strong>${sumComp > 0 ? fmtNum(sumComp) : '-'}</strong></td>
+          <td>${hasAlert ? '<span class="badge badge-cancelado">Stock Bajo</span>' : '<span class="badge badge-ok">OK</span>'}</td>
+        `;
+      },
     });
 
     const filteredQuants = quants.filter(q => !quantUbicFilter || String(q.ubicacion_id) === String(quantUbicFilter));

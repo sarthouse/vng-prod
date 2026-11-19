@@ -114,6 +114,13 @@ export async function handleVentasRoutes(req, res, pathname, user) {
     catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
+  const vtaArchMatch = pathname.match(/^\/api\/ventas\/(\d+)\/archivar$/);
+  if (vtaArchMatch && req.method === 'POST') {
+    const b = await parseBody(req).catch(() => ({}));
+    if (!ventaSvc.archivarVenta(Number(vtaArchMatch[1]), b.archivado !== false, user)) json(res, 404, { error: 'Venta no encontrada' });
+    else json(res, 200, { ok: true });
+    return true;
+  }
   const vtaMatch = pathname.match(/^\/api\/ventas\/(\d+)$/);
   if (vtaMatch && req.method === 'GET') {
     const d = ventaSvc.getVentaById(Number(vtaMatch[1]));

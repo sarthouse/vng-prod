@@ -38,6 +38,21 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
     } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
+  const ordArchMatch = pathname.match(/^\/api\/ordenes\/(\d+)\/archivar$/);
+  if (ordArchMatch && req.method === 'POST') {
+    const b = await parseBody(req).catch(() => ({}));
+    if (!prodSvc.archivarOrden(Number(ordArchMatch[1]), b.archivado !== false, user)) json(res, 404, { error: 'Orden no encontrada' });
+    else json(res, 200, { ok: true });
+    return true;
+  }
+  const ordCancelMatch = pathname.match(/^\/api\/ordenes\/(\d+)\/cancelar$/);
+  if (ordCancelMatch && req.method === 'POST') {
+    try {
+      if (!prodSvc.cancelarOrden(Number(ordCancelMatch[1]), user)) json(res, 404, { error: 'Orden no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
   const ordenEtapaMatch = pathname.match(/^\/api\/orden-etapas\/(\d+)$/);
   if (ordenEtapaMatch && req.method === 'PUT') {
     try {
@@ -218,6 +233,21 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
       if (String(e.message).includes('UNIQUE')) { json(res, 409, { error: 'Ese número de lote/pedido ya existe.' }); return true; }
       throw e;
     }
+    return true;
+  }
+  const pedArchMatch = pathname.match(/^\/api\/pedidos\/(\d+)\/archivar$/);
+  if (pedArchMatch && req.method === 'POST') {
+    const b = await parseBody(req).catch(() => ({}));
+    if (!pedSvc.archivarPedido(Number(pedArchMatch[1]), b.archivado !== false)) json(res, 404, { error: 'Pedido no encontrado' });
+    else json(res, 200, { ok: true });
+    return true;
+  }
+  const pedCancelMatch = pathname.match(/^\/api\/pedidos\/(\d+)\/cancelar$/);
+  if (pedCancelMatch && req.method === 'POST') {
+    try {
+      if (!pedSvc.cancelarPedido(Number(pedCancelMatch[1]))) json(res, 404, { error: 'Pedido no encontrado' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
   const pedMatch = pathname.match(/^\/api\/pedidos\/(\d+)$/);

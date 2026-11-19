@@ -25,15 +25,6 @@ export async function renderCategoriasView() {
       <div class="card-header">
         <h2>Categorías</h2>
       </div>
-      <form id="form-add-cat" class="toolbar sx-410c97">
-        <input type="text" name="nombre" required placeholder="Nueva categoría" class="mw-220" />
-        <select name="padre_id" class="mw-190">
-          <option value="">Sin categoría padre</option>
-          ${categorias.map(p => `<option value="${p.id}">${esc(p.display_name || (p.padre_nombre ? `${p.padre_nombre} / ${p.nombre}` : p.nombre))}</option>`).join('')}
-        </select>
-        <input type="text" name="descripcion" placeholder="Descripción" class="sx-aca4d0" />
-        <button type="submit" class="btn btn-primary">+ Agregar Categoría</button>
-      </form>
       <div id="cat-list-container"></div>
     </div>
   `;
@@ -72,8 +63,32 @@ export async function renderCategoriasView() {
       rows: categorias,
       emptyText: 'No hay categorías cargadas.',
       compact: true,
+      defaultNewRow: () => ({ nombre: '', padre_id: null, padre_nombre: '', descripcion: '' }),
+      onCreateRow: async ({ row }) => {
+        if (!String(row.nombre || '').trim()) return false;
+        try {
+          const res = await api('/api/categorias', {
+            method: 'POST',
+            body: JSON.stringify({
+              nombre: String(row.nombre).trim(),
+              padre_id: row.padre_id ? Number(row.padre_id) : null,
+              descripcion: row.descripcion || '',
+            }),
+          });
+          if (res?.id) row.id = res.id;
+          if (row.padre_id) {
+            const padre = categorias.find(p => Number(p.id) === Number(row.padre_id));
+            row.padre_nombre = padre ? (padre.display_name || (padre.padre_nombre ? `${padre.padre_nombre} / ${padre.nombre}` : padre.nombre)) : '';
+          }
+          toast('Categoría agregada');
+          return true;
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
       columns: [
-        { key: 'nombre', label: 'Nombre', type: 'text', parse: (v) => String(v || '').trim() },
+        { key: 'nombre', label: 'Nombre', type: 'text', parse: (v) => String(v || '').trim(), render: (c) => c.nombre ? esc(c.nombre) : '<span class="muted">Nueva categoría...</span>' },
         {
           key: 'padre_id',
           label: 'Categoría Padre',
@@ -126,25 +141,6 @@ export async function renderCategoriasView() {
   };
 
   renderCatBody();
-
-  root.querySelector('#form-add-cat').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    try {
-      await api('/api/categorias', {
-        method: 'POST',
-        body: JSON.stringify({
-          nombre: fd.get('nombre'),
-          padre_id: fd.get('padre_id') || null,
-          descripcion: fd.get('descripcion') || '',
-        }),
-      });
-      toast('Categoría agregada');
-      await renderCategoriasView();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  });
 }
 
 export async function renderVariantesView() {
@@ -409,27 +405,6 @@ export async function renderUbicacionesView() {
         <h2>Ubicaciones</h2>
       </div>
       <div class="card-body">
-        <form id="form-add-ubicacion" class="form-grid">
-          <label><span>Nombre *</span><input type="text" name="nombre" required placeholder="Ej: Estantería A / Depósito Taller" /></label>
-          <label><span>Código</span><input type="text" name="codigo" placeholder="Opcional" /></label>
-          <label>
-            <span>Tipo *</span>
-            <select name="tipo">
-              <option value="interna">Interna</option>
-              <option value="dedicada">Dedicada</option>
-              <option value="virtual">Virtual</option>
-            </select>
-          </label>
-          <label>
-            <span>Ubicación Padre</span>
-            <select name="parent_id">
-              <option value="">-- Sin padre --</option>
-              ${internasUbic.map(u => `<option value="${u.id}">${esc(u.nombre)} (${esc(u.codigo)})</option>`).join('')}
-            </select>
-          </label>
-          <div class="self-end"><button type="submit" class="btn btn-primary">+ Agregar Ubicación</button></div>
-        </form>
-
         <div id="ubic-sheet-host"></div>
       </div>
     </div>
@@ -439,14 +414,48 @@ export async function renderUbicacionesView() {
     rows: ubicaciones,
     emptyText: 'Sin ubicaciones cargadas.',
     compact: true,
+    defaultNewRow: () => ({ codigo: '', nombre: '', tipo: 'interna', parent_id: null, parent_nombre: '', activa: 1 }),
+    onCreateRow: async ({ row }) => {
+      if (!String(row.nombre || '').trim()) return false;
+      try {
+        const nombre = String(row.nombre).trim();
+        const codigo = String(row.codigo || '').trim();
+        const tipo = row.tipo || 'interna';
+        const parent_id = row.parent_id ? Number(row.parent_id) : null;
+        const res = await api('/api/ubicaciones', {
+          method: 'POST',
+          body: JSON.stringify({ nombre, codigo, tipo, parent_id }),
+        });
+        if (res?.id) row.id = res.id;
+        row.codigo = codigo || nombre.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20);
+        if (parent_id) {
+          const padre = ubicaciones.find(u => Number(u.id) === parent_id);
+          row.parent_nombre = padre ? padre.nombre : '';
+        }
+        toast('Ubicación creada');
+        return true;
+      } catch (err) {
+        toast(err.message, true);
+        throw err;
+      }
+    },
     columns: [
-      { key: 'codigo', label: 'Código', type: 'readonly', nowrap: true, render: (u) => `<code>${esc(u.codigo)}</code>` },
+      {
+        key: 'codigo',
+        label: 'Código',
+        type: 'text',
+        nowrap: true,
+        editable: (u) => Boolean(u.__isNew),
+        parse: (v) => String(v || '').trim().toUpperCase(),
+        render: (u) => u.codigo ? `<code>${esc(u.codigo)}</code>` : '<span class="muted">Auto</span>',
+      },
       {
         key: 'nombre',
         label: 'Nombre',
         type: 'text',
         editable: (u) => !(u.es_sistema || u.es_default),
-        render: (u) => `<strong>${esc(u.nombre)}</strong>`,
+        parse: (v) => String(v || '').trim(),
+        render: (u) => u.nombre ? `<strong>${esc(u.nombre)}</strong>` : '<span class="muted">Nueva ubicación...</span>',
       },
       {
         key: 'tipo',
@@ -462,18 +471,42 @@ export async function renderUbicacionesView() {
           ? '<span class="badge badge-muted">Virtual</span>'
           : (u.tipo === 'dedicada' ? '<span class="badge badge-parcial">Dedicada</span>' : '<span class="badge badge-confirmado">Interna</span>'),
       },
-      { key: 'parent_nombre', label: 'Ubicación Padre', type: 'readonly', render: (u) => `<span class="muted">${esc(u.parent_nombre || '—')}</span>` },
+      {
+        key: 'parent_id',
+        label: 'Ubicación Padre',
+        type: 'select',
+        editable: (u) => Boolean(u.__isNew) || !(u.es_sistema || u.es_default),
+        options: (u) => [
+          { value: '', label: '-- Sin padre --' },
+          ...internasUbic.filter(p => p.id !== u.id).map(p => ({ value: String(p.id), label: `${p.nombre} (${p.codigo})` })),
+        ],
+        getValue: (u) => (u.parent_id ? String(u.parent_id) : ''),
+        parse: (v) => (v ? Number(v) : null),
+        render: (u) => `<span class="muted">${esc(u.parent_nombre || '—')}</span>`,
+      },
       {
         key: 'activa',
         label: 'Activa',
         type: 'checkbox',
         align: 'center',
-        editable: (u) => !(u.es_sistema || u.es_default),
+        editable: (u) => !u.__isNew && !(u.es_sistema || u.es_default),
       },
     ],
+    canDeleteRow: (u) => !(u.es_sistema || u.es_default),
     extraActions: (u) => (u.es_sistema || u.es_default)
       ? '<span class="badge badge-muted">Protegida</span>'
-      : `<button type="button" class="btn btn-sm btn-danger" data-del-ubic="${u.id}">Eliminar</button>`,
+      : '',
+    onDeleteRow: async (u) => {
+      if (u.es_sistema || u.es_default) return;
+      if (!(await showConfirmModal('¿Eliminar esta ubicación?'))) return;
+      try {
+        await api(`/api/ubicaciones/${u.id}`, { method: 'DELETE' });
+        toast('Ubicación eliminada');
+        await renderUbicacionesView();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    },
     onCellChange: async ({ row, key, value }) => {
       try {
         await api(`/api/ubicaciones/${row.id}`, {
@@ -481,63 +514,19 @@ export async function renderUbicacionesView() {
           body: JSON.stringify({
             nombre: key === 'nombre' ? value : row.nombre,
             tipo: key === 'tipo' ? value : row.tipo,
+            parent_id: key === 'parent_id' ? value : (row.parent_id || null),
             activa: key === 'activa' ? Boolean(Number(value)) : Boolean(row.activa),
           }),
         });
+        if (key === 'parent_id') {
+          const padre = ubicaciones.find(u => Number(u.id) === Number(value));
+          row.parent_nombre = padre ? padre.nombre : '';
+        }
         toast('Ubicación actualizada');
       } catch (err) {
         toast(err.message, true);
         throw err;
       }
     },
-  });
-
-  root.querySelector('#form-add-ubicacion')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    try {
-      await api('/api/ubicaciones', {
-        method: 'POST',
-        body: JSON.stringify({
-          nombre: fd.get('nombre'),
-          codigo: fd.get('codigo'),
-          tipo: fd.get('tipo'),
-          parent_id: fd.get('parent_id') ? Number(fd.get('parent_id')) : null,
-        }),
-      });
-      toast('Ubicación creada');
-      await renderUbicacionesView();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  });
-
-  root.querySelectorAll('[data-toggle-ubic]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const activa = btn.dataset.activa !== '1';
-      try {
-        await api(`/api/ubicaciones/${btn.dataset.toggleUbic}`, {
-          method: 'PUT',
-          body: JSON.stringify({ activa }),
-        });
-        toast(activa ? 'Ubicación activada' : 'Ubicación desactivada');
-        await renderUbicacionesView();
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
-  });
-
-  root.querySelectorAll('[data-del-ubic]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!(await showConfirmModal('¿Eliminar esta ubicación?'))) return;
-      try {
-        await api(`/api/ubicaciones/${btn.dataset.delUbic}`, { method: 'DELETE' });
-        toast('Ubicación eliminada');
-        await renderUbicacionesView();
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
   });
 }

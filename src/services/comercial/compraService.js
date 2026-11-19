@@ -446,6 +446,35 @@ export function deleteCompra(id, user = null) {
   });
 }
 
+export function anularCompra(id, user = null) {
+  const ex = getCompraById(id);
+  if (!ex) return false;
+  if (ex.compra.estado === 'Anulada') throw new Error('La compra ya está anulada');
+  if (getFacturaImputado('compras', Number(id)) > 0) {
+    throw new Error('No se puede anular directamente una compra con pagos o notas de crédito imputadas; emití una Nota de Crédito del proveedor.');
+  }
+  return compraRepo.transaction(() => {
+    const ops = operacionStockRepo.query()
+      .where('referencia_tipo', 'compra')
+      .where('referencia_id', Number(id))
+      .all();
+    for (const op of ops) {
+      if (op.estado === 'Confirmado') anularOperacionStock(op.id, user);
+      else if (op.estado === 'Borrador') deleteOperacionStock(op.id);
+    }
+    if (ex.compra.asiento_id) {
+      try { defaultAsientoService.revertirAsiento(ex.compra.asiento_id, { motivo: 'Anulación de compra' }); }
+      catch { /* si ya fue revertido o no existe, continuar */ }
+    }
+    compraRepo.update(id, { estado: 'Anulada' }, user);
+    return true;
+  });
+}
+
+export function archivarCompra(id, archivado = true, user = null) {
+  return compraRepo.setArchivado(id, archivado, user);
+}
+
 function syncUltimoCostoProductos(lineas, { compraId = null, numero = '', user = null } = {}) {
   for (const l of lineas || []) {
     const pid = Number(l.producto_id || 0);

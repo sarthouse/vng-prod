@@ -606,6 +606,30 @@ export function deletePago(id) {
   for (const cid of cuentasAfectadas) recalcCuentaSaldo(cid);
 }
 
+export function anularPago(id, user = null) {
+  const ex = pagoRepo.findById(id);
+  if (!ex) return false;
+  if (ex.estado === 'Anulado') throw new Error('El pago ya está anulado');
+  const lineas = pagoLineaRepo.findWhere({ pago_id: Number(id) });
+  const cuentasAfectadas = new Set(lineas.map(l => l.cuenta_id).filter(Boolean));
+  if (ex.cuenta_id) cuentasAfectadas.add(ex.cuenta_id);
+  return pagoRepo.transaction(() => {
+    const asientos = asientoRepo.query()
+      .where('tipo_origen', 'pago')
+      .where('origen_id', Number(id))
+      .where('estado', 'Confirmado')
+      .all();
+    for (const a of asientos) {
+      try { defaultAsientoService.revertirAsiento(a.id, { motivo: 'Anulación de pago' }); }
+      catch { /* ignore */ }
+    }
+    imputacionRepo.query().where('dominio', 'compras').where('comprobante_tipo', 'pago').where('comprobante_id', Number(id)).delete();
+    pagoRepo.update(id, { estado: 'Anulado' }, user);
+    for (const cid of cuentasAfectadas) recalcCuentaSaldo(cid);
+    return true;
+  });
+}
+
 export function listCobros({ cuenta_id, contacto_id, cliente_id } = {}) {
   const qb = cobroRepo.query('co')
     .select("co.*, COALESCE(c.nombre, '') as cuenta_nombre, COALESCE(ct.nombre, '') as cliente_nombre, COALESCE(ct.nombre, '') as contacto_nombre")
@@ -795,6 +819,38 @@ export function deleteCobro(id) {
   imputacionRepo.query().where('dominio', 'ventas').where('comprobante_tipo', 'cobro').where('comprobante_id', Number(id)).delete();
   cobroRepo.delete(id);
   for (const cid of cuentasAfectadas) recalcCuentaSaldo(cid);
+}
+
+export function anularCobro(id, user = null) {
+  const ex = cobroRepo.findById(id);
+  if (!ex) return false;
+  if (ex.estado === 'Anulado') throw new Error('El cobro ya está anulado');
+  const lineas = cobroLineaRepo.findWhere({ cobro_id: Number(id) });
+  const cuentasAfectadas = new Set(lineas.map(l => l.cuenta_id).filter(Boolean));
+  if (ex.cuenta_id) cuentasAfectadas.add(ex.cuenta_id);
+  return cobroRepo.transaction(() => {
+    const asientos = asientoRepo.query()
+      .where('tipo_origen', 'cobro')
+      .where('origen_id', Number(id))
+      .where('estado', 'Confirmado')
+      .all();
+    for (const a of asientos) {
+      try { defaultAsientoService.revertirAsiento(a.id, { motivo: 'Anulación de cobro' }); }
+      catch { /* ignore */ }
+    }
+    imputacionRepo.query().where('dominio', 'ventas').where('comprobante_tipo', 'cobro').where('comprobante_id', Number(id)).delete();
+    cobroRepo.update(id, { estado: 'Anulado' }, user);
+    for (const cid of cuentasAfectadas) recalcCuentaSaldo(cid);
+    return true;
+  });
+}
+
+export function archivarCobro(id, archivado = true, user = null) {
+  return cobroRepo.setArchivado(id, archivado, user);
+}
+
+export function archivarPago(id, archivado = true, user = null) {
+  return pagoRepo.setArchivado(id, archivado, user);
 }
 
 export function createTransferencia(b) {

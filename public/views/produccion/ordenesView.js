@@ -1,5 +1,5 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, exportRowsToCSV } from '../../lib/format.js';
+import { esc, exportRowsToCSV, filterVisibleDocs, renderDocEstadoBadges, buildArchivarBulkActions } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { renderKpiStrip, renderDataTable, renderGroupedList, renderKanbanBoard, renderGanttChart, renderViewSwitcher, renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
@@ -7,15 +7,17 @@ import { showConfirmModal } from '../../lib/engine/index.js';
 
 let ordenesViewMode = 'lista';
 let ganttSoloPendientes = true;
+let ordenesShowHidden = false;
 
 export async function renderOrdenesView() {
   const root = document.getElementById('app-view');
-  const ordenes = await api('/api/ordenes');
+  const ordenesAll = await api('/api/ordenes');
+  const ordenes = filterVisibleDocs(ordenesAll, ordenesShowHidden);
 
-  const activas = ordenes.filter(o => o.estado !== 'Completada' && o.estado !== 'Cancelada').length;
-  const enProceso = ordenes.filter(o => o.estado === 'En Proceso').length;
-  const completadas = ordenes.filter(o => o.estado === 'Completada').length;
-  const unidades = ordenes.filter(o => o.estado !== 'Cancelada').reduce((s, o) => s + (Number(o.cantidad) || 0), 0);
+  const activas = ordenesAll.filter(o => o.estado !== 'Completada' && o.estado !== 'Cancelada').length;
+  const enProceso = ordenesAll.filter(o => o.estado === 'En Proceso').length;
+  const completadas = ordenesAll.filter(o => o.estado === 'Completada').length;
+  const unidades = ordenesAll.filter(o => o.estado !== 'Cancelada').reduce((s, o) => s + (Number(o.cantidad) || 0), 0);
 
   root.innerHTML = `
     <div class="page-header">
@@ -25,6 +27,9 @@ export async function renderOrdenesView() {
       </div>
       <div class="actions">
         <div id="ordenes-view-switch"></div>
+        <button type="button" id="btn-ord-toggle-hidden" class="btn ${ordenesShowHidden ? 'btn-primary' : ''}">
+          ${ordenesShowHidden ? 'Ocultar canceladas / archivadas' : 'Mostrar canceladas / archivadas'}
+        </button>
         <button type="button" id="btn-export-ordenes" class="btn">Exportar CSV</button>
         <a href="/ordenes/nueva" data-link class="btn btn-primary">+ Nueva Orden</a>
       </div>
@@ -34,6 +39,11 @@ export async function renderOrdenesView() {
     <div class="card" id="ordenes-table-card"></div>
     <div id="op-meta-panel"></div>
   `;
+
+  root.querySelector('#btn-ord-toggle-hidden').addEventListener('click', () => {
+    ordenesShowHidden = !ordenesShowHidden;
+    renderOrdenesView();
+  });
 
   root.querySelector('#btn-export-ordenes').addEventListener('click', () => {
     if (!ordenes.length) { toast('No hay órdenes para exportar', true); return; }
@@ -58,7 +68,7 @@ export async function renderOrdenesView() {
 
   const columns = [
     { label: 'Orden', render: op => `<a href="/ordenes/${op.id}" data-link class="link-primary"><strong>${esc(op.codigo)}</strong></a>` },
-    { label: 'Estado', render: op => `<span class="badge ${op.estado === 'Completada' ? 'badge-ok' : op.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado'}">${esc(op.estado)}</span>` },
+    { label: 'Estado', render: op => renderDocEstadoBadges(op) },
     { label: 'Producto', render: op => `<strong>${esc(op.plantilla_nombre)}</strong>` },
     { label: 'Receta', render: op => esc(op.receta_nombre || 'Activa') },
     { label: 'Progreso Etapas', render: op => `<span class="badge badge-muted">${op.etapas_completadas} / ${op.etapas_total}</span>` },
@@ -191,13 +201,44 @@ export async function renderOrdenesView() {
         exportFilename: `ordenes_produccion_${new Date().toISOString().slice(0, 10)}.csv`,
         bulkActions: [
           {
-            id: 'eliminar',
-            label: 'Eliminar seleccionadas',
-            variant: 'danger',
-            confirm: (sel) => `¿Eliminar ${sel.length} orden(es) seleccionada(s)?`,
+            id: 'cancelar',
+            label: 'Cancelar seleccionadas',
+            confirm: (sel) => {
+              const n = sel.filter(o => !['Completada', 'Cancelada'].includes(o.estado)).length;
+              return n ? `¿Cancelar ${n} orden(es) seleccionada(s)?` : null;
+            },
             onClick: async (sel) => {
+              const targets = sel.filter(o => !['Completada', 'Cancelada'].includes(o.estado));
+              if (!targets.length) { toast('No hay órdenes cancelables en la selección', true); return; }
               let ok = 0; let errs = 0;
-              for (const o of sel) {
+              for (const o of targets) {
+                try { await api(`/api/ordenes/${o.id}/cancelar`, { method: 'POST' }); ok++; }
+                catch { errs++; }
+              }
+              toast(`${ok} cancelada(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+              await renderOrdenesView();
+            },
+          },
+          ...buildArchivarBulkActions({
+            api,
+            toast,
+            endpointPrefix: '/api/ordenes',
+            showHidden: ordenesShowHidden,
+            onDone: () => renderOrdenesView(),
+          }),
+          {
+            id: 'eliminar',
+            label: 'Eliminar Planificadas',
+            variant: 'danger',
+            confirm: (sel) => {
+              const n = sel.filter(o => o.estado === 'Planificada').length;
+              return n ? `¿Eliminar ${n} orden(es) Planificada(s)?` : null;
+            },
+            onClick: async (sel) => {
+              const targets = sel.filter(o => o.estado === 'Planificada');
+              if (!targets.length) { toast('Solo se pueden eliminar órdenes Planificadas', true); return; }
+              let ok = 0; let errs = 0;
+              for (const o of targets) {
                 try { await api(`/api/ordenes/${o.id}`, { method: 'DELETE' }); ok++; }
                 catch { errs++; }
               }

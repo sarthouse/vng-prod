@@ -271,6 +271,13 @@ export async function handleInventarioRoutes(req, res, pathname, user) {
     } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
+  const opArchMatch = pathname.match(/^\/api\/operaciones-stock\/(\d+)\/archivar$/);
+  if (opArchMatch && req.method === 'POST') {
+    const b = await parseBody(req).catch(() => ({}));
+    if (!opStockSvc.archivarOperacionStock(Number(opArchMatch[1]), b.archivado !== false, user)) json(res, 404, { error: 'Operación no encontrada' });
+    else json(res, 200, { ok: true });
+    return true;
+  }
   const opAnulMatch = pathname.match(/^\/api\/operaciones-stock\/(\d+)\/anular$/);
   if (opAnulMatch && req.method === 'POST') {
     try {

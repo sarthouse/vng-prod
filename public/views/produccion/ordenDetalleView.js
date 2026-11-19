@@ -2,7 +2,10 @@ import { api, toast } from '../../lib/api.js';
 import { esc, fmtNum, fmtMoney, badgeForTipo } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { openPdfFromEndpoint } from '../../lib/print/index.js';
-import { mountDetailView, createModal, renderGanttChart } from '../../lib/engine/index.js';
+import { mountDetailView, createModal, renderGanttChart, showConfirmModal, renderSpreadsheetTable } from '../../lib/engine/index.js';
+
+const PLAY_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+const CHECK_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
 export async function renderOrdenDetalleView({ id }) {
   const root = document.getElementById('app-view');
@@ -65,82 +68,7 @@ export async function renderOrdenDetalleView({ id }) {
   const etapasHtml = `
     <div class="card">
       <div class="card-header"><h2>Etapas de Producción</h2></div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Etapa</th>
-              <th>Taller Asignado</th>
-              <th>Fechas Est.</th>
-              <th>Avance / Merma</th>
-              <th class="num">Costo Proceso</th>
-              <th>Estado</th>
-              <th>Stock</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${etapas.map(e => {
-              const bloqueada = Boolean(e.depende_de_orden_etapa_id && e.depende_de_estado !== 'Completada');
-              const obj = Number(e.cantidad_objetivo || orden.cantidad || 0);
-              const prod = Number(e.cantidad_producida || 0);
-              const merma = Number(e.cantidad_merma || 0);
-              return `
-              <tr>
-                <td>
-                  <strong>${e.orden_num}. ${esc(e.nombre)}</strong>
-                  ${e.descripcion ? `<div class="muted text-2xs">${esc(e.descripcion)}</div>` : ''}
-                  ${e.depende_de_nombre ? `<div class="muted text-2xs">Depende de: ${esc(e.depende_de_nombre)}</div>` : ''}
-                </td>
-                <td>
-                  <select class="etapa-taller input-sm" data-etapa-id="${e.id}">
-                    <option value="">-- Sin taller --</option>
-                    ${talleres.map(t => `<option value="${t.id}" ${String(t.id) === String(e.taller_id || '') ? 'selected' : ''}>${esc(t.nombre)}</option>`).join('')}
-                  </select>
-                  <select class="etapa-cta input-sm sx-a18ac8" data-etapa-id="${e.id}">
-                    <option value="">-- Cuenta por defecto --</option>
-                    ${cuentasEgreso.map(c => `<option value="${c.id}" ${String(c.id) === String(e.plan_cuenta_id || '') ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('')}
-                  </select>
-                  ${e.compra_id ? `<div class="sx-a18ac8"><a href="/compras/${e.compra_id}" data-link class="badge badge-ok">Compra ${esc(e.compra_numero || '#' + e.compra_id)}</a></div>` : ''}
-                </td>
-                <td>
-                  <div class="sx-fb7434">
-                    <input type="date" class="etapa-ini input-sm" data-etapa-id="${e.id}" value="${esc(e.fecha_inicio_est || '')}" title="Inicio estimado" />
-                    <input type="date" class="etapa-fin input-sm" data-etapa-id="${e.id}" value="${esc(e.fecha_fin_est || '')}" title="Fin estimado" />
-                  </div>
-                </td>
-                <td>
-                  <div class="sx-21d0a1">
-                    <input type="number" min="0" step="1" class="etapa-prod input-sm sx-08ea68" data-etapa-id="${e.id}" value="${prod}" title="Unidades producidas" />
-                    <span>/ ${obj}</span>
-                  </div>
-                  <div class="sx-b52730">
-                    <span class="muted">Merma:</span>
-                    <input type="number" min="0" step="1" class="etapa-merma input-sm sx-15f78b" data-etapa-id="${e.id}" value="${merma}" title="Unidades con falla / merma" />
-                  </div>
-                </td>
-                <td class="num">
-                  <div class="muted text-2xs">Est: ${fmtMoney(e.costo_estimado || 0)}</div>
-                  <input type="number" min="0" step="0.01" class="etapa-costo-real input-sm sx-7ccd26" data-etapa-id="${e.id}" value="${Number(e.costo_real ?? e.costo_estimado ?? 0)}" title="Costo real de la etapa" />
-                </td>
-                <td>
-                  ${bloqueada
-                    ? `<span class="badge badge-muted" title="Esperando ${esc(e.depende_de_nombre)}">Bloqueada</span>`
-                    : `<span class="badge ${e.estado === 'Completada' ? 'badge-ok' : e.estado === 'En Proceso' ? 'badge-warn' : 'badge-muted'}">${esc(e.estado)}</span>`}
-                </td>
-                <td>${e.stock_consumido ? '<span class="badge badge-ok">Descontado</span>' : '<span class="muted">Pendiente</span>'}</td>
-                <td>
-                  <div class="actions">
-                    <button type="button" class="btn btn-sm btn-save-etapa" data-etapa-id="${e.id}">Guardar</button>
-                    ${e.estado === 'Pendiente' ? `<button type="button" class="btn btn-sm btn-estado-etapa" data-etapa-id="${e.id}" data-estado="En Proceso" ${bloqueada ? 'disabled' : ''}>Iniciar</button>` : ''}
-                    ${e.estado !== 'Completada' ? `<button type="button" class="btn btn-sm btn-primary btn-estado-etapa" data-etapa-id="${e.id}" data-estado="Completada" ${bloqueada ? 'disabled' : ''}>Completar</button>` : ''}
-                  </div>
-                </td>
-              </tr>
-            `; }).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div id="orden-etapas-sheet"></div>
     </div>
     <div class="card sx-553a64">
       <div class="card-header">
@@ -239,7 +167,7 @@ export async function renderOrdenDetalleView({ id }) {
     subtitle: `Receta: ${esc(orden.receta_nombre || 'Activa')} · Inicio: ${esc(orden.fecha_inicio)} · Objetivo: ${esc(orden.fecha_objetivo || '-')}`,
     badge: {
       text: orden.estado,
-      className: orden.estado === 'Completada' ? 'badge-ok' : orden.estado === 'En Proceso' ? 'badge-warn' : 'badge-confirmado',
+      className: orden.estado === 'Completada' ? 'badge-ok' : orden.estado === 'En Proceso' ? 'badge-warn' : orden.estado === 'Cancelada' ? 'badge-cancelado' : 'badge-confirmado',
     },
     actions: [
       {
@@ -324,6 +252,20 @@ export async function renderOrdenDetalleView({ id }) {
       }] : []),
       { label: '+ Nueva Orden', href: '/ordenes/nueva' },
       { label: '+ Nuevo Traslado', href: '/operaciones-stock/nueva', primary: true },
+      ...(!['Completada', 'Cancelada'].includes(orden.estado) ? [{
+        label: 'Cancelar Orden',
+        className: 'btn btn-danger',
+        onClick: async () => {
+          if (!(await showConfirmModal('¿Cancelar esta orden de producción? Se revertirán los movimientos de stock asociados si existieran.'))) return;
+          try {
+            await api(`/api/ordenes/${orden.id}/cancelar`, { method: 'POST' });
+            toast('Orden cancelada');
+            await renderOrdenDetalleView({ id });
+          } catch (err) {
+            toast(err.message, true);
+          }
+        },
+      }] : []),
     ],
     steps: [
       { key: 'Planificada', label: 'Planificada' },
@@ -379,40 +321,131 @@ export async function renderOrdenDetalleView({ id }) {
         });
       }
 
-      const readEtapaPayload = (eid) => ({
-        taller_id: container.querySelector(`.etapa-taller[data-etapa-id="${eid}"]`)?.value || null,
-        plan_cuenta_id: container.querySelector(`.etapa-cta[data-etapa-id="${eid}"]`)?.value || null,
-        fecha_inicio_est: container.querySelector(`.etapa-ini[data-etapa-id="${eid}"]`)?.value || null,
-        fecha_fin_est: container.querySelector(`.etapa-fin[data-etapa-id="${eid}"]`)?.value || null,
-        cantidad_producida: Number(container.querySelector(`.etapa-prod[data-etapa-id="${eid}"]`)?.value) || 0,
-        cantidad_merma: Number(container.querySelector(`.etapa-merma[data-etapa-id="${eid}"]`)?.value) || 0,
-        costo_real: Number(container.querySelector(`.etapa-costo-real[data-etapa-id="${eid}"]`)?.value) || 0,
+      const buildEtapaPayload = (e) => ({
+        taller_id: e.taller_id || null,
+        plan_cuenta_id: e.plan_cuenta_id || null,
+        fecha_inicio_est: e.fecha_inicio_est || null,
+        fecha_fin_est: e.fecha_fin_est || null,
+        cantidad_producida: Number(e.cantidad_producida) || 0,
+        cantidad_merma: Number(e.cantidad_merma) || 0,
+        costo_real: Number(e.costo_real ?? e.costo_estimado ?? 0),
       });
 
-      container.querySelectorAll('.btn-save-etapa').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const eid = btn.dataset.etapaId;
+      renderSpreadsheetTable(container.querySelector('#orden-etapas-sheet'), {
+        rows: etapas,
+        emptyText: 'Sin etapas configuradas.',
+        compact: true,
+        pasteEnabled: false,
+        columns: [
+          {
+            key: 'nombre',
+            label: 'Etapa',
+            type: 'readonly',
+            render: (e) => `
+              <strong>${e.orden_num}. ${esc(e.nombre)}</strong>
+              ${e.depende_de_nombre ? `<div class="muted text-2xs">Depende de: ${esc(e.depende_de_nombre)}</div>` : ''}
+            `,
+          },
+          {
+            key: 'taller_id',
+            label: 'Taller',
+            type: 'select',
+            options: [{ value: '', label: '-- Sin taller --' }, ...talleres.map(t => ({ value: String(t.id), label: t.nombre }))],
+            getValue: (e) => (e.taller_id ? String(e.taller_id) : ''),
+            parse: (v) => (v ? Number(v) : null),
+          },
+          {
+            key: 'plan_cuenta_id',
+            label: 'Cuenta Contable',
+            type: 'select',
+            options: [{ value: '', label: '-- Cuenta por defecto --' }, ...cuentasEgreso.map(c => ({ value: String(c.id), label: `${c.codigo} · ${c.nombre}` }))],
+            getValue: (e) => (e.plan_cuenta_id ? String(e.plan_cuenta_id) : ''),
+            parse: (v) => (v ? Number(v) : null),
+          },
+          { key: 'fecha_inicio_est', label: 'Inicio Est.', type: 'date', nowrap: true },
+          { key: 'fecha_fin_est', label: 'Fin Est.', type: 'date', nowrap: true },
+          {
+            key: 'cantidad_producida',
+            label: 'Avance',
+            type: 'number',
+            min: 0,
+            step: 1,
+            align: 'right',
+            nowrap: true,
+            parse: (v) => Math.max(0, Number(v) || 0),
+            render: (e) => `${fmtNum(e.cantidad_producida || 0)} / ${fmtNum(e.cantidad_objetivo || orden.cantidad || 0)}`,
+          },
+          {
+            key: 'cantidad_merma',
+            label: 'Merma',
+            type: 'number',
+            min: 0,
+            step: 1,
+            align: 'right',
+            nowrap: true,
+            parse: (v) => Math.max(0, Number(v) || 0),
+          },
+          {
+            key: 'costo_real',
+            label: 'Costo Real',
+            type: 'number',
+            min: 0,
+            step: 0.01,
+            align: 'right',
+            nowrap: true,
+            getValue: (e) => Number(e.costo_real ?? e.costo_estimado ?? 0),
+            parse: (v) => Math.max(0, Number(v) || 0),
+            render: (e) => fmtMoney(e.costo_real ?? e.costo_estimado ?? 0),
+          },
+          {
+            key: 'estado',
+            label: 'Estado',
+            type: 'readonly',
+            render: (e) => {
+              const bloqueada = Boolean(e.depende_de_orden_etapa_id && e.depende_de_estado !== 'Completada');
+              return bloqueada
+                ? `<span class="badge badge-muted" title="Esperando ${esc(e.depende_de_nombre)}">Bloqueada</span>`
+                : `<span class="badge ${e.estado === 'Completada' ? 'badge-ok' : e.estado === 'En Proceso' ? 'badge-warn' : 'badge-muted'}">${esc(e.estado)}</span>`;
+            },
+          },
+          {
+            key: 'stock_consumido',
+            label: 'Stock',
+            type: 'readonly',
+            render: (e) => e.stock_consumido ? '<span class="badge badge-ok">Descontado</span>' : '<span class="muted">Pendiente</span>',
+          },
+        ],
+        extraActions: (e) => {
+          const bloqueada = Boolean(e.depende_de_orden_etapa_id && e.depende_de_estado !== 'Completada');
+          return `
+            ${e.compra_id ? `<a href="/compras/${e.compra_id}" data-link class="badge badge-ok" title="Compra ${esc(e.compra_numero || '#' + e.compra_id)}">${esc(e.compra_numero || '#' + e.compra_id)}</a>` : ''}
+            ${e.estado === 'Pendiente' ? `<button type="button" class="btn btn-sm btn-estado-etapa" data-etapa-id="${e.id}" data-estado="En Proceso" ${bloqueada ? 'disabled' : ''} title="Iniciar etapa" aria-label="Iniciar etapa">${PLAY_ICON_SVG}</button>` : ''}
+            ${e.estado !== 'Completada' ? `<button type="button" class="btn btn-sm btn-primary btn-estado-etapa" data-etapa-id="${e.id}" data-estado="Completada" ${bloqueada ? 'disabled' : ''} title="Completar etapa" aria-label="Completar etapa">${CHECK_ICON_SVG}</button>` : ''}
+          `;
+        },
+        onCellChange: async ({ row }) => {
           try {
-            await api(`/api/orden-etapas/${eid}`, {
+            await api(`/api/orden-etapas/${row.id}`, {
               method: 'PUT',
-              body: JSON.stringify(readEtapaPayload(eid)),
+              body: JSON.stringify(buildEtapaPayload(row)),
             });
             toast('Etapa actualizada');
-            await renderOrdenDetalleView({ id });
           } catch (err) {
             toast(err.message, true);
+            throw err;
           }
-        });
+        },
       });
 
       container.querySelectorAll('.btn-estado-etapa').forEach(btn => {
         btn.addEventListener('click', async () => {
           const eid = btn.dataset.etapaId;
           const estado = btn.dataset.estado;
+          const etapaRow = etapas.find(x => String(x.id) === String(eid));
           try {
             await api(`/api/orden-etapas/${eid}`, {
               method: 'PUT',
-              body: JSON.stringify({ ...readEtapaPayload(eid), estado }),
+              body: JSON.stringify({ ...buildEtapaPayload(etapaRow || {}), estado }),
             });
             toast(estado === 'Completada' ? 'Etapa completada y stock actualizado' : 'Etapa iniciada');
             await renderOrdenDetalleView({ id });

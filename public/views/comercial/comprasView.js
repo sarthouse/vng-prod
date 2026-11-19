@@ -1,5 +1,5 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, bindCuentaMetodoSync, exportRowsToCSV } from '../../lib/format.js';
+import { esc, fmtMoney, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, bindCuentaMetodoSync, exportRowsToCSV, isDocHidden, renderDocEstadoBadges, buildArchivarBulkActions } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { printRemito } from '../../lib/print/index.js';
 import { printOrdenPago } from '../../lib/print/index.js';
@@ -32,6 +32,8 @@ async function imprimirRemitoCompra(compraId, empresa) {
   });
 }
 
+let cmpShowHidden = false;
+
 export async function renderComprasView() {
   const root = document.getElementById('app-view');
   const [compras, empresa] = await Promise.all([
@@ -46,6 +48,7 @@ export async function renderComprasView() {
   const getFilteredCompras = () => {
     const q = search.trim().toLowerCase();
     return compras.filter(c => {
+      if (!cmpShowHidden && isDocHidden(c)) return false;
       if (filterEstado && c.estado !== filterEstado) return false;
       if (filterClase && (c.clase_documento || 'factura') !== filterClase) return false;
       if (q) {
@@ -63,6 +66,9 @@ export async function renderComprasView() {
         <p class="muted">Registro de compras a proveedores.</p>
       </div>
       <div class="actions">
+        <button type="button" id="btn-cmp-toggle-hidden" class="btn ${cmpShowHidden ? 'btn-primary' : ''}">
+          ${cmpShowHidden ? 'Ocultar anuladas / archivadas' : 'Mostrar anuladas / archivadas'}
+        </button>
         <button type="button" id="btn-export-compras" class="btn">Exportar CSV</button>
         <a href="/compras/nueva" data-link class="btn btn-primary">+ Nueva Compra</a>
       </div>
@@ -76,7 +82,12 @@ export async function renderComprasView() {
     </div>
   `;
 
-  const cmpConf = compras.filter(c => c.estado !== 'Borrador');
+  root.querySelector('#btn-cmp-toggle-hidden').addEventListener('click', () => {
+    cmpShowHidden = !cmpShowHidden;
+    renderComprasView();
+  });
+
+  const cmpConf = compras.filter(c => c.estado !== 'Borrador' && c.estado !== 'Anulada');
   const cmpBorr = compras.filter(c => c.estado === 'Borrador').length;
   const cmpTotal = cmpConf.reduce((s, c) => s + (c.clase_documento === 'nota_credito' ? -Number(c.total || 0) : Number(c.total || 0)), 0);
   const cmpPagado = compras.reduce((s, c) => s + Number(c.pagado || 0), 0);
@@ -95,17 +106,48 @@ export async function renderComprasView() {
       exportFilename: `compras_${new Date().toISOString().slice(0, 10)}.csv`,
       bulkActions: [
         {
-          id: 'eliminar',
-          label: 'Eliminar seleccionadas',
-          variant: 'danger',
-          confirm: (sel) => `¿Eliminar ${sel.length} compra(s) seleccionada(s)?`,
+          id: 'anular',
+          label: 'Anular Confirmadas',
+          confirm: (sel) => {
+            const n = sel.filter(c => c.estado === 'Confirmado').length;
+            return n ? `¿Anular ${n} compra(s) confirmada(s) y revertir su asiento/stock?` : null;
+          },
           onClick: async (sel) => {
+            const targets = sel.filter(c => c.estado === 'Confirmado');
+            if (!targets.length) { toast('No hay compras confirmadas en la selección', true); return; }
             let ok = 0; let errs = 0;
-            for (const c of sel) {
+            for (const c of targets) {
+              try { await api(`/api/compras/${c.id}/anular`, { method: 'POST' }); ok++; }
+              catch { errs++; }
+            }
+            toast(`${ok} anulada(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+            await renderComprasView();
+          },
+        },
+        ...buildArchivarBulkActions({
+          api,
+          toast,
+          endpointPrefix: '/api/compras',
+          showHidden: cmpShowHidden,
+          onDone: () => renderComprasView(),
+        }),
+        {
+          id: 'eliminar',
+          label: 'Eliminar Borradores',
+          variant: 'danger',
+          confirm: (sel) => {
+            const n = sel.filter(c => c.estado === 'Borrador').length;
+            return n ? `¿Eliminar ${n} compra(s) en Borrador?` : null;
+          },
+          onClick: async (sel) => {
+            const targets = sel.filter(c => c.estado === 'Borrador');
+            if (!targets.length) { toast('Solo se pueden eliminar compras en Borrador', true); return; }
+            let ok = 0; let errs = 0;
+            for (const c of targets) {
               try { await api(`/api/compras/${c.id}`, { method: 'DELETE' }); ok++; }
               catch { errs++; }
             }
-            toast(`${ok} compra(s) eliminada(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+            toast(`${ok} borrador(es) eliminado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
             await renderComprasView();
           },
         },
@@ -116,7 +158,7 @@ export async function renderComprasView() {
           label: 'Número',
           render: c => `<a href="/compras/${c.id}" data-link class="link-primary"><strong>${esc(c.numero || '#' + c.id)}</strong></a>${c.clase_documento === 'nota_credito' ? ' <span class="badge badge-parcial">NC</span>' : c.clase_documento === 'nota_debito' ? ' <span class="badge badge-muted">ND</span>' : ''}`,
         },
-        { label: 'Estado', render: c => badgeForEstado(c.estado) },
+        { label: 'Estado', render: c => renderDocEstadoBadges(c) },
         {
           label: 'AFIP',
           render: c => c.caracter === 'interno'
@@ -132,11 +174,12 @@ export async function renderComprasView() {
           render: c => `
             <div class="actions">
               ${c.estado === 'Borrador' ? `<button type="button" class="btn btn-sm btn-primary" data-conf-cmp="${c.id}" data-caracter="${esc(c.caracter || 'fiscal')}">Confirmar</button>` : ''}
+              ${c.estado === 'Confirmado' ? `<button type="button" class="btn btn-sm" data-anul-cmp="${c.id}">Anular</button>` : ''}
               ${c.caracter === 'fiscal' && c.cae && !c.afip_constatado ? `<button type="button" class="btn btn-sm" data-constatar-cmp="${c.id}">Constatar AFIP</button>` : ''}
               ${c.afip_constatado ? `<button type="button" class="btn btn-sm" data-xml-cmp="${c.id}">XML AFIP</button>` : ''}
               <a href="/compras/${c.id}" data-link class="btn btn-sm">Abrir</a>
               <button type="button" class="btn btn-sm" data-print-cmp="${c.id}">Remito</button>
-              <button type="button" class="btn btn-sm btn-danger" data-del-cmp="${c.id}">Eliminar</button>
+              ${c.estado === 'Borrador' ? `<button type="button" class="btn btn-sm btn-danger" data-del-cmp="${c.id}">Eliminar</button>` : ''}
             </div>
           `,
         },
@@ -181,6 +224,15 @@ export async function renderComprasView() {
       try { await imprimirRemitoCompra(btn.dataset.printCmp, empresa); }
       catch (err) { toast(err.message, true); }
     }));
+    root.querySelectorAll('[data-anul-cmp]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!(await showConfirmModal('¿Anular esta compra? Se revertirán su asiento y operaciones de stock asociadas.'))) return;
+      try {
+        await api(`/api/compras/${btn.dataset.anulCmp}/anular`, { method: 'POST' });
+        toast('Compra anulada');
+        await renderComprasView();
+      } catch (err) { toast(err.message, true); }
+    }));
+
     root.querySelectorAll('[data-del-cmp]').forEach(btn => btn.addEventListener('click', async () => {
       if (!(await showConfirmModal('¿Eliminar esta compra?'))) return;
       await api(`/api/compras/${btn.dataset.delCmp}`, { method: 'DELETE' });
@@ -345,6 +397,7 @@ export async function renderCompraFormView({ id } = {}) {
         ${isEdit && c ? `
           <div class="actions">
             ${c.estado === 'Borrador' ? `<button type="button" class="btn btn-primary" id="btn-cmp-confirmar">Confirmar Compra</button>` : ''}
+            ${c.estado === 'Confirmado' ? `<button type="button" class="btn btn-danger" id="btn-cmp-anular">Anular Compra</button>` : ''}
             ${c.caracter === 'fiscal' && c.cae && !c.afip_constatado ? `<button type="button" class="btn" id="btn-cmp-constatar-doc">Constatar AFIP</button>` : ''}
             ${c.afip_constatado ? `<button type="button" class="btn" id="btn-cmp-xml">XML AFIP</button>` : ''}
             <button type="button" class="btn" id="btn-cmp-remito">Imprimir Remito</button>
@@ -410,6 +463,7 @@ export async function renderCompraFormView({ id } = {}) {
             <select name="estado" id="cmp-estado" ${editable ? '' : 'disabled'}>
               <option value="Borrador" ${(!isEdit || c?.estado === 'Borrador') ? 'selected' : ''}>Borrador</option>
               <option value="Confirmado" ${(isEdit && c?.estado === 'Confirmado') ? 'selected' : ''}>Confirmado</option>
+              ${(isEdit && c?.estado === 'Anulada') ? '<option value="Anulada" selected>Anulada</option>' : ''}
             </select>
           </label>
           <label>
@@ -589,6 +643,15 @@ export async function renderCompraFormView({ id } = {}) {
           btn.disabled = false;
           btn.textContent = 'Constatar AFIP';
         }
+      });
+
+      root.querySelector('#btn-cmp-anular')?.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular esta compra? Se revertirán su asiento y operaciones de stock asociadas.'))) return;
+        try {
+          await api(`/api/compras/${c.id}/anular`, { method: 'POST' });
+          toast('Compra anulada');
+          await renderCompraFormView({ id });
+        } catch (err) { toast(err.message, true); }
       });
 
       root.querySelector('#btn-cmp-confirmar')?.addEventListener('click', async () => {

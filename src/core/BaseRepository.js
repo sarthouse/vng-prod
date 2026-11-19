@@ -115,6 +115,10 @@ export class BaseRepository {
     return info.changes > 0;
   }
 
+  setArchivado(id, archivado = true, actor = null) {
+    return this.update(id, { archivado: archivado ? 1 : 0 }, actor);
+  }
+
   transaction(fn) {
     if (this.db.isTransaction) {
       const sp = `sp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;

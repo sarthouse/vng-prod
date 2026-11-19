@@ -15,6 +15,7 @@ export function renderSpreadsheetTable(container, opts = {}) {
     getRowId = (r, i) => r?.id ?? i,
     onCellChange = null,
     onDeleteRow = null,
+    canDeleteRow = null,
     onAddRow = null,
     addRowLabel = '+ Agregar línea',
     defaultNewRow = null,
@@ -27,15 +28,42 @@ export function renderSpreadsheetTable(container, opts = {}) {
     pasteEnabled = true,
     showDirty = true,
     className = '',
+    groupBy = null,
+    renderGroupRow = null,
+    defaultCollapsed = false,
   } = opts;
   if (!container) return;
 
+  const collapsedGroups = container.__veSheetCollapsed || new Set();
+  container.__veSheetCollapsed = collapsedGroups;
+
+  let groupedEntries = null;
+  let visibleRows = rows;
+  if (groupBy) {
+    const getGroupKey = typeof groupBy === 'function' ? groupBy : (r) => String(r?.[groupBy] ?? '');
+    const map = new Map();
+    for (const r of rows) {
+      const k = getGroupKey(r);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    }
+    groupedEntries = Array.from(map.entries());
+    if (defaultCollapsed && !container.__veSheetCollapsedInit) {
+      for (const [k] of groupedEntries) collapsedGroups.add(k);
+      container.__veSheetCollapsedInit = true;
+    }
+    visibleRows = [];
+    for (const [k, gRows] of groupedEntries) {
+      if (!collapsedGroups.has(k)) visibleRows.push(...gRows);
+    }
+  }
+
   const hasBlankAppend = typeof defaultNewRow === 'function';
   const displayRows = hasBlankAppend
-    ? [...rows, { ...defaultNewRow(), __isNew: true }]
-    : rows;
+    ? [...visibleRows, { ...defaultNewRow(), __isNew: true }]
+    : visibleRows;
 
-  if (!displayRows.length && !footerHtml && !onAddRow) {
+  if (!rows.length && !hasBlankAppend && !footerHtml && !onAddRow) {
     container.innerHTML = `<div class="empty-state">${esc(emptyText)}</div>`;
     return;
   }
@@ -75,6 +103,56 @@ export function renderSpreadsheetTable(container, opts = {}) {
 
   const hasActionsCol = Boolean(onDeleteRow || extraActions);
 
+  const renderDataRow = (r, rIdx) => {
+    const rid = r.__isNew ? '__new__' : String(getRowId(r, rIdx));
+    return `
+      <tr data-sheet-row="${rIdx}" data-row-id="${esc(rid)}" ${r.__isNew ? 'class="ve-sheet-new-row"' : ''}>
+        ${columns.map((c, cIdx) => {
+          const editable = isColEditable(c, r);
+          const cls = [
+            've-sheet-cell',
+            editable ? 'is-editable' : 'is-readonly',
+            c.align === 'right' ? 'num' : c.align === 'center' ? 'text-center' : '',
+            c.nowrap ? 'nowrap' : '',
+          ].filter(Boolean).join(' ');
+          return `<td class="${cls}" ${editable ? 'tabindex="0"' : ''} data-r="${rIdx}" data-c="${cIdx}">${renderCellDisplay(r, c, rIdx)}</td>`;
+        }).join('')}
+        ${hasActionsCol ? `
+          <td class="actions nowrap">
+            <div class="actions">
+              ${!r.__isNew && typeof extraActions === 'function' ? extraActions(r, rIdx) : ''}
+              ${!r.__isNew && onDeleteRow && (typeof canDeleteRow !== 'function' || canDeleteRow(r, rIdx)) ? `<button type="button" class="btn btn-sm btn-danger" data-sheet-del="${rIdx}" title="Eliminar fila" aria-label="Eliminar fila">${TRASH_ICON_SVG}</button>` : ''}
+            </div>
+          </td>
+        ` : ''}
+      </tr>
+    `;
+  };
+
+  let tbodyHtml = '';
+  if (groupedEntries) {
+    let cursor = 0;
+    for (const [gKey, gRows] of groupedEntries) {
+      const isCollapsed = collapsedGroups.has(gKey);
+      const caretHtml = `<span class="ve-matrix-caret" style="display:inline-block;width:14px;">${isCollapsed ? '▸' : '▾'}</span>`;
+      if (typeof renderGroupRow === 'function') {
+        tbodyHtml += `<tr class="ve-sheet-group-row" data-sheet-group="${esc(gKey)}" style="cursor:pointer;background:var(--color-surface-alt, rgba(0,0,0,0.02));">${renderGroupRow(gKey, gRows, isCollapsed, caretHtml)}</tr>`;
+      } else {
+        tbodyHtml += `<tr class="ve-sheet-group-row" data-sheet-group="${esc(gKey)}" style="cursor:pointer;background:var(--color-surface-alt, rgba(0,0,0,0.02));"><td colspan="${columns.length + (hasActionsCol ? 1 : 0)}">${caretHtml} <strong>${esc(gKey)}</strong> <span class="badge badge-muted">${gRows.length}</span></td></tr>`;
+      }
+      if (!isCollapsed) {
+        for (const r of gRows) {
+          tbodyHtml += renderDataRow(r, cursor++);
+        }
+      }
+    }
+    if (hasBlankAppend) {
+      tbodyHtml += renderDataRow(displayRows[cursor], cursor);
+    }
+  } else {
+    tbodyHtml = displayRows.map((r, rIdx) => renderDataRow(r, rIdx)).join('');
+  }
+
   container.innerHTML = `
     <div class="table-wrap">
       <table class="data-table ve-sheet-table ${compact ? 've-table-compact' : ''} ${esc(className)} no-bulk">
@@ -85,31 +163,7 @@ export function renderSpreadsheetTable(container, opts = {}) {
           </tr>
         </thead>
         <tbody>
-          ${displayRows.map((r, rIdx) => {
-            const rid = r.__isNew ? '__new__' : String(getRowId(r, rIdx));
-            return `
-              <tr data-sheet-row="${rIdx}" data-row-id="${esc(rid)}" ${r.__isNew ? 'class="ve-sheet-new-row"' : ''}>
-                ${columns.map((c, cIdx) => {
-                  const editable = isColEditable(c, r);
-                  const cls = [
-                    've-sheet-cell',
-                    editable ? 'is-editable' : 'is-readonly',
-                    c.align === 'right' ? 'num' : c.align === 'center' ? 'text-center' : '',
-                    c.nowrap ? 'nowrap' : '',
-                  ].filter(Boolean).join(' ');
-                  return `<td class="${cls}" ${editable ? 'tabindex="0"' : ''} data-r="${rIdx}" data-c="${cIdx}">${renderCellDisplay(r, c, rIdx)}</td>`;
-                }).join('')}
-                ${hasActionsCol ? `
-                  <td class="actions nowrap">
-                    <div class="actions">
-                      ${!r.__isNew && typeof extraActions === 'function' ? extraActions(r, rIdx) : ''}
-                      ${!r.__isNew && onDeleteRow ? `<button type="button" class="btn btn-sm btn-danger" data-sheet-del="${rIdx}" title="Eliminar fila" aria-label="Eliminar fila">${TRASH_ICON_SVG}</button>` : ''}
-                    </div>
-                  </td>
-                ` : ''}
-              </tr>
-            `;
-          }).join('')}
+          ${tbodyHtml}
           ${footerHtml || ''}
         </tbody>
         ${tfootHtml ? `<tfoot${tfootId ? ` id="${esc(tfootId)}"` : ''}>${tfootHtml}</tfoot>` : ''}
@@ -120,6 +174,18 @@ export function renderSpreadsheetTable(container, opts = {}) {
 
   const table = container.querySelector('.ve-sheet-table');
   if (!table) return;
+
+  if (groupedEntries) {
+    table.querySelectorAll('[data-sheet-group]').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('a, button, input, select')) return;
+        const gKey = tr.dataset.sheetGroup;
+        if (collapsedGroups.has(gKey)) collapsedGroups.delete(gKey);
+        else collapsedGroups.add(gKey);
+        renderSpreadsheetTable(container, opts);
+      });
+    });
+  }
 
   const getCellEl = (r, c) => table.querySelector(`td[data-r="${r}"][data-c="${c}"]`);
 
@@ -305,7 +371,7 @@ export function renderSpreadsheetTable(container, opts = {}) {
 
     const editor = document.createElement('input');
     editor.className = 've-sheet-input';
-    editor.type = col.type === 'number' ? 'number' : 'text';
+    editor.type = col.type === 'number' ? 'number' : (col.type === 'date' ? 'date' : 'text');
     if (col.type === 'number') {
       if (col.step !== undefined) editor.step = String(col.step);
       if (col.min !== undefined) editor.min = String(col.min);

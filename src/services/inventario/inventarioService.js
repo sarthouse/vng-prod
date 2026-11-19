@@ -470,7 +470,7 @@ export function computeStockReservadoPorOrdenes() {
 
 export function getInventarioResumen() {
   const productos = vProductoRepo.query('p')
-    .select("p.*, pt.tipo, pt.categoria, pt.udm, pt.alicuota_iva, pt.se_compra, pt.se_fabrica, COALESCE(pt.lead_time_dias, 0) as lead_time_dias, pt.proveedor_id, COALESCE(c.nombre, '') as proveedor_nombre")
+    .select("p.*, pt.nombre as plantilla_nombre, pt.tipo, pt.categoria, pt.udm, pt.alicuota_iva, pt.se_compra, pt.se_fabrica, COALESCE(pt.lead_time_dias, 0) as lead_time_dias, pt.proveedor_id, COALESCE(c.nombre, '') as proveedor_nombre")
     .innerJoin('v_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
     .leftJoin('contactos', 'c', 'c.id', 'pt.proveedor_id')
     .where('p.activo', 1)

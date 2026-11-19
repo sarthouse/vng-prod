@@ -1,5 +1,5 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtMoney, fmtDate, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, getMetodosForCuenta } from '../../lib/format.js';
+import { esc, fmtMoney, fmtDate, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, getMetodosForCuenta, filterVisibleDocs, renderDocEstadoBadges, buildArchivarBulkActions } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { printOrdenPago, printReciboCobro } from '../../lib/print/index.js';
 import { navigate } from '../../router.js';
@@ -465,15 +465,24 @@ function mountMediosLines(container, cuentas, initialLines, { mode = 'cobro', ch
   }).filter(l => l.monto > 0);
 }
 
+let pagosShowHidden = false;
+let cobrosShowHidden = false;
+
 export async function renderPagosView() {
   const root = document.getElementById('app-view');
-  const pagos = await api('/api/tesoreria/pagos');
+  const pagosAll = await api('/api/tesoreria/pagos');
+  const pagos = filterVisibleDocs(pagosAll, pagosShowHidden);
 
   mountPageView(root, {
     breadcrumb: { label: 'Tesorería', href: '/tesoreria' },
     title: 'Órdenes de Pago',
     subtitle: 'Historial de pagos a proveedores, talleres y gastos operativos.',
     actions: [
+      {
+        label: pagosShowHidden ? 'Ocultar anulados / archivados' : 'Mostrar anulados / archivados',
+        primary: pagosShowHidden,
+        onClick: () => { pagosShowHidden = !pagosShowHidden; renderPagosView(); },
+      },
       { label: '+ Nuevo Pago', href: '/tesoreria/pagos/nuevo', primary: true },
     ],
     bodyHtml: `
@@ -490,24 +499,36 @@ export async function renderPagosView() {
         exportFilename: `pagos_${new Date().toISOString().slice(0, 10)}.csv`,
         bulkActions: [
           {
-            id: 'eliminar',
-            label: 'Eliminar seleccionados',
-            variant: 'danger',
-            confirm: (sel) => `¿Eliminar ${sel.length} pago(s) seleccionado(s)?`,
+            id: 'anular',
+            label: 'Anular seleccionados',
+            confirm: (sel) => {
+              const n = sel.filter(p => (p.estado || 'Confirmado') !== 'Anulado').length;
+              return n ? `¿Anular ${n} pago(s) y revertir sus asientos/imputaciones?` : null;
+            },
             onClick: async (sel) => {
+              const targets = sel.filter(p => (p.estado || 'Confirmado') !== 'Anulado');
+              if (!targets.length) { toast('No hay pagos anulables en la selección', true); return; }
               let ok = 0; let errs = 0;
-              for (const p of sel) {
-                try { await api(`/api/tesoreria/pagos/${p.id}`, { method: 'DELETE' }); ok++; }
+              for (const p of targets) {
+                try { await api(`/api/tesoreria/pagos/${p.id}/anular`, { method: 'POST' }); ok++; }
                 catch { errs++; }
               }
-              toast(`${ok} pago(s) eliminado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+              toast(`${ok} anulado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
               await renderPagosView();
             },
           },
+          ...buildArchivarBulkActions({
+            api,
+            toast,
+            endpointPrefix: '/api/tesoreria/pagos',
+            showHidden: pagosShowHidden,
+            onDone: () => renderPagosView(),
+          }),
         ],
         columns: [
           { label: 'Fecha', render: p => esc(p.fecha) },
           { label: 'Comprobante', render: p => `<strong>${esc(p.numero || '#' + p.id)}</strong>` },
+          { label: 'Estado', render: p => renderDocEstadoBadges(p) },
           { label: 'Cuenta', render: p => esc(p.cuenta_nombre || '-') },
           { label: 'Proveedor / Categoría', render: p => p.proveedor_id ? `<a href="/contactos/${p.proveedor_id}" data-link class="link-primary">${esc(p.proveedor_nombre || '-')}</a>` : esc(p.categoria_gasto || '-') },
           { label: 'Método', render: p => esc(p.metodo) },
@@ -518,6 +539,7 @@ export async function renderPagosView() {
               <div class="actions">
                 <button type="button" class="btn btn-sm" data-print-pago="${p.id}">PDF</button>
                 <button type="button" class="btn btn-sm" data-meta-pago="${p.id}">Notas / Adj.</button>
+                ${(p.estado || 'Confirmado') !== 'Anulado' ? `<button type="button" class="btn btn-sm" data-anul-pago="${p.id}">Anular</button>` : ''}
                 <button type="button" class="btn btn-sm btn-danger" data-del-pago="${p.id}">Eliminar</button>
               </div>
             `,
@@ -543,6 +565,15 @@ export async function renderPagosView() {
           onClose: () => {},
         });
         panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }));
+
+      root.querySelectorAll('[data-anul-pago]').forEach(btn => btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular este pago? Se revertirán su asiento contable e imputaciones y se recalculará el saldo de la cuenta.'))) return;
+        try {
+          await api(`/api/tesoreria/pagos/${btn.dataset.anulPago}/anular`, { method: 'POST' });
+          toast('Pago anulado');
+          await renderPagosView();
+        } catch (err) { toast(err.message, true); }
       }));
 
       root.querySelectorAll('[data-del-pago]').forEach(btn => btn.addEventListener('click', async () => {
@@ -707,13 +738,19 @@ export async function renderPagoFormView() {
 
 export async function renderCobrosView() {
   const root = document.getElementById('app-view');
-  const cobros = await api('/api/tesoreria/cobros');
+  const cobrosAll = await api('/api/tesoreria/cobros');
+  const cobros = filterVisibleDocs(cobrosAll, cobrosShowHidden);
 
   mountPageView(root, {
     breadcrumb: { label: 'Tesorería', href: '/tesoreria' },
     title: 'Recibos de Cobro',
     subtitle: 'Historial de cobros a clientes e ingresos de tesorería.',
     actions: [
+      {
+        label: cobrosShowHidden ? 'Ocultar anulados / archivados' : 'Mostrar anulados / archivados',
+        primary: cobrosShowHidden,
+        onClick: () => { cobrosShowHidden = !cobrosShowHidden; renderCobrosView(); },
+      },
       { label: '+ Nuevo Cobro', href: '/tesoreria/cobros/nuevo', primary: true },
     ],
     bodyHtml: `
@@ -730,24 +767,36 @@ export async function renderCobrosView() {
         exportFilename: `cobros_${new Date().toISOString().slice(0, 10)}.csv`,
         bulkActions: [
           {
-            id: 'eliminar',
-            label: 'Eliminar seleccionados',
-            variant: 'danger',
-            confirm: (sel) => `¿Eliminar ${sel.length} cobro(s) seleccionado(s)?`,
+            id: 'anular',
+            label: 'Anular seleccionados',
+            confirm: (sel) => {
+              const n = sel.filter(c => (c.estado || 'Confirmado') !== 'Anulado').length;
+              return n ? `¿Anular ${n} cobro(s) y revertir sus asientos/imputaciones?` : null;
+            },
             onClick: async (sel) => {
+              const targets = sel.filter(c => (c.estado || 'Confirmado') !== 'Anulado');
+              if (!targets.length) { toast('No hay cobros anulables en la selección', true); return; }
               let ok = 0; let errs = 0;
-              for (const c of sel) {
-                try { await api(`/api/tesoreria/cobros/${c.id}`, { method: 'DELETE' }); ok++; }
+              for (const c of targets) {
+                try { await api(`/api/tesoreria/cobros/${c.id}/anular`, { method: 'POST' }); ok++; }
                 catch { errs++; }
               }
-              toast(`${ok} cobro(s) eliminado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+              toast(`${ok} anulado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
               await renderCobrosView();
             },
           },
+          ...buildArchivarBulkActions({
+            api,
+            toast,
+            endpointPrefix: '/api/tesoreria/cobros',
+            showHidden: cobrosShowHidden,
+            onDone: () => renderCobrosView(),
+          }),
         ],
         columns: [
           { label: 'Fecha', render: c => esc(c.fecha) },
           { label: 'Comprobante', render: c => `<strong>${esc(c.numero || '#' + c.id)}</strong>` },
+          { label: 'Estado', render: c => renderDocEstadoBadges(c) },
           { label: 'Cuenta', render: c => esc(c.cuenta_nombre || '-') },
           { label: 'Cliente / Contraparte', render: c => c.cliente_id ? `<a href="/contactos/${c.cliente_id}" data-link class="link-primary">${esc(c.cliente_nombre || '-')}</a>` : esc(c.proveedor_nombre || '-') },
           { label: 'Método', render: c => esc(c.metodo) },
@@ -758,6 +807,7 @@ export async function renderCobrosView() {
               <div class="actions">
                 <button type="button" class="btn btn-sm" data-print-cobro="${c.id}">PDF</button>
                 <button type="button" class="btn btn-sm" data-meta-cobro="${c.id}">Notas / Adj.</button>
+                ${(c.estado || 'Confirmado') !== 'Anulado' ? `<button type="button" class="btn btn-sm" data-anul-cobro="${c.id}">Anular</button>` : ''}
                 <button type="button" class="btn btn-sm btn-danger" data-del-cobro="${c.id}">Eliminar</button>
               </div>
             `,
@@ -783,6 +833,15 @@ export async function renderCobrosView() {
           onClose: () => {},
         });
         panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }));
+
+      root.querySelectorAll('[data-anul-cobro]').forEach(btn => btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular este cobro? Se revertirán su asiento contable e imputaciones y se recalculará el saldo de la cuenta.'))) return;
+        try {
+          await api(`/api/tesoreria/cobros/${btn.dataset.anulCobro}/anular`, { method: 'POST' });
+          toast('Cobro anulado');
+          await renderCobrosView();
+        } catch (err) { toast(err.message, true); }
       }));
 
       root.querySelectorAll('[data-del-cobro]').forEach(btn => btn.addEventListener('click', async () => {

@@ -9,7 +9,7 @@ class PedidoRepository extends BaseRepository {
     super({
       table: 'pedidos',
       defaultOrder: 'pedido DESC',
-      columns: ['pedido', 'fecha', 'fecha_est', 'estado', 'contacto_id', 'plantilla_id', 'receta_id', 'compl', 'r_num', 'observaciones', 'armado'],
+      columns: ['pedido', 'fecha', 'fecha_est', 'estado', 'contacto_id', 'plantilla_id', 'receta_id', 'compl', 'r_num', 'observaciones', 'armado', 'archivado'],
     });
   }
 }
@@ -27,6 +27,7 @@ class EntregaRepository extends BaseRepository {
 export const pedidoRepo = new PedidoRepository();
 export const entregaRepo = new EntregaRepository();
 
+const ordenRepo = new BaseRepository({ table: 'ordenes_produccion' });
 const pedidoInsumoRepo = new BaseRepository({
   table: 'pedido_insumos',
   columns: [
@@ -223,8 +224,13 @@ export function getPedidoDetalle(id) {
   }
   const entregas = rawEntregas.map(e => ({ ...e, total: totalByEnt.get(e.id) || 0 }));
   const pendiente = computePendientes().find(x => x.id === Number(id)) || null;
+  const ordenes = ordenRepo.query()
+    .select('id, codigo, estado, fecha_inicio, fecha_objetivo')
+    .where('pedido_id', Number(id))
+    .orderBy('id', 'DESC')
+    .all();
 
-  return { pedido, lineas, snapshot, entregas, pendiente };
+  return { pedido, lineas, snapshot, entregas, pendiente, ordenes };
 }
 
 export function createPedido(b) {
@@ -240,7 +246,7 @@ export function createPedido(b) {
       pedido: nextPedido,
       fecha,
       fecha_est: fechaEst,
-      estado: b.estado || 'Confirmado',
+      estado: b.estado || 'Borrador',
       contacto_id: b.contacto_id ? Number(b.contacto_id) : null,
       plantilla_id: plantillaId,
       receta_id: b.receta_id ? Number(b.receta_id) : null,
@@ -275,27 +281,19 @@ export function createPedidosFromCurva({ presupuesto_id, fecha, fecha_est, obser
     byPlantilla.get(r.plantilla_id).lineas.push({ producto_id: r.producto_id, cantidad: r.cantidad });
   }
 
-  const maxRow = pedidoRepo.query().select('pedido').orderBy('pedido', 'DESC').limit(1).get();
-  let nextPedido = (maxRow?.pedido || 0) + 1;
   const created = [];
-
   return pedidoRepo.transaction(() => {
     for (const grp of byPlantilla.values()) {
-      const pedidoId = pedidoRepo.create({
-        pedido: nextPedido,
+      const res = createPedido({
         fecha: f,
         fecha_est: fEst,
-        estado: 'Confirmado',
+        estado: 'Borrador',
         plantilla_id: grp.plantilla_id,
+        lineas: grp.lineas,
         observaciones: observaciones || 'Generado desde Curva',
       });
-      for (const l of grp.lineas) {
-        pedidoLineaRepo.create({ pedido_id: pedidoId, producto_id: l.producto_id, cantidad: l.cantidad });
-      }
-      snapshotInsumosForPedido(pedidoId, grp.plantilla_id, grp.lineas);
       const cant = grp.lineas.reduce((s, l) => s + l.cantidad, 0);
-      created.push({ id: pedidoId, pedido: nextPedido, plantilla_nombre: grp.plantilla_nombre, cantidad: cant });
-      nextPedido++;
+      created.push({ id: res.id, pedido: res.pedido, plantilla_nombre: grp.plantilla_nombre, cantidad: cant });
     }
     return created;
   });
@@ -330,6 +328,30 @@ export function updatePedido(id, b) {
 
 export function deletePedido(id) {
   return pedidoRepo.delete(id);
+}
+
+export function cancelarPedido(id) {
+  const existing = pedidoRepo.findById(id);
+  if (!existing) return false;
+  if (existing.estado === 'Cancelado') throw new Error('El pedido ya está cancelado');
+  if (existing.estado === 'Entregado') throw new Error('No se puede cancelar un pedido ya entregado');
+  const entregas = entregaRepo.findWhere({ lote: existing.pedido });
+  if (entregas.length > 0) {
+    throw new Error('No se puede cancelar un pedido con entregas registradas; eliminá las entregas primero');
+  }
+  const ordenesActivas = ordenRepo.query()
+    .where('pedido_id', Number(id))
+    .whereIn('estado', ['Planificada', 'En Proceso'])
+    .count();
+  if (ordenesActivas > 0) {
+    throw new Error('No se puede cancelar un pedido con órdenes de producción activas; cancelá las órdenes primero');
+  }
+  pedidoRepo.update(id, { estado: 'Cancelado' });
+  return true;
+}
+
+export function archivarPedido(id, archivado = true) {
+  return pedidoRepo.setArchivado(id, archivado);
 }
 
 export function toggleSnapshotComprado(snapId, comprado) {

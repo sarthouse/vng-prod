@@ -2,12 +2,13 @@ import { api, toast, refreshKPIs } from '../../lib/api.js';
 import { esc, fmtMoney, fmtNum, badgeForEstado, badgeForTipo, downloadCSV } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { mountDetailView } from '../../lib/engine/detailEngine.js';
+import { renderSpreadsheetTable, showConfirmModal } from '../../lib/engine/index.js';
 import { navigate } from '../../router.js';
 
 export async function renderPedidoDetalleView({ id }) {
   const root = document.getElementById('app-view');
   const detail = await api(`/api/pedidos/${id}`);
-  const { pedido, lineas, snapshot, entregas, pendiente } = detail;
+  const { pedido, lineas, snapshot, entregas, pendiente, ordenes = [] } = detail;
 
   const totalCosto = snapshot.reduce((acc, s) => acc + Number(s.subtotal || 0), 0);
   const pendTotal = Number(pendiente?.total ?? 0);
@@ -16,32 +17,7 @@ export async function renderPedidoDetalleView({ id }) {
   const detalleHtml = `
     <div class="card">
       <div class="card-header"><h2>Detalle del Pedido vs Pendiente</h2></div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Concepto</th>
-              ${(lineas || []).map(l => `<th class="num">${esc(l.combinacion || l.sku || l.producto_nombre)}</th>`).join('')}
-              <th class="num">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Pedido Original</strong></td>
-              ${(lineas || []).map(l => `<td class="num">${l.cantidad}</td>`).join('')}
-              <td class="num"><strong>${pedido.cantidad}</strong></td>
-            </tr>
-            <tr>
-              <td><strong>Pendiente</strong></td>
-              ${(lineas || []).map(l => {
-                const p = pendMap.get(Number(l.producto_id));
-                return `<td class="num">${p ? p.pendiente : l.cantidad}</td>`;
-              }).join('')}
-              <td class="num"><strong>${pendTotal}</strong></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <div id="pedido-detalle-sheet"></div>
       ${pedido.observaciones ? `<p class="muted sx-404273">Observaciones: ${esc(pedido.observaciones)}</p>` : ''}
     </div>
   `;
@@ -55,54 +31,7 @@ export async function renderPedidoDetalleView({ id }) {
         </div>
         ${snapshot.length > 0 ? `<button type="button" id="btn-export-snapshot" class="btn btn-sm">Exportar CSV</button>` : ''}
       </div>
-      ${snapshot.length === 0 ? `
-        <div class="empty-state">Este pedido no tiene insumos en su snapshot.</div>
-      ` : `
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Comprado</th>
-                <th>Producto / Insumo</th>
-                <th>Tipo</th>
-                <th>Categoría</th>
-                <th>Proveedor</th>
-                <th class="num">Req. Exacto</th>
-                <th class="num">Mín. Compra</th>
-                <th class="num">A Comprar</th>
-                <th>UdM</th>
-                <th class="num">Precio Unit.</th>
-                <th class="num">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${snapshot.map(item => `
-                <tr>
-                  <td>
-                    <input type="checkbox" class="snap-check" data-snap-id="${item.id}" ${item.comprado ? 'checked' : ''} />
-                  </td>
-                  <td><strong>${esc(item.nombre)}</strong></td>
-                  <td>${badgeForTipo(item.tipo)}</td>
-                  <td><span class="badge badge-muted">${esc(item.categoria)}</span></td>
-                  <td>${esc(item.proveedor_nombre || '-')}</td>
-                  <td class="num">${fmtNum(item.cantidad_requerida)}</td>
-                  <td class="num">${item.tipo === 'servicio' ? '-' : fmtNum(item.minimo_compra)}</td>
-                  <td class="num"><strong>${fmtNum(item.cantidad_a_comprar)}</strong></td>
-                  <td>${esc(item.udm)}</td>
-                  <td class="num">${fmtMoney(item.precio_unitario)}</td>
-                  <td class="num"><strong>${fmtMoney(item.subtotal)}</strong></td>
-                </tr>
-              `).join('')}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="10"><strong>Total Materiales y Servicios Snapshot</strong></td>
-                <td class="num"><strong>${fmtMoney(totalCosto)}</strong></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      `}
+      <div id="pedido-snapshot-sheet"></div>
     </div>
   `;
 
@@ -143,18 +72,51 @@ export async function renderPedidoDetalleView({ id }) {
     </div>
   `;
 
-  const estadoBadgeClass = pedido.estado === 'Entregado' ? 'badge-ok' : pedido.estado === 'Parcial' ? 'badge-warn' : 'badge-muted';
+  const isBorrador = pedido.estado === 'Borrador';
+  const estadoBadgeClass = pedido.estado === 'Entregado' ? 'badge-ok' : (pedido.estado === 'Entrega Parcial' || pedido.estado === 'Parcial') ? 'badge-warn' : pedido.estado === 'Confirmado' ? 'badge-confirmado' : 'badge-muted';
+
+  const clienteHtml = pedido.contacto_nombre
+    ? (pedido.contacto_id
+      ? `Cliente: <a href="/contactos/${pedido.contacto_id}" data-link class="link-primary"><strong>${esc(pedido.contacto_nombre)}</strong></a> · `
+      : `Cliente: <strong>${esc(pedido.contacto_nombre)}</strong> · `)
+    : '';
+
+  const vinculadosHtml = ordenes.length > 0 ? `
+    <div class="card mb-md">
+      <div class="card-header"><h3>Documentos Vinculados</h3></div>
+      <div class="actions sx-3a4c1e">
+        ${ordenes.map(o => `<a href="/ordenes/${o.id}" data-link class="btn btn-sm">Orden: ${esc(o.codigo)} (${esc(o.estado)})</a>`).join('')}
+      </div>
+    </div>
+  ` : '';
 
   mountDetailView(root, {
     breadcrumb: { label: 'Volver a Pedidos', href: '/pedidos' },
     title: `Pedido #${pedido.pedido} — ${pedido.plantilla_nombre}`,
-    subtitle: `${pedido.contacto_nombre ? `Cliente: <strong>${esc(pedido.contacto_nombre)}</strong> · ` : ''}Fecha pedido: ${esc(pedido.fecha || '-')} · Entrega estimada: ${esc(pedido.fecha_est || '-')}`,
-    badge: { text: pedido.estado || 'Pendiente', className: estadoBadgeClass },
+    subtitle: `${clienteHtml}Fecha pedido: ${esc(pedido.fecha || '-')} · Entrega estimada: ${esc(pedido.fecha_est || '-')}`,
+    badge: { text: pedido.estado || 'Borrador', className: estadoBadgeClass },
     actions: [
       { label: '+ Nuevo Pedido', href: '/pedidos/nuevo' },
-      { label: '+ Registrar Entrega', href: `/entregas/nueva?lote=${pedido.pedido}` },
+      ...(isBorrador ? [{
+        label: 'Confirmar Pedido',
+        primary: true,
+        onClick: async () => {
+          try {
+            await api(`/api/pedidos/${pedido.id}`, {
+              method: 'PUT',
+              body: JSON.stringify({ estado: 'Confirmado' }),
+            });
+            await refreshKPIs();
+            toast('Pedido confirmado');
+            await renderPedidoDetalleView({ id });
+          } catch (err) {
+            toast(err.message, true);
+          }
+        },
+      }] : []),
+      ...(!isBorrador && pedido.estado !== 'Cancelado' ? [{ label: '+ Registrar Entrega', href: `/entregas/nueva?lote=${pedido.pedido}` }] : []),
       { label: 'Editar Pedido', href: `/pedidos/${pedido.id}/editar` },
-      ...(pedido.plantilla_id && pedido.estado !== 'Cancelado' ? [{
+      ...(!isBorrador && pedido.plantilla_id && pedido.estado !== 'Cancelado' ? [{
         label: 'Lanzar Orden de Producción',
         primary: true,
         onClick: async () => {
@@ -176,15 +138,32 @@ export async function renderPedidoDetalleView({ id }) {
           }
         },
       }] : []),
+      ...(!['Entregado', 'Cancelado'].includes(pedido.estado) ? [{
+        label: 'Cancelar Pedido',
+        className: 'btn btn-danger',
+        onClick: async () => {
+          if (!(await showConfirmModal('¿Cancelar este pedido?'))) return;
+          try {
+            await api(`/api/pedidos/${pedido.id}/cancelar`, { method: 'POST' });
+            await refreshKPIs();
+            toast('Pedido cancelado');
+            await renderPedidoDetalleView({ id });
+          } catch (err) {
+            toast(err.message, true);
+          }
+        },
+      }] : []),
     ],
     steps: [
-      { key: 'Pendiente', label: 'Pendiente' },
+      { key: 'Borrador', label: 'Borrador' },
+      { key: 'Confirmado', label: 'Confirmado' },
       { key: 'En Producción', label: 'En Producción' },
-      { key: 'Parcial', label: 'Parcial' },
+      { key: 'Entrega Parcial', label: 'Parcial' },
       { key: 'Entregado', label: 'Entregado' },
     ],
     currentStep: pedido.estado,
     smartButtons: [
+      ...(ordenes.length > 0 ? [{ label: 'Órdenes', count: ordenes.length, href: ordenes.length === 1 ? `/ordenes/${ordenes[0].id}` : '/ordenes' }] : []),
       { label: 'Entregas', count: entregas.length, href: '/entregas' },
       { label: 'Insumos', count: snapshot.length },
     ],
@@ -200,7 +179,7 @@ export async function renderPedidoDetalleView({ id }) {
       { id: 'entregas', label: 'Entregas', badge: entregas.length, html: entregasHtml },
     ],
     defaultTab: 'detalle',
-    sidebarHtml: '<div id="pedido-meta-panel"></div>',
+    sidebarHtml: `${vinculadosHtml}<div id="pedido-meta-panel"></div>`,
     onMountSidebar: (sidebarEl) => {
       renderMetaPanel(sidebarEl.querySelector('#pedido-meta-panel'), {
         entidadTipo: 'pedido',
@@ -210,19 +189,99 @@ export async function renderPedidoDetalleView({ id }) {
       });
     },
     onAfterMount: (container) => {
-      container.querySelectorAll('.snap-check').forEach(cb => {
-        cb.addEventListener('change', async () => {
+      const detalleRows = (lineas || []).map(l => {
+        const p = pendMap.get(Number(l.producto_id));
+        return {
+          ...l,
+          pendiente: p ? p.pendiente : l.cantidad,
+        };
+      });
+      renderSpreadsheetTable(container.querySelector('#pedido-detalle-sheet'), {
+        rows: detalleRows,
+        emptyText: 'Este pedido no tiene líneas.',
+        compact: true,
+        pasteEnabled: false,
+        showDirty: false,
+        columns: [
+          {
+            key: 'producto_nombre',
+            label: 'Producto',
+            type: 'readonly',
+            render: (l) => `<strong>${esc(l.combinacion || l.sku || l.producto_nombre)}</strong>`,
+          },
+          {
+            key: 'cantidad',
+            label: 'Pedido Original',
+            type: 'readonly',
+            align: 'right',
+            nowrap: true,
+            render: (l) => fmtNum(l.cantidad),
+          },
+          {
+            key: 'pendiente',
+            label: 'Pendiente',
+            type: 'readonly',
+            align: 'right',
+            nowrap: true,
+            render: (l) => fmtNum(l.pendiente),
+          },
+        ],
+        tfootHtml: `
+          <tr>
+            <td><strong>Total</strong></td>
+            <td class="num"><strong>${fmtNum(pedido.cantidad)}</strong></td>
+            <td class="num"><strong>${fmtNum(pendTotal)}</strong></td>
+          </tr>
+        `,
+      });
+
+      renderSpreadsheetTable(container.querySelector('#pedido-snapshot-sheet'), {
+        rows: snapshot,
+        emptyText: 'Este pedido no tiene insumos en su snapshot.',
+        compact: true,
+        pasteEnabled: false,
+        showDirty: false,
+        columns: [
+          {
+            key: 'comprado',
+            label: 'Comprado',
+            type: 'checkbox',
+            align: 'center',
+            editable: () => !['Entregado', 'Cancelado'].includes(pedido.estado),
+            render: (item) => Number(item.comprado) === 1
+              ? '<span class="badge badge-ok">Sí</span>'
+              : '<span class="muted">No</span>',
+          },
+          { key: 'nombre', label: 'Producto / Insumo', type: 'readonly', render: (item) => `<strong>${esc(item.nombre)}</strong>` },
+          { key: 'tipo', label: 'Tipo', type: 'readonly', render: (item) => badgeForTipo(item.tipo) },
+          { key: 'categoria', label: 'Categoría', type: 'readonly', render: (item) => `<span class="badge badge-muted">${esc(item.categoria)}</span>` },
+          { key: 'proveedor_nombre', label: 'Proveedor', type: 'readonly', render: (item) => esc(item.proveedor_nombre || '-') },
+          { key: 'cantidad_requerida', label: 'Req. Exacto', type: 'readonly', align: 'right', nowrap: true, render: (item) => fmtNum(item.cantidad_requerida) },
+          { key: 'minimo_compra', label: 'Mín. Compra', type: 'readonly', align: 'right', nowrap: true, render: (item) => item.tipo === 'servicio' ? '-' : fmtNum(item.minimo_compra) },
+          { key: 'cantidad_a_comprar', label: 'A Comprar', type: 'readonly', align: 'right', nowrap: true, render: (item) => `<strong>${fmtNum(item.cantidad_a_comprar)}</strong>` },
+          { key: 'udm', label: 'UdM', type: 'readonly', nowrap: true },
+          { key: 'precio_unitario', label: 'Precio Unit.', type: 'readonly', align: 'right', nowrap: true, render: (item) => fmtMoney(item.precio_unitario) },
+          { key: 'subtotal', label: 'Subtotal', type: 'readonly', align: 'right', nowrap: true, render: (item) => `<strong>${fmtMoney(item.subtotal)}</strong>` },
+        ],
+        tfootHtml: snapshot.length > 0 ? `
+          <tr>
+            <td colspan="10"><strong>Total Materiales y Servicios Snapshot</strong></td>
+            <td class="num"><strong>${fmtMoney(totalCosto)}</strong></td>
+          </tr>
+        ` : '',
+        onCellChange: async ({ row, key, value }) => {
+          if (key !== 'comprado') return;
           try {
-            await api(`/api/pedido-insumos/${cb.dataset.snapId}`, {
+            await api(`/api/pedido-insumos/${row.id}`, {
               method: 'PATCH',
-              body: JSON.stringify({ comprado: cb.checked }),
+              body: JSON.stringify({ comprado: Boolean(Number(value)) }),
             });
-            toast(cb.checked ? 'Marcado como comprado' : 'Desmarcado');
+            toast(Number(value) ? 'Marcado como comprado' : 'Desmarcado');
           } catch (err) {
-            cb.checked = !cb.checked;
             toast(err.message, true);
+            throw err;
           }
-        });
+        },
       });
 
       container.querySelector('#btn-export-snapshot')?.addEventListener('click', () => {

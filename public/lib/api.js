@@ -22,7 +22,11 @@ export async function api(url, options = {}) {
   if (res.status === 401 && !url.startsWith('/api/auth/') && typeof onUnauthorizedCb === 'function') {
     onUnauthorizedCb();
   }
-  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 

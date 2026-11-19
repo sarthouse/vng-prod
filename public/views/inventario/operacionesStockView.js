@@ -1,5 +1,5 @@
 import { api, toast } from '../../lib/api.js';
-import { esc, fmtNum, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding } from '../../lib/format.js';
+import { esc, fmtNum, badgeForEstado, renderPuntoVentaOptions, bindPuntoVentaSeq, bindNumeroPadding, isDocHidden, renderDocEstadoBadges, buildArchivarBulkActions } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { renderSpreadsheetTable } from '../../lib/engine/index.js';
 import { printRemito } from '../../lib/print/index.js';
@@ -79,6 +79,8 @@ async function imprimirOperacionById(id, empresa) {
   });
 }
 
+let opShowHidden = false;
+
 export async function renderOperacionesStockView() {
   const root = document.getElementById('app-view');
   const [operaciones, empresa] = await Promise.all([
@@ -96,6 +98,7 @@ export async function renderOperacionesStockView() {
   const getFiltered = () => {
     const q = search.trim().toLowerCase();
     return operaciones.filter(o => {
+      if (!opShowHidden && isDocHidden(o)) return false;
       if (filterTipo) {
         if (filterTipo === 'traslado') {
           if (o.tipo !== 'traslado' && o.tipo !== 'remito_taller') return false;
@@ -130,6 +133,9 @@ export async function renderOperacionesStockView() {
         <p class="muted">Recepciones, entregas, traslados y ajustes de inventario.</p>
       </div>
       <div class="actions">
+        <button type="button" id="btn-op-toggle-hidden" class="btn ${opShowHidden ? 'btn-primary' : ''}">
+          ${opShowHidden ? 'Ocultar anuladas / archivadas' : 'Mostrar anuladas / archivadas'}
+        </button>
         <a href="/operaciones-stock/nueva" data-link class="btn btn-primary">+ Nueva Operación</a>
       </div>
     </div>
@@ -155,6 +161,11 @@ export async function renderOperacionesStockView() {
     { label: 'Recepciones', value: String(recepcionesCount) },
     { label: 'Traslados', value: String(trasladosCount) },
   ]);
+
+  root.querySelector('#btn-op-toggle-hidden').addEventListener('click', () => {
+    opShowHidden = !opShowHidden;
+    renderOperacionesStockView();
+  });
 
   const drawTable = () => {
     const filtered = getFiltered();
@@ -202,6 +213,13 @@ export async function renderOperacionesStockView() {
             await renderOperacionesStockView();
           },
         },
+        ...buildArchivarBulkActions({
+          api,
+          toast,
+          endpointPrefix: '/api/operaciones-stock',
+          showHidden: opShowHidden,
+          onDone: () => renderOperacionesStockView(),
+        }),
         {
           id: 'eliminar',
           label: 'Eliminar Borradores',
@@ -229,7 +247,7 @@ export async function renderOperacionesStockView() {
           label: 'Número',
           render: o => `<a href="/operaciones-stock/${o.id}" data-link class="link-primary"><strong>${esc(o.numero || '#' + o.id)}</strong></a>`,
         },
-        { label: 'Estado', render: o => badgeForEstado(o.estado) },
+        { label: 'Estado', render: o => renderDocEstadoBadges(o) },
         { label: 'Tipo', render: o => renderTipoBadge(o.tipo) },
         {
           label: 'Ubicación',

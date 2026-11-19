@@ -359,3 +359,7 @@ export function deleteOperacionStock(id) {
   }
   return operacionStockRepo.delete(id);
 }
+
+export function archivarOperacionStock(id, archivado = true, user = null) {
+  return operacionStockRepo.setArchivado(id, archivado, user);
+}

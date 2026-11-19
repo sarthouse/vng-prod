@@ -598,6 +598,10 @@ export function deleteVenta(id, user = null) {
   });
 }
 
+export function archivarVenta(id, archivado = true, user = null) {
+  return ventaRepo.setArchivado(id, archivado, user);
+}
+
 function syncUltimoPrecioProductos(lineas) {
   for (const l of lineas || []) {
     const pid = Number(l.producto_id || 0);

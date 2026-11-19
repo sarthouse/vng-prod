@@ -647,3 +647,62 @@ export function bindCuentaMetodoSync(cuentaSelect, metodoSelect, cuentas = [], o
   cuentaSelect.addEventListener('change', sync);
   sync();
 }
+
+export function isDocHidden(doc) {
+  return Boolean(Number(doc?.archivado || 0) === 1 || ['Anulada', 'Anulado', 'Cancelado', 'Cancelada'].includes(doc?.estado));
+}
+
+export function filterVisibleDocs(docs = [], showHidden = false) {
+  return showHidden ? docs : (docs || []).filter(d => !isDocHidden(d));
+}
+
+export function renderDocEstadoBadges(doc) {
+  return badgeForEstado(doc?.estado || 'Confirmado')
+    + (Number(doc?.archivado || 0) === 1 ? ' <span class="badge badge-muted">Archivado</span>' : '');
+}
+
+export function buildArchivarBulkActions({ api, toast, endpointPrefix, onDone, showHidden }) {
+  const actions = [
+    {
+      id: 'archivar',
+      label: 'Archivar',
+      confirm: (sel) => {
+        const n = sel.filter(d => Number(d.archivado || 0) !== 1).length;
+        return n ? `¿Archivar ${n} documento(s) seleccionado(s)?` : null;
+      },
+      onClick: async (sel) => {
+        const targets = sel.filter(d => Number(d.archivado || 0) !== 1);
+        if (!targets.length) { toast('No hay documentos sin archivar en la selección', true); return; }
+        let ok = 0; let errs = 0;
+        for (const d of targets) {
+          try { await api(`${endpointPrefix}/${d.id}/archivar`, { method: 'POST', body: JSON.stringify({ archivado: true }) }); ok++; }
+          catch { errs++; }
+        }
+        toast(`${ok} archivado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+        await onDone();
+      },
+    },
+  ];
+  if (showHidden) {
+    actions.push({
+      id: 'desarchivar',
+      label: 'Desarchivar',
+      confirm: (sel) => {
+        const n = sel.filter(d => Number(d.archivado || 0) === 1).length;
+        return n ? `¿Desarchivar ${n} documento(s) seleccionado(s)?` : null;
+      },
+      onClick: async (sel) => {
+        const targets = sel.filter(d => Number(d.archivado || 0) === 1);
+        if (!targets.length) { toast('No hay documentos archivados en la selección', true); return; }
+        let ok = 0; let errs = 0;
+        for (const d of targets) {
+          try { await api(`${endpointPrefix}/${d.id}/archivar`, { method: 'POST', body: JSON.stringify({ archivado: false }) }); ok++; }
+          catch { errs++; }
+        }
+        toast(`${ok} desarchivado(s)${errs ? `, ${errs} con error` : ''}`, errs > 0 && ok === 0);
+        await onDone();
+      },
+    });
+  }
+  return actions;
+}

@@ -73,7 +73,7 @@ export async function renderPedidoFormView({ id } = {}) {
             <label>
               <span>Estado</span>
               <select name="estado">
-                ${['Confirmado', 'En Producción', 'Entrega Parcial', 'Entregado', 'Cancelado'].map(st =>
+                ${['Borrador', 'Confirmado', 'En Producción', 'Entrega Parcial', 'Entregado', 'Cancelado'].map(st =>
                   `<option value="${st}" ${pedido.estado === st ? 'selected' : ''}>${st}</option>`
                 ).join('')}
               </select>

@@ -1,5 +1,6 @@
 const SAFE_IDENT = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
 const ALLOWED_OPS = new Set(['=', '!=', '<>', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'IS', 'IS NOT']);
+const SYSTEM_COLS = new Set(['id', 'created_at', 'updated_at', 'autor_id', 'autor_nombre', 'actualizado_por_id', 'actualizado_por_nombre']);
 
 function safeIdent(id) {
   const s = String(id || '').trim();
@@ -8,10 +9,15 @@ function safeIdent(id) {
 }
 
 export class QueryBuilder {
-  constructor(db, table = null, alias = null) {
+  constructor(db, table = null, alias = null, model = null) {
     this.db = db;
     this._table = table ? safeIdent(table) : null;
     this._alias = alias ? safeIdent(alias) : null;
+    this._model = model || null;
+    const schemaCols = model?.fields || model?.columns;
+    this._allowedCols = schemaCols
+      ? new Set([...SYSTEM_COLS, ...Object.keys(schemaCols)])
+      : null;
     this._selects = ['*'];
     this._joins = [];
     this._wheres = [];
@@ -19,6 +25,24 @@ export class QueryBuilder {
     this._groups = [];
     this._orders = [];
     this._limit = null;
+  }
+
+  _safeCol(col) {
+    const c = safeIdent(col);
+    if (!this._allowedCols) return c;
+    if (c.includes('.')) {
+      const [prefix, field] = c.split('.');
+      if (prefix === this._table || (this._alias && prefix === this._alias)) {
+        if (!this._allowedCols.has(field)) {
+          throw new Error(`Columna no permitida en ${this._table}: "${c}"`);
+        }
+      }
+      return c;
+    }
+    if (!this._joins.length && !this._allowedCols.has(c)) {
+      throw new Error(`Columna no permitida en ${this._table}: "${c}"`);
+    }
+    return c;
   }
 
   from(table, alias = null) {
@@ -43,30 +67,53 @@ export class QueryBuilder {
     return this;
   }
 
-  where(col, opOrVal, maybeVal) {
-    const c = safeIdent(col);
+  _buildCondition(col, opOrVal, maybeVal) {
+    const c = this._safeCol(col);
     if (maybeVal === undefined) {
       if (opOrVal === null) {
-        this._wheres.push(`${c} IS NULL`);
-      } else {
-        this._wheres.push(`${c} = ?`);
-        this._params.push(opOrVal);
+        return { clause: `${c} IS NULL`, params: [] };
       }
-      return this;
+      return { clause: `${c} = ?`, params: [opOrVal] };
     }
     const op = String(opOrVal).toUpperCase().trim();
     if (!ALLOWED_OPS.has(op)) throw new Error(`Operador SQL no permitido: ${op}`);
     if (maybeVal === null && (op === 'IS' || op === 'IS NOT')) {
-      this._wheres.push(`${c} ${op} NULL`);
-    } else {
-      this._wheres.push(`${c} ${op} ?`);
-      this._params.push(maybeVal);
+      return { clause: `${c} ${op} NULL`, params: [] };
     }
+    return { clause: `${c} ${op} ?`, params: [maybeVal] };
+  }
+
+  where(col, opOrVal, maybeVal) {
+    const { clause, params } = this._buildCondition(col, opOrVal, maybeVal);
+    this._wheres.push(clause);
+    this._params.push(...params);
+    return this;
+  }
+
+  orWhere(col, opOrVal, maybeVal) {
+    const { clause, params } = this._buildCondition(col, opOrVal, maybeVal);
+    if (this._wheres.length === 0) {
+      this._wheres.push(clause);
+    } else {
+      const prev = this._wheres.join(' AND ');
+      this._wheres = [`(${prev} OR ${clause})`];
+    }
+    this._params.push(...params);
+    return this;
+  }
+
+  whereBetween(col, range) {
+    const c = this._safeCol(col);
+    if (!Array.isArray(range) || range.length !== 2) {
+      throw new Error('whereBetween requiere un arreglo [min, max]');
+    }
+    this._wheres.push(`${c} BETWEEN ? AND ?`);
+    this._params.push(range[0], range[1]);
     return this;
   }
 
   whereIn(col, values = []) {
-    const c = safeIdent(col);
+    const c = this._safeCol(col);
     if (!Array.isArray(values) || values.length === 0) {
       this._wheres.push('1 = 0');
       return this;
@@ -77,7 +124,7 @@ export class QueryBuilder {
   }
 
   whereNotIn(col, values = []) {
-    const c = safeIdent(col);
+    const c = this._safeCol(col);
     if (!Array.isArray(values) || values.length === 0) return this;
     this._wheres.push(`${c} NOT IN (${values.map(() => '?').join(', ')})`);
     this._params.push(...values);
@@ -85,23 +132,26 @@ export class QueryBuilder {
   }
 
   whereNull(col) {
-    this._wheres.push(`${safeIdent(col)} IS NULL`);
+    this._wheres.push(`${this._safeCol(col)} IS NULL`);
     return this;
   }
 
   whereNotNull(col) {
-    this._wheres.push(`${safeIdent(col)} IS NOT NULL`);
+    this._wheres.push(`${this._safeCol(col)} IS NOT NULL`);
     return this;
   }
 
   groupBy(...cols) {
-    for (const c of cols.flat()) this._groups.push(safeIdent(c));
+    for (const c of cols.flat()) this._groups.push(this._safeCol(c));
     return this;
   }
 
   orderBy(col, dir = 'ASC') {
-    const d = String(dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-    this._orders.push(`${safeIdent(col)} ${d}`);
+    const d = String(dir).toUpperCase().trim();
+    if (d !== 'ASC' && d !== 'DESC') {
+      throw new Error(`Dirección de orden inválida en QueryBuilder: "${dir}"`);
+    }
+    this._orders.push(`${this._safeCol(col)} ${d}`);
     return this;
   }
 
@@ -132,7 +182,42 @@ export class QueryBuilder {
 
   get() {
     const { sql, params } = this.toSelectSql();
-    return this.db.prepare(sql).get(...params);
+    return this.db.prepare(sql).get(...params) ?? null;
+  }
+
+  first() {
+    const prevLimit = this._limit;
+    this._limit = 1;
+    try {
+      return this.get();
+    } finally {
+      this._limit = prevLimit;
+    }
+  }
+
+  pluck(col) {
+    const c = this._safeCol(col);
+    const key = c.includes('.') ? c.split('.').pop() : c;
+    const prev = this._selects;
+    this._selects = [c];
+    try {
+      return this.all().map(r => r[key]);
+    } finally {
+      this._selects = prev;
+    }
+  }
+
+  exists() {
+    const prevSelects = this._selects;
+    const prevLimit = this._limit;
+    this._selects = ['1 as _ok'];
+    this._limit = 1;
+    try {
+      return Boolean(this.get());
+    } finally {
+      this._selects = prevSelects;
+      this._limit = prevLimit;
+    }
   }
 
   count(col = '*') {

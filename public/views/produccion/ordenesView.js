@@ -77,12 +77,17 @@ export async function renderOrdenesView() {
     { label: 'Cantidad', align: 'right', sum: (grp) => String(grp.reduce((s, o) => s + (Number(o.cantidad) || 0), 0)), render: op => `<strong>${op.cantidad}</strong>` },
     {
       label: 'Acciones',
-      render: op => `
-        <div class="actions">
-          <a href="/ordenes/${op.id}" data-link class="btn btn-sm btn-primary">Abrir</a>
-          <button type="button" class="btn btn-sm btn-danger" data-del="${op.id}">Borrar</button>
-        </div>
-      `,
+      render: op => {
+        const puedeBorrar = ['Borrador', 'Planificada', 'Cancelada'].includes(op.estado) && Number(op.etapas_completadas || 0) === 0;
+        const puedeCancelar = !['Completada', 'Cancelada'].includes(op.estado);
+        return `
+          <div class="actions">
+            <a href="/ordenes/${op.id}" data-link class="btn btn-sm btn-primary">Abrir</a>
+            ${puedeCancelar ? `<button type="button" class="btn btn-sm" data-cancel-ord="${op.id}">Cancelar</button>` : ''}
+            ${puedeBorrar ? `<button type="button" class="btn btn-sm btn-danger" data-del="${op.id}">Borrar</button>` : ''}
+          </div>
+        `;
+      },
     },
   ];
 
@@ -99,6 +104,19 @@ export async function renderOrdenesView() {
       });
       panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }));
+
+    root.querySelectorAll('[data-cancel-ord]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Cancelar esta orden de producción? Se revertirán los movimientos de stock asociados si existieran.'))) return;
+        try {
+          await api(`/api/ordenes/${btn.dataset.cancelOrd}/cancelar`, { method: 'POST' });
+          toast('Orden cancelada');
+          await renderOrdenesView();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+    });
 
     root.querySelectorAll('[data-del]').forEach(btn => {
       btn.addEventListener('click', async () => {

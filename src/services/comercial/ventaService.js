@@ -1,22 +1,29 @@
 import { db } from '../../db.js';
 import { BaseRepository } from '../../core/BaseRepository.js';
+import { createStateMachine } from '../../core/stateMachine.js';
+import { domainBus } from '../../core/eventBus.js';
 import { MODELS } from '../../db/models.js';
 import { resolveNumeroDocumento } from '../config/configService.js';
-import {
-  anularOperacionStock,
-  confirmarOperacionStock,
-  createOperacionStock,
-  deleteOperacionStock,
-  operacionStockRepo,
-} from '../inventario/operacionStockService.js';
+import { operacionStockRepo } from '../inventario/operacionStockService.js';
 import { defaultAsientoService } from '../finanzas/asientoService.js';
-import { crearImputacion, getFacturaImputado } from '../finanzas/imputacionService.js';
+import { getFacturaImputado } from '../finanzas/imputacionService.js';
 import { validateComprobanteFiscal } from '../afip/fiscalRules.js';
 import { incrementarUsoCupon } from './comercialReglasService.js';
-import { calcularFechaVencimiento, getContactoCondiciones, resolverPrecioLista, resolverPrecioCompra } from './condicionesComercialesService.js';
-import { createCompra } from './compraService.js';
-import { listProductos } from '../inventario/productoService.js';
+import { calcularFechaVencimiento, getContactoCondiciones, resolverPrecioLista } from './condicionesComercialesService.js';
 import { sanitizeDocumentoLineas, computeDocumentoTotales } from './documentoComercialHelper.js';
+import { registerDomainSubscribers } from '../domainEvents.js';
+import {
+  aplicarImputacionNotaCreditoVenta,
+  syncUltimoPrecioProductos,
+} from './ventaEfectosHelper.js';
+
+export const VENTA_SM = createStateMachine({
+  Presupuesto: ['Borrador', 'Confirmada', 'Entregada', 'Anulada'],
+  Borrador: ['Presupuesto', 'Confirmada', 'Entregada', 'Anulada'],
+  Confirmada: ['Entregada', 'Anulada'],
+  Entregada: ['Anulada'],
+  Anulada: [],
+}, { label: 'Venta' });
 
 export const ventaRepo = new BaseRepository({
   model: MODELS.ventas,
@@ -26,7 +33,6 @@ const ventaLineaRepo = new BaseRepository({ model: MODELS.venta_lineas });
 const ventaImpuestoRepo = new BaseRepository({ model: MODELS.venta_impuestos });
 const productoRepo = new BaseRepository({ model: MODELS.productos });
 const plantillaRepo = new BaseRepository({ model: MODELS.producto_plantillas });
-const prodProvRepo = new BaseRepository({ model: MODELS.producto_proveedores });
 const contactoRepo = new BaseRepository({ model: MODELS.contactos });
 const empresaRepo = new BaseRepository({ model: MODELS.empresa_config });
 const diarioRepo = new BaseRepository({ model: MODELS.diarios });
@@ -40,119 +46,6 @@ function sanitizeVentaLineas(lineas, caracter = 'fiscal', tipoComp = 'FA-B') {
     defaultUdm: 'pares',
     allowTiposLinea: true,
   });
-}
-
-function getPlantillaForProducto(productoId) {
-  return productoRepo.query('p')
-    .select('pt.tipo', 'pt.cuenta_venta_id', 'pt.cuenta_compra_id')
-    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
-    .where('p.id', Number(productoId))
-    .get();
-}
-
-function createVentaOperacion(venta, lineas, confirmar = false, user = null) {
-  const stockLines = (lineas || []).filter(l => {
-    if (!l.producto_id || l.cantidad <= 0) return false;
-    if (l.tipo_linea && l.tipo_linea !== 'producto') return false;
-    const row = getPlantillaForProducto(l.producto_id);
-    return !row || row.tipo !== 'servicio';
-  });
-  if (stockLines.length === 0) return null;
-
-  const isNC = venta.clase_documento === 'nota_credito';
-  const ubiRepo = new BaseRepository({ model: MODELS.ubicaciones });
-  const prodTermId = venta.ubicacion_id
-    || ubiRepo.query().select('id').where('codigo', 'PROD-TERM').get()?.id
-    || ubiRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id
-    || null;
-  const cliUbiId = ubiRepo.query().select('id').where('codigo', 'VIRT-CLI').get()?.id || null;
-
-  return createOperacionStock({
-    fecha: venta.fecha,
-    tipo: isNC ? 'recepcion' : 'entrega',
-    ubicacion_origen_id: isNC ? cliUbiId : prodTermId,
-    ubicacion_destino_id: isNC ? prodTermId : cliUbiId,
-    contacto_id: venta.contacto_id,
-    referencia_tipo: 'venta',
-    referencia_id: venta.id,
-    estado: confirmar ? 'Confirmado' : 'Borrador',
-    motivo: `${isNC ? 'Devolución NC' : 'Entrega'} ${venta.numero || `Venta #${venta.id}`}`,
-    lineas: stockLines.map(l => ({
-      producto_id: l.producto_id,
-      descripcion: l.descripcion,
-      cantidad: l.cantidad,
-      udm: l.udm,
-    })),
-  }, user);
-}
-
-function dispararAbastecimientoVenta(venta, lineas, user = null) {
-  if (venta.clase_documento === 'nota_credito') return [];
-  const prodMap = new Map(listProductos().map(p => [p.id, p]));
-  const comprasPorProveedor = new Map();
-
-  for (const l of (lineas || [])) {
-    if (!l.producto_id || l.cantidad <= 0) continue;
-    const prod = prodMap.get(Number(l.producto_id));
-    if (!prod || prod.tipo === 'servicio') continue;
-
-    const disponible = Math.max(0, Number(prod.stock) || 0);
-    const faltante = Number(l.cantidad) - disponible;
-    if (faltante > 0 && Number(prod.se_compra) === 1 && Number(prod.se_fabrica) === 0) {
-      let provId = prod.proveedor_id ? Number(prod.proveedor_id) : 0;
-      if (!provId) {
-        const pp = prodProvRepo.query()
-          .select('contacto_id')
-          .where('producto_id', prod.id)
-          .where('activo', 1)
-          .orderBy('prioridad', 'ASC')
-          .orderBy('id', 'ASC')
-          .limit(1)
-          .get()
-          || prodProvRepo.query()
-            .select('contacto_id')
-            .whereNull('producto_id')
-            .where('plantilla_id', prod.plantilla_id || 0)
-            .where('activo', 1)
-            .orderBy('prioridad', 'ASC')
-            .orderBy('id', 'ASC')
-            .limit(1)
-            .get();
-        if (pp?.contacto_id) provId = Number(pp.contacto_id);
-      }
-      if (!provId) continue;
-      const cantComprar = Math.max(faltante, Number(prod.minimo_compra) || 0);
-      const resuelto = resolverPrecioCompra({
-        contacto_id: provId,
-        producto_id: prod.id,
-        cantidad: cantComprar,
-        precio_base: Number(prod.costo || prod.precio) || 0,
-      });
-      if (!comprasPorProveedor.has(provId)) comprasPorProveedor.set(provId, []);
-      comprasPorProveedor.get(provId).push({
-        producto_id: prod.id,
-        descripcion: prod.nombre,
-        cantidad: Number(cantComprar.toFixed(2)),
-        udm: prod.udm || l.udm || 'unidades',
-        precio_unitario: Number(resuelto.precio_unitario || prod.costo || prod.precio) || 0,
-        alicuota_iva: Number(prod.alicuota_iva ?? 21),
-      });
-    }
-  }
-
-  const createdIds = [];
-  for (const [provId, cmpLineas] of comprasPorProveedor.entries()) {
-    const cmpId = createCompra({
-      contacto_id: provId,
-      fecha: venta.fecha,
-      caracter: 'fiscal',
-      estado: 'Borrador',
-      observaciones: `Abastecimiento Retail por Venta ${venta.numero || `#${venta.id}`}`,
-      lineas: cmpLineas,
-    }, user);
-    createdIds.push(cmpId);
-  }
-  return createdIds;
 }
 
 export function listVentas({ contacto_id, cliente_id, estado } = {}) {
@@ -347,6 +240,7 @@ export function createVenta(b, user = null) {
       cupon_codigo: (b.cupon_codigo || '').trim().toUpperCase(),
       external_source: (b.external_source || '').trim(),
       external_id: (b.external_id || '').trim(),
+      woo_id: b.woo_id ? Number(b.woo_id) : null,
       observaciones: (b.observaciones || '').trim(),
     }, user);
 
@@ -381,55 +275,30 @@ export function createVenta(b, user = null) {
       if (b.cupon_codigo) incrementarUsoCupon(b.cupon_codigo);
       syncUltimoPrecioProductos(lineas);
       if (claseDocumento === 'nota_credito' && b.comprobante_origen_id) {
-        const facOrig = ventaRepo.findById(Number(b.comprobante_origen_id));
-        if (facOrig) {
-          const pend = Math.max(0, Number(facOrig.total || 0) - getFacturaImputado('ventas', facOrig.id));
-          const aImputar = Number(Math.min(total, pend).toFixed(2));
-          if (aImputar > 0) {
-            crearImputacion({
-              fecha,
-              dominio: 'ventas',
-              comprobante_tipo: 'nota_credito',
-              comprobante_id: id,
-              factura_id: facOrig.id,
-              monto_imputado: aImputar,
-            });
-          }
-        }
+        aplicarImputacionNotaCreditoVenta({ id, fecha, total, comprobanteOrigenId: b.comprobante_origen_id });
       }
-      createVentaOperacion({
-        id,
-        numero,
-        fecha,
-        contacto_id: contactoId,
-        clase_documento: claseDocumento,
-      }, lineas, estado === 'Entregada', user);
-      if (estado === 'Confirmada') {
-        dispararAbastecimientoVenta({ id, numero, fecha, clase_documento: claseDocumento }, lineas, user);
-      }
-    }
-    if ((estado === 'Confirmada' || estado === 'Entregada') && total > 0) {
-      const lineasConCuenta = lineas.map(l => {
-        if (l.producto_id) {
-          const ptCta = getPlantillaForProducto(l.producto_id);
-          if (ptCta?.cuenta_venta_id) return { ...l, plan_cuenta_id: ptCta.cuenta_venta_id };
-        }
-        return l;
+      const eventName = estado === 'Entregada' ? 'venta.entregada' : 'venta.confirmada';
+      registerDomainSubscribers();
+      domainBus.emit(eventName, {
+        venta: {
+          id,
+          numero,
+          fecha,
+          clase_documento: claseDocumento,
+          caracter,
+          tipo_comprobante: tipoComprobante,
+          contacto_id: contactoId,
+          neto,
+          iva_monto: ivaMonto,
+          total,
+          asiento_id: null,
+        },
+        lineas,
+        impuestos,
+        diarioId,
+        crearOperacion: true,
+        user,
       });
-      const asientoId = defaultAsientoService.generarAsientoVenta({
-        id,
-        numero,
-        fecha,
-        clase_documento: claseDocumento,
-        diario_id: diarioId,
-        caracter,
-        tipo_comprobante: tipoComprobante,
-        contacto_id: contactoId,
-        neto,
-        iva_monto: ivaMonto,
-        total,
-      }, impuestos, lineasConCuenta);
-      if (asientoId) ventaRepo.update(id, { asiento_id: asientoId }, user);
     }
     return id;
   });
@@ -441,6 +310,9 @@ export function updateVenta(id, b, user = null) {
   const prev = ex.venta;
   const prevLineas = ex.lineas;
   const estado = b.estado !== undefined ? b.estado : prev.estado;
+  if (prev.estado !== estado) {
+    VENTA_SM.assertTransition(prev.estado, estado);
+  }
   if (prev.estado !== 'Anulada' && estado === 'Anulada') {
     if ((prev.cae || '').trim()) {
       throw new Error('No se puede anular directamente una venta con CAE emitido; emití una Nota de Crédito.');
@@ -468,13 +340,9 @@ export function updateVenta(id, b, user = null) {
   );
 
   return ventaRepo.transaction(() => {
-    if (prev.estado === 'Entregada' && estado !== 'Entregada') {
-      const ops = operacionStockRepo.query()
-        .where('referencia_tipo', 'venta')
-        .where('referencia_id', Number(id))
-        .where('estado', 'Confirmado')
-        .all();
-      for (const op of ops) anularOperacionStock(op.id, user);
+    registerDomainSubscribers();
+    if (prev.estado !== 'Anulada' && estado === 'Anulada') {
+      domainBus.emit('venta.anulada', { id, asientoId: prev.asiento_id, user });
     }
     ventaRepo.update(id, {
       numero: b.numero !== undefined ? b.numero.trim() : prev.numero,
@@ -537,42 +405,41 @@ export function updateVenta(id, b, user = null) {
       const nextNum = b.numero !== undefined ? b.numero.trim() : prev.numero;
       const nextFecha = b.fecha || prev.fecha;
       if (claseDocumento === 'nota_credito' && b.comprobante_origen_id) {
-        const facOrig = ventaRepo.findById(Number(b.comprobante_origen_id));
-        if (facOrig) {
-          const pend = Math.max(0, Number(facOrig.total || 0) - getFacturaImputado('ventas', facOrig.id));
-          const aImputar = Number(Math.min(total, pend).toFixed(2));
-          if (aImputar > 0) {
-            crearImputacion({
-              fecha: nextFecha,
-              dominio: 'ventas',
-              comprobante_tipo: 'nota_credito',
-              comprobante_id: id,
-              factura_id: facOrig.id,
-              monto_imputado: aImputar,
-            });
-          }
-        }
+        aplicarImputacionNotaCreditoVenta({ id, fecha: nextFecha, total, comprobanteOrigenId: b.comprobante_origen_id });
       }
       const existingOps = operacionStockRepo.query()
         .where('referencia_tipo', 'venta')
         .where('referencia_id', Number(id))
         .all();
+      const nextContactoId = (b.contacto_id || b.cliente_id) ? Number(b.contacto_id || b.cliente_id) : prev.contacto_id;
+      const nextDiarioId = b.diario_id ? Number(b.diario_id) : (prev.diario_id || defaultAsientoService.resolveDiario({ tipo: 'ventas', caracter })?.id || null);
 
-      if (existingOps.length === 0) {
-        createVentaOperacion({
-          id,
-          numero: nextNum,
-          fecha: nextFecha,
-          contacto_id: (b.contacto_id || b.cliente_id) ? Number(b.contacto_id || b.cliente_id) : prev.contacto_id,
-          clase_documento: prev.clase_documento || 'factura',
-        }, lineas, estado === 'Entregada', user);
-        if (estado === 'Confirmada' && (prev.estado === 'Presupuesto' || prev.estado === 'Borrador')) {
-          dispararAbastecimientoVenta({ id: Number(id), numero: nextNum, fecha: nextFecha, clase_documento: prev.clase_documento || 'factura' }, lineas, user);
-        }
+      const ventaPayload = {
+        id: Number(id),
+        numero: nextNum,
+        fecha: nextFecha,
+        clase_documento: claseDocumento,
+        caracter,
+        tipo_comprobante: tipoComprobante,
+        contacto_id: nextContactoId,
+        neto,
+        iva_monto: ivaMonto,
+        total,
+        asiento_id: prev.asiento_id,
+      };
+
+      if (estado === 'Confirmada' && existingOps.length === 0) {
+        domainBus.emit('venta.confirmada', { venta: ventaPayload, lineas, impuestos, diarioId: nextDiarioId, user });
       } else if (estado === 'Entregada') {
-        for (const op of existingOps) {
-          if (op.estado === 'Borrador') confirmarOperacionStock(op.id, user);
-        }
+        domainBus.emit('venta.entregada', {
+          venta: ventaPayload,
+          lineas,
+          impuestos,
+          diarioId: nextDiarioId,
+          crearOperacion: existingOps.length === 0,
+          confirmarPendientes: existingOps.length > 0,
+          user,
+        });
       }
     }
     return true;
@@ -582,18 +449,12 @@ export function updateVenta(id, b, user = null) {
 export function deleteVenta(id, user = null) {
   const ex = getVentaById(id);
   if (!ex) return;
-  if (ex.venta.estado === 'Confirmada' || ex.venta.estado === 'Entregada') {
-    throw new Error('No se puede eliminar una venta confirmada o entregada; emití una Nota de Crédito para anularla.');
+  if (!['Presupuesto', 'Borrador'].includes(ex.venta.estado)) {
+    throw new Error('No se puede eliminar una venta confirmada, entregada o anulada; emití una Nota de Crédito para revertirla.');
   }
   ventaRepo.transaction(() => {
-    const ops = operacionStockRepo.query()
-      .where('referencia_tipo', 'venta')
-      .where('referencia_id', Number(id))
-      .all();
-    for (const op of ops) {
-      if (op.estado === 'Confirmado') anularOperacionStock(op.id, user);
-      else if (op.estado === 'Borrador') deleteOperacionStock(op.id);
-    }
+    registerDomainSubscribers();
+    domainBus.emit('venta.anulada', { id, asientoId: null, user });
     ventaRepo.delete(id);
   });
 }
@@ -602,10 +463,88 @@ export function archivarVenta(id, archivado = true, user = null) {
   return ventaRepo.setArchivado(id, archivado, user);
 }
 
-function syncUltimoPrecioProductos(lineas) {
-  for (const l of lineas || []) {
-    const pid = Number(l.producto_id || 0);
-    const precio = Number(l.precio_unitario || 0);
-    if (pid > 0 && precio > 0) productoRepo.update(pid, { precio });
+function mapTipoComprobanteNc(tipo) {
+  const t = String(tipo || '').toUpperCase();
+  if (t.endsWith('-A') || t === 'FA-A') return 'NC-A';
+  if (t.endsWith('-B') || t === 'FA-B') return 'NC-B';
+  if (t.endsWith('-C') || t === 'FA-C') return 'NC-C';
+  return 'NC-X';
+}
+
+export function generarNotaCreditoDesdeVenta(ventaId, b = {}, user = null) {
+  const ex = getVentaById(ventaId);
+  if (!ex) throw new Error('Venta original no encontrada');
+  const orig = ex.venta;
+  if (!['Confirmada', 'Entregada'].includes(orig.estado)) {
+    throw new Error('Solo se puede emitir Nota de Crédito desde una venta Confirmada o Entregada.');
   }
+  if (orig.clase_documento === 'nota_credito') {
+    throw new Error('No se puede emitir una Nota de Crédito sobre otra Nota de Crédito.');
+  }
+
+  const origLines = ex.lineas || [];
+  let ncLineas = [];
+  if (Array.isArray(b.lineas) && b.lineas.length > 0) {
+    for (const reqL of b.lineas) {
+      const cant = Number(reqL.cantidad || 0);
+      if (!(cant > 0)) continue;
+      const match = origLines.find(ol =>
+        (reqL.id && Number(ol.id) === Number(reqL.id))
+        || (reqL.producto_id && Number(ol.producto_id) === Number(reqL.producto_id))
+      );
+      if (match && cant > Number(match.cantidad) + 0.0001) {
+        throw new Error(`La cantidad a devolver (${cant}) supera la facturada (${match.cantidad}) para ${match.descripcion || 'el ítem'}.`);
+      }
+      ncLineas.push({
+        producto_id: reqL.producto_id ?? match?.producto_id ?? null,
+        tipo_linea: reqL.tipo_linea || match?.tipo_linea || 'producto',
+        descripcion: reqL.descripcion ?? match?.descripcion ?? '',
+        cantidad: cant,
+        udm: reqL.udm || match?.udm || 'unidades',
+        precio_unitario: reqL.precio_unitario !== undefined ? Number(reqL.precio_unitario) : Number(match?.precio_unitario || 0),
+        alicuota_iva: reqL.alicuota_iva !== undefined ? Number(reqL.alicuota_iva) : Number(match?.alicuota_iva ?? 21),
+        descuento_pct: reqL.descuento_pct !== undefined ? Number(reqL.descuento_pct) : Number(match?.descuento_pct || 0),
+      });
+    }
+  } else {
+    ncLineas = origLines.map(ol => ({
+      producto_id: ol.producto_id,
+      tipo_linea: ol.tipo_linea || 'producto',
+      descripcion: ol.descripcion,
+      cantidad: Number(ol.cantidad || 0),
+      udm: ol.udm || 'unidades',
+      precio_unitario: Number(ol.precio_unitario || 0),
+      alicuota_iva: Number(ol.alicuota_iva ?? 21),
+      descuento_pct: Number(ol.descuento_pct || 0),
+    })).filter(l => l.cantidad > 0);
+  }
+
+  if (ncLineas.length === 0) {
+    throw new Error('Debe incluir al menos un ítem con cantidad mayor a 0 para emitir la Nota de Crédito.');
+  }
+
+  return createVenta({
+    contacto_id: orig.contacto_id,
+    diario_id: b.diario_id ?? orig.diario_id,
+    caracter: b.caracter || orig.caracter || 'fiscal',
+    tipo_comprobante: b.tipo_comprobante || mapTipoComprobanteNc(orig.tipo_comprobante),
+    clase_documento: 'nota_credito',
+    comprobante_origen_id: orig.id,
+    punto_venta: b.punto_venta ?? orig.punto_venta,
+    fecha: b.fecha || new Date().toISOString().slice(0, 10),
+    moneda: orig.moneda || 'ARS',
+    tipo_cambio: Number(orig.tipo_cambio || 1),
+    jurisdiccion_codigo: orig.jurisdiccion_codigo || '',
+    ubicacion_id: orig.ubicacion_id || null,
+    estado: b.estado || 'Confirmada',
+    observaciones: b.observaciones || `NC por devolución sobre ${orig.numero || `Venta #${orig.id}`}`,
+    lineas: ncLineas,
+    impuestos: Array.isArray(b.impuestos) ? b.impuestos : (ex.impuestos || []).map(i => ({
+      impuesto_id: i.impuesto_id,
+      nombre: i.nombre,
+      alicuota: i.alicuota,
+      base_imponible: i.base_imponible,
+      monto: i.monto,
+    })),
+  }, user);
 }

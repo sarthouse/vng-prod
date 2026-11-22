@@ -54,10 +54,18 @@ export function mountDetailView(container, {
   };
 
   const currentIdx = steps.findIndex(s => s.key === currentStep);
+  const SUCCESS_STEPS = new Set(['Completada', 'Entregada', 'Confirmado', 'Confirmada']);
+  const DANGER_STEPS = new Set(['Cancelada', 'Anulada']);
   const stepperHtml = steps.length ? `
     <div class="ve-stepper" aria-label="Estados">
       ${steps.map((s, i) => {
-        const stateCls = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending';
+        let stateCls = 'pending';
+        if (i < currentIdx) stateCls = 'done';
+        else if (i === currentIdx) {
+          if (SUCCESS_STEPS.has(s.key)) stateCls = 'active-success';
+          else if (DANGER_STEPS.has(s.key)) stateCls = 'active-danger';
+          else stateCls = 'active';
+        }
         return `<div class="ve-step ${stateCls}"><span>${esc(s.label)}</span></div>`;
       }).join('')}
     </div>

@@ -40,6 +40,9 @@ function enhanceMoneyInput(input) {
 
   const wrap = document.createElement('span');
   wrap.className = 'money-wrap';
+  if (input.classList.contains('pv-num-input')) {
+    wrap.classList.add('pv-num-input');
+  }
   if (input.style.width) {
     wrap.style.width = input.style.width;
     input.style.width = '100%';
@@ -570,8 +573,12 @@ export function downloadCSV(csv, filename) {
 
 export function exportRowsToCSV(headers, rows, filename) {
   const escCell = (v) => {
-    const s = String(v ?? '').replace(/\r?\n/g, ' ');
-    return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    let s = String(v ?? '').replace(/\r?\n/g, ' ');
+    // Protección contra CSV Formula Injection (=, +, @, \t, \r o - no numérico)
+    if (/^[=+@\t\r]/.test(s) || (/^-/.test(s) && !/^-[\d.,\s]+$/.test(s))) {
+      s = `'${s}`;
+    }
+    return /[;"\r\n,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [
     headers.map(escCell).join(';'),

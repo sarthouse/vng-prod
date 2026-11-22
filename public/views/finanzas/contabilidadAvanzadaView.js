@@ -1,6 +1,6 @@
 import { api, toast, refreshKPIs } from '../../lib/api.js';
 import { esc, fmtMoney, fmtDate } from '../../lib/format.js';
-import { mountPageView, showConfirmModal } from '../../lib/engine/index.js';
+import { mountPageView, showConfirmModal, renderSpreadsheetTable } from '../../lib/engine/index.js';
 
 function currentMonthRange() {
   const now = new Date();
@@ -342,34 +342,13 @@ export async function renderCierresYMonedasView() {
         </div>
 
         <div class="card">
-          <div class="card-header"><h2>Cotizaciones Multimoneda</h2></div>
-          <form id="form-cotiz" class="form-grid mb-md">
-            <label>
-              <span>Moneda</span>
-              <select name="moneda">
-                <option value="USD">USD — Dólar</option>
-                <option value="EUR">EUR — Euro</option>
-              </select>
-            </label>
-            <label><span>Fecha *</span><input type="date" name="fecha" required value="${new Date().toISOString().slice(0, 10)}" /></label>
-            <label><span>Cotización ARS *</span><input type="number" step="0.01" min="0.01" name="cotizacion" required placeholder="1050.00" /></label>
-            <div class="self-end"><button type="submit" class="btn btn-primary">Guardar</button></div>
-          </form>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>Fecha</th><th>Moneda</th><th class="num">Cotización</th><th>Fuente</th></tr></thead>
-              <tbody>
-                ${cotizaciones.length ? cotizaciones.map(c => `
-                  <tr>
-                    <td>${fmtDate(c.fecha)}</td>
-                    <td><strong>${esc(c.moneda)}</strong></td>
-                    <td class="num">${fmtMoney(c.cotizacion)}</td>
-                    <td>${esc(c.fuente || 'manual')}</td>
-                  </tr>
-                `).join('') : '<tr><td colspan="4" class="muted text-center">Sin cotizaciones cargadas.</td></tr>'}
-              </tbody>
-            </table>
+          <div class="card-header">
+            <div>
+              <h2>Cotizaciones Multimoneda</h2>
+              <span class="muted text-sm">Click en una celda para editar o completá la fila inferior para cargar una cotización.</span>
+            </div>
           </div>
+          <div id="cotiz-sheet-host"></div>
         </div>
       </div>
     `;
@@ -416,22 +395,87 @@ export async function renderCierresYMonedasView() {
       } catch (err) { toast(err.message, true); }
     }));
 
-    root.querySelector('#form-cotiz')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      try {
-        await api('/api/fiscal/cotizaciones', {
-          method: 'POST',
-          body: JSON.stringify({
-            moneda: fd.get('moneda'),
-            fecha: fd.get('fecha'),
-            cotizacion: Number(fd.get('cotizacion')),
-          }),
-        });
-        toast('Cotización guardada');
-        refreshKPIs();
-        render();
-      } catch (err) { toast(err.message, true); }
+    renderSpreadsheetTable(root.querySelector('#cotiz-sheet-host'), {
+      rows: cotizaciones,
+      emptyText: 'Sin cotizaciones cargadas.',
+      compact: true,
+      defaultNewRow: () => ({
+        fecha: new Date().toISOString().slice(0, 10),
+        moneda: 'USD',
+        cotizacion: '',
+        fuente: 'manual',
+      }),
+      onCreateRow: async ({ row }) => {
+        if (!row.fecha || !(Number(row.cotizacion) > 0)) return false;
+        try {
+          await api('/api/fiscal/cotizaciones', {
+            method: 'POST',
+            body: JSON.stringify({
+              moneda: row.moneda || 'USD',
+              fecha: row.fecha,
+              cotizacion: Number(row.cotizacion),
+            }),
+          });
+          toast('Cotización guardada');
+          refreshKPIs();
+          await render();
+          return false;
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
+      columns: [
+        {
+          key: 'fecha',
+          label: 'Fecha',
+          type: 'date',
+          render: c => fmtDate(c.fecha),
+        },
+        {
+          key: 'moneda',
+          label: 'Moneda',
+          type: 'select',
+          options: [
+            { value: 'USD', label: 'USD — Dólar' },
+            { value: 'EUR', label: 'EUR — Euro' },
+          ],
+          render: c => `<strong>${esc(c.moneda || 'USD')}</strong>`,
+        },
+        {
+          key: 'cotizacion',
+          label: 'Cotización ARS',
+          type: 'number',
+          step: 0.01,
+          min: 0.01,
+          align: 'right',
+          parse: v => Number(v) || 0,
+          render: c => (Number(c.cotizacion) > 0 ? fmtMoney(c.cotizacion) : '<span class="muted">Ej: 1050.00</span>'),
+        },
+        {
+          key: 'fuente',
+          label: 'Fuente',
+          editable: () => false,
+          render: c => esc(c.fuente || 'manual'),
+        },
+      ],
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          await api('/api/fiscal/cotizaciones', {
+            method: 'POST',
+            body: JSON.stringify({
+              moneda: key === 'moneda' ? value : row.moneda,
+              fecha: key === 'fecha' ? value : row.fecha,
+              cotizacion: key === 'cotizacion' ? Number(value) : Number(row.cotizacion),
+            }),
+          });
+          toast('Cotización actualizada');
+          refreshKPIs();
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
     });
   }
 

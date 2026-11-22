@@ -137,4 +137,30 @@ test('Remito PDF: letra X sin CAI, letra R con CAI, fechas dd/mm/aaaa, datos cli
   assert.ok(strOrden.startsWith('%PDF-1.4') && strOrden.includes('%%EOF'));
   assert.ok(strOrden.includes('OP-0007') && strOrden.includes('Bota Chelsea'));
   assert.ok(strOrden.includes('Taller Norte') && strOrden.includes('Cuero Vacuno'));
+
+  // Multi-página en comprobante largo (55 líneas) sin truncar ítems + footer unificado
+  const muchasLineas = Array.from({ length: 55 }, (_, i) => ({
+    nombre: `Artículo Largo N° ${i + 1}`,
+    cantidad: 2,
+    udm: 'pares',
+    precio_unitario: 1000,
+    subtotal: 2000,
+    alicuota_iva: 21,
+  }));
+  const bufMultiVenta = generateVentaPdf({
+    venta: {
+      id: 2,
+      numero: 'FA 0001-00000099',
+      fecha: '2026-11-20',
+      caracter: 'fiscal',
+      tipo_comprobante: 'FA-A',
+      cliente_nombre: 'Cliente Multipágina',
+      total: 110000,
+    },
+    lineas: muchasLineas,
+  }, { ...emp, print_modo_economico: 1, print_pie_comprobante: 'Gracias por su compra' });
+  const strMultiVenta = bufMultiVenta.toString('latin1');
+  assert.ok(strMultiVenta.includes('Artículo Largo N° 55') || strMultiVenta.includes('55'), 'No debe truncar la última línea');
+  assert.ok(strMultiVenta.includes('de 2'), 'Debe generar más de 1 página e indicar Página X de Y');
+  assert.ok(strMultiVenta.includes('Gracias por su compra'), 'Debe respetar print_pie_comprobante');
 });

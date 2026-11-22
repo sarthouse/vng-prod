@@ -26,7 +26,7 @@ export class BaseRepository {
   }
 
   query(alias = null) {
-    return new QueryBuilder(this.db, this.table, alias);
+    return new QueryBuilder(this.db, this.table, alias, this.model);
   }
 
   findWhere(filters = {}, { orderBy = null, limit = null } = {}) {
@@ -55,7 +55,92 @@ export class BaseRepository {
   findById(id) {
     return this.db
       .prepare(`SELECT * FROM ${this.table} WHERE ${this.primaryKey} = ?`)
-      .get(Number(id));
+      .get(Number(id)) ?? null;
+  }
+
+  find(id) {
+    return this.findById(id);
+  }
+
+  findOrFail(id, errorMessage = null) {
+    const row = this.findById(id);
+    if (!row) {
+      const err = new Error(errorMessage || `Registro no encontrado en ${this.table} (#${id})`);
+      err.status = 404;
+      throw err;
+    }
+    return row;
+  }
+
+  _applyWhereObj(qb, whereObj = {}) {
+    if (whereObj && typeof whereObj === 'object') {
+      for (const [k, v] of Object.entries(whereObj)) {
+        if (v !== undefined) qb.where(k, v);
+      }
+    }
+    return qb;
+  }
+
+  findBy(whereObj = {}) {
+    return this._applyWhereObj(this.query(), whereObj).first();
+  }
+
+  first(whereObj = null) {
+    return this._applyWhereObj(this.query(), whereObj || {}).first();
+  }
+
+  where(col, opOrVal, maybeVal) {
+    return this.query().where(col, opOrVal, maybeVal);
+  }
+
+  whereIn(col, values = []) {
+    return this.query().whereIn(col, values);
+  }
+
+  whereNull(col) {
+    return this.query().whereNull(col);
+  }
+
+  whereNotNull(col) {
+    return this.query().whereNotNull(col);
+  }
+
+  pluck(col, whereObj = null) {
+    return this._applyWhereObj(this.query(), whereObj || {}).pluck(col);
+  }
+
+  count(whereObj = null) {
+    return this._applyWhereObj(this.query(), whereObj || {}).count();
+  }
+
+  exists(whereObj = null) {
+    return this._applyWhereObj(this.query(), whereObj || {}).exists();
+  }
+
+  findOrCreate(uniqueWhere = {}, defaults = {}, actor = null) {
+    return this.transaction(() => {
+      const existing = this.findBy(uniqueWhere);
+      if (existing) return existing;
+      const payload = { ...uniqueWhere, ...defaults };
+      this.validate(payload);
+      const id = this.create(payload, actor);
+      return this.findById(id);
+    });
+  }
+
+  upsert(uniqueWhere = {}, data = {}, actor = null) {
+    return this.transaction(() => {
+      const existing = this.findBy(uniqueWhere);
+      if (existing) {
+        this.validate(data, { partial: true });
+        this.update(existing[this.primaryKey], data, actor);
+        return this.findById(existing[this.primaryKey]);
+      }
+      const payload = { ...uniqueWhere, ...data };
+      this.validate(payload);
+      const id = this.create(payload, actor);
+      return this.findById(id);
+    });
   }
 
   validate(data, { partial = false } = {}) {

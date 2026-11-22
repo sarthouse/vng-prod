@@ -21,6 +21,7 @@ import { handleTesoreriaRoutes } from './tesoreriaRoutes.js';
 import { handleContactosRoutes } from './contactosRoutes.js';
 import { handleFiscalRoutes } from './fiscalRoutes.js';
 import { handleTareaRoutes } from './tareaRoutes.js';
+import { handleWooRoutes } from './wooRoutes.js';
 
 export { json };
 
@@ -71,6 +72,13 @@ export async function handleApi(req, res, pathname) {
     }
   }
   if (pathname.startsWith('/api/ventas')) {
+    if (!hasAny(isWrite ? ['comercial.editar', 'ventas.editar'] : ['comercial.ver', 'ventas.ver'])) {
+      if (deny(isWrite ? 'comercial.editar' : 'comercial.ver')) return;
+    }
+  }
+  if (pathname.startsWith('/api/woo/config')) {
+    if (deny('sistema.config')) return;
+  } else if (pathname.startsWith('/api/woo')) {
     if (!hasAny(isWrite ? ['comercial.editar', 'ventas.editar'] : ['comercial.ver', 'ventas.ver'])) {
       if (deny(isWrite ? 'comercial.editar' : 'comercial.ver')) return;
     }
@@ -194,6 +202,7 @@ export async function handleApi(req, res, pathname) {
   if (await handleContactosRoutes(req, res, pathname)) return;
   if (await handleFiscalRoutes(req, res, pathname)) return;
   if (await handleTareaRoutes(req, res, pathname, user)) return;
+  if (await handleWooRoutes(req, res, pathname, user)) return;
 
   return json(res, 404, { error: 'Endpoint no encontrado' });
 }

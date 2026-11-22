@@ -1,12 +1,19 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
+import { createStateMachine } from '../../core/stateMachine.js';
+import { domainBus } from '../../core/eventBus.js';
 import { MODELS } from '../../db/models.js';
-import { anularOperacionStock, createOperacionStock, deleteOperacionStock, operacionStockRepo } from '../inventario/operacionStockService.js';
 import { getNextNumeroDocumento, resolveNumeroDocumento } from '../config/configService.js';
-import { defaultAsientoService } from '../finanzas/asientoService.js';
 import { crearImputacion, getFacturaImputado } from '../finanzas/imputacionService.js';
 import { calcularFechaVencimiento, getContactoCondiciones, resolverPrecioCompra } from './condicionesComercialesService.js';
 import { sanitizeDocumentoLineas, computeDocumentoTotales } from './documentoComercialHelper.js';
-import { registrarHistorialCostoPrecio } from '../inventario/productoService.js';
+import { registerDomainSubscribers } from '../domainEvents.js';
+import { getPlantillaForProducto } from './compraEfectosHelper.js';
+
+export const COMPRA_SM = createStateMachine({
+  Borrador: ['Confirmado', 'Anulada'],
+  Confirmado: ['Anulada'],
+  Anulada: [],
+}, { label: 'Compra' });
 
 export const compraRepo = new BaseRepository({
   model: MODELS.compras,
@@ -14,7 +21,6 @@ export const compraRepo = new BaseRepository({
 });
 const compraLineaRepo = new BaseRepository({ model: MODELS.compra_lineas });
 const compraImpuestoRepo = new BaseRepository({ model: MODELS.compra_impuestos });
-const productoRepo = new BaseRepository({ model: MODELS.productos });
 const pagoRepo = new BaseRepository({ model: MODELS.pagos });
 
 function sanitizeCompraLineas(lineas, caracter = 'fiscal', tipoComp = 'FA-A') {
@@ -24,46 +30,6 @@ function sanitizeCompraLineas(lineas, caracter = 'fiscal', tipoComp = 'FA-A') {
     defaultUdm: 'unidades',
     allowTiposLinea: false,
   });
-}
-
-function getPlantillaForProducto(productoId) {
-  return productoRepo.query('p')
-    .select('pt.tipo', 'pt.cuenta_compra_id')
-    .innerJoin('producto_plantillas', 'pt', 'pt.id', 'p.plantilla_id')
-    .where('p.id', Number(productoId))
-    .get();
-}
-
-function createCompraOperacion(compra, lineas, recibirInmediato = false, user = null) {
-  const stockLines = (lineas || []).filter(l => {
-    if (!l.producto_id || l.cantidad <= 0) return false;
-    const row = getPlantillaForProducto(l.producto_id);
-    return row?.tipo !== 'servicio';
-  });
-  if (stockLines.length === 0) return null;
-
-  const isNC = compra.clase_documento === 'nota_credito';
-  const ubiRepo = new BaseRepository({ model: MODELS.ubicaciones });
-  const depId = compra.ubicacion_id || ubiRepo.query().select('id').where('codigo', 'DEP-CENTRAL').get()?.id || null;
-  const provUbiId = ubiRepo.query().select('id').where('codigo', 'VIRT-PROV').get()?.id || null;
-
-  return createOperacionStock({
-    fecha: compra.fecha,
-    tipo: isNC ? 'entrega' : 'recepcion',
-    ubicacion_origen_id: isNC ? depId : provUbiId,
-    ubicacion_destino_id: isNC ? provUbiId : depId,
-    contacto_id: compra.contacto_id,
-    referencia_tipo: 'compra',
-    referencia_id: compra.id,
-    estado: recibirInmediato ? 'Confirmado' : 'Borrador',
-    motivo: `${isNC ? 'Devolución NC' : 'Recepción'} ${compra.numero || `Compra #${compra.id}`}`,
-    lineas: stockLines.map(l => ({
-      producto_id: l.producto_id,
-      descripcion: l.descripcion,
-      cantidad: l.cantidad,
-      udm: l.udm,
-    })),
-  }, user);
 }
 
 export function listCompras({ contacto_id, proveedor_id } = {}) {
@@ -205,6 +171,7 @@ export function createCompra(b, user = null) {
       metodo_pago_id: metodoPagoId,
       jurisdiccion_codigo: (b.jurisdiccion_codigo || '').trim(),
       orden_id: b.orden_id ? Number(b.orden_id) : null,
+      orden_compra_id: b.orden_compra_id ? Number(b.orden_compra_id) : null,
       ubicacion_id: b.ubicacion_id ? Number(b.ubicacion_id) : null,
       estado,
       neto,
@@ -244,7 +211,6 @@ export function createCompra(b, user = null) {
     }
 
     if (estado === 'Confirmado') {
-      syncUltimoCostoProductos(lineas, { compraId: id, numero, user });
       if (claseDocumento === 'nota_credito' && b.comprobante_origen_id) {
         const facOrig = compraRepo.findById(Number(b.comprobante_origen_id));
         if (facOrig) {
@@ -262,16 +228,9 @@ export function createCompra(b, user = null) {
           }
         }
       }
-      createCompraOperacion({
-        id,
-        numero,
-        fecha,
-        contacto_id: contactoId,
-        clase_documento: claseDocumento,
-      }, lineas, Boolean(b.recibir_inmediato), user);
-
-      if (total > 0) {
-        const asientoId = defaultAsientoService.generarAsientoCompra({
+      registerDomainSubscribers();
+      domainBus.emit('compra.confirmada', {
+        compra: {
           id,
           numero,
           fecha,
@@ -283,9 +242,13 @@ export function createCompra(b, user = null) {
           neto,
           iva_monto: ivaMonto,
           total,
-        }, impuestos, lineas);
-        if (asientoId) compraRepo.update(id, { asiento_id: asientoId }, user);
-      }
+        },
+        impuestos,
+        lineas,
+        recibirInmediato: Boolean(b.recibir_inmediato),
+        syncCosto: true,
+        user,
+      });
     }
     return id;
   });
@@ -382,7 +345,7 @@ export function updateCompra(id, b, user = null) {
 export function confirmarCompra(id, b = {}, user = null) {
   const ex = getCompraById(id);
   if (!ex) return false;
-  if (ex.compra.estado === 'Confirmado') throw new Error('La compra ya está confirmada');
+  COMPRA_SM.assertTransition(ex.compra.estado, 'Confirmado');
 
   const numero = (b.numero !== undefined ? String(b.numero) : (ex.compra.numero || '')).trim();
   const caracter = ex.compra.caracter || 'fiscal';
@@ -395,34 +358,48 @@ export function confirmarCompra(id, b = {}, user = null) {
   }
 
   return compraRepo.transaction(() => {
+    const fechaFinal = b.fecha || ex.compra.fecha;
     compraRepo.update(id, {
       numero: finalNum,
-      fecha: b.fecha || ex.compra.fecha,
+      fecha: fechaFinal,
       punto_venta: b.punto_venta !== undefined ? String(b.punto_venta).trim() : ex.compra.punto_venta,
       cae: b.cae !== undefined ? String(b.cae).trim() : ex.compra.cae,
       cae_vto: b.cae_vto !== undefined ? String(b.cae_vto).trim() : ex.compra.cae_vto,
       estado: 'Confirmado',
     }, user);
 
-    syncUltimoCostoProductos(ex.lineas, { compraId: Number(id), numero: finalNum, user });
+    registerDomainSubscribers();
+    if (ex.compra.clase_documento === 'nota_credito' && ex.compra.comprobante_origen_id) {
+      const facOrig = compraRepo.findById(Number(ex.compra.comprobante_origen_id));
+      if (facOrig) {
+        const pend = Math.max(0, Number(facOrig.total || 0) - getFacturaImputado('compras', facOrig.id));
+        const aImputar = Number(Math.min(Number(ex.compra.total || 0), pend).toFixed(2));
+        if (aImputar > 0) {
+          crearImputacion({
+            fecha: fechaFinal,
+            dominio: 'compras',
+            comprobante_tipo: 'nota_credito',
+            comprobante_id: Number(id),
+            factura_id: facOrig.id,
+            monto_imputado: aImputar,
+          });
+        }
+      }
+    }
 
-    createCompraOperacion({
-      id: Number(id),
-      numero: finalNum,
-      fecha: b.fecha || ex.compra.fecha,
-      contacto_id: ex.compra.contacto_id,
-      clase_documento: ex.compra.clase_documento || 'factura',
-    }, ex.lineas, Boolean(b.recibir_inmediato), user);
-
-    if (Number(ex.compra.total) > 0) {
-      const asientoId = defaultAsientoService.generarAsientoCompra({
+    domainBus.emit('compra.confirmada', {
+      compra: {
         ...ex.compra,
         id: Number(id),
         numero: finalNum,
-        fecha: b.fecha || ex.compra.fecha,
-      }, ex.impuestos, ex.lineas);
-      if (asientoId) compraRepo.update(id, { asiento_id: asientoId }, user);
-    }
+        fecha: fechaFinal,
+      },
+      impuestos: ex.impuestos,
+      lineas: ex.lineas,
+      recibirInmediato: Boolean(b.recibir_inmediato),
+      syncCosto: true,
+      user,
+    });
     return true;
   });
 }
@@ -430,18 +407,12 @@ export function confirmarCompra(id, b = {}, user = null) {
 export function deleteCompra(id, user = null) {
   const ex = getCompraById(id);
   if (!ex) return;
-  if (ex.compra.estado === 'Confirmado') {
-    throw new Error('No se puede eliminar una compra confirmada; emití una Nota de Crédito del proveedor.');
+  if (ex.compra.estado !== 'Borrador') {
+    throw new Error('Solo se pueden eliminar compras en estado Borrador; usá Anular o Nota de Crédito.');
   }
   compraRepo.transaction(() => {
-    const ops = operacionStockRepo.query()
-      .where('referencia_tipo', 'compra')
-      .where('referencia_id', Number(id))
-      .all();
-    for (const op of ops) {
-      if (op.estado === 'Confirmado') anularOperacionStock(op.id, user);
-      else if (op.estado === 'Borrador') deleteOperacionStock(op.id);
-    }
+    registerDomainSubscribers();
+    domainBus.emit('compra.anulada', { id, asientoId: null, user });
     compraRepo.delete(id);
   });
 }
@@ -449,23 +420,13 @@ export function deleteCompra(id, user = null) {
 export function anularCompra(id, user = null) {
   const ex = getCompraById(id);
   if (!ex) return false;
-  if (ex.compra.estado === 'Anulada') throw new Error('La compra ya está anulada');
+  COMPRA_SM.assertTransition(ex.compra.estado, 'Anulada');
   if (getFacturaImputado('compras', Number(id)) > 0) {
     throw new Error('No se puede anular directamente una compra con pagos o notas de crédito imputadas; emití una Nota de Crédito del proveedor.');
   }
   return compraRepo.transaction(() => {
-    const ops = operacionStockRepo.query()
-      .where('referencia_tipo', 'compra')
-      .where('referencia_id', Number(id))
-      .all();
-    for (const op of ops) {
-      if (op.estado === 'Confirmado') anularOperacionStock(op.id, user);
-      else if (op.estado === 'Borrador') deleteOperacionStock(op.id);
-    }
-    if (ex.compra.asiento_id) {
-      try { defaultAsientoService.revertirAsiento(ex.compra.asiento_id, { motivo: 'Anulación de compra' }); }
-      catch { /* si ya fue revertido o no existe, continuar */ }
-    }
+    registerDomainSubscribers();
+    domainBus.emit('compra.anulada', { id, asientoId: ex.compra.asiento_id, user });
     compraRepo.update(id, { estado: 'Anulada' }, user);
     return true;
   });
@@ -475,28 +436,86 @@ export function archivarCompra(id, archivado = true, user = null) {
   return compraRepo.setArchivado(id, archivado, user);
 }
 
-function syncUltimoCostoProductos(lineas, { compraId = null, numero = '', user = null } = {}) {
-  for (const l of lineas || []) {
-    const pid = Number(l.producto_id || 0);
-    const costo = Number(l.precio_unitario || 0);
-    if (pid > 0 && costo > 0) {
-      const prev = productoRepo.findById(pid);
-      if (prev) {
-        productoRepo.update(pid, { costo });
-        registrarHistorialCostoPrecio({
-          producto_id: prev.id,
-          plantilla_id: prev.plantilla_id,
-          costo_anterior: prev.costo ?? 0,
-          costo_nuevo: costo,
-          precio_anterior: prev.precio ?? 0,
-          precio_nuevo: prev.precio ?? 0,
-          origen: 'compra',
-          referencia_tipo: 'compra',
-          referencia_id: compraId,
-          observacion: numero ? `Compra ${numero}` : 'Confirmación de compra',
-          user,
-        });
-      }
-    }
+function mapTipoComprobanteNcCompra(tipo) {
+  const t = String(tipo || '').toUpperCase();
+  if (t.endsWith('-A') || t === 'FA-A') return 'NC-A';
+  if (t.endsWith('-B') || t === 'FA-B') return 'NC-B';
+  if (t.endsWith('-C') || t === 'FA-C') return 'NC-C';
+  return 'NC-X';
+}
+
+export function generarNotaCreditoDesdeCompra(compraId, b = {}, user = null) {
+  const ex = getCompraById(compraId);
+  if (!ex) throw new Error('Compra original no encontrada');
+  const orig = ex.compra;
+  if (orig.estado !== 'Confirmado') {
+    throw new Error('Solo se puede emitir Nota de Crédito desde una compra Confirmada.');
   }
+  if (orig.clase_documento === 'nota_credito') {
+    throw new Error('No se puede emitir una Nota de Crédito sobre otra Nota de Crédito.');
+  }
+
+  const origLines = ex.lineas || [];
+  let ncLineas = [];
+  if (Array.isArray(b.lineas) && b.lineas.length > 0) {
+    for (const reqL of b.lineas) {
+      const cant = Number(reqL.cantidad || 0);
+      if (!(cant > 0)) continue;
+      const match = origLines.find(ol =>
+        (reqL.id && Number(ol.id) === Number(reqL.id))
+        || (reqL.producto_id && Number(ol.producto_id) === Number(reqL.producto_id))
+      );
+      if (match && cant > Number(match.cantidad) + 0.0001) {
+        throw new Error(`La cantidad a devolver (${cant}) supera la comprada (${match.cantidad}) para ${match.descripcion || 'el ítem'}.`);
+      }
+      ncLineas.push({
+        producto_id: reqL.producto_id ?? match?.producto_id ?? null,
+        descripcion: reqL.descripcion ?? match?.descripcion ?? '',
+        cantidad: cant,
+        udm: reqL.udm || match?.udm || 'unidades',
+        precio_unitario: reqL.precio_unitario !== undefined ? Number(reqL.precio_unitario) : Number(match?.precio_unitario || 0),
+        alicuota_iva: reqL.alicuota_iva !== undefined ? Number(reqL.alicuota_iva) : Number(match?.alicuota_iva ?? 21),
+      });
+    }
+  } else {
+    ncLineas = origLines.map(ol => ({
+      producto_id: ol.producto_id,
+      descripcion: ol.descripcion,
+      cantidad: Number(ol.cantidad || 0),
+      udm: ol.udm || 'unidades',
+      precio_unitario: Number(ol.precio_unitario || 0),
+      alicuota_iva: Number(ol.alicuota_iva ?? 21),
+    })).filter(l => l.cantidad > 0);
+  }
+
+  if (ncLineas.length === 0) {
+    throw new Error('Debe incluir al menos un ítem con cantidad mayor a 0 para emitir la Nota de Crédito.');
+  }
+
+  return createCompra({
+    contacto_id: orig.contacto_id,
+    diario_id: b.diario_id ?? orig.diario_id,
+    caracter: b.caracter || orig.caracter || 'fiscal',
+    tipo_comprobante: b.tipo_comprobante || mapTipoComprobanteNcCompra(orig.tipo_comprobante),
+    clase_documento: 'nota_credito',
+    comprobante_origen_id: orig.id,
+    numero: b.numero || '',
+    punto_venta: b.punto_venta ?? orig.punto_venta,
+    fecha: b.fecha || new Date().toISOString().slice(0, 10),
+    moneda: orig.moneda || 'ARS',
+    tipo_cambio: Number(orig.tipo_cambio || 1),
+    jurisdiccion_codigo: orig.jurisdiccion_codigo || '',
+    ubicacion_id: orig.ubicacion_id || null,
+    estado: b.estado || 'Confirmado',
+    recibir_inmediato: b.recibir_inmediato !== false,
+    observaciones: b.observaciones || `NC por devolución sobre ${orig.numero || `Compra #${orig.id}`}`,
+    lineas: ncLineas,
+    impuestos: Array.isArray(b.impuestos) ? b.impuestos : (ex.impuestos || []).map(i => ({
+      impuesto_id: i.impuesto_id,
+      nombre: i.nombre,
+      alicuota: i.alicuota,
+      base_imponible: i.base_imponible,
+      monto: i.monto,
+    })),
+  }, user);
 }

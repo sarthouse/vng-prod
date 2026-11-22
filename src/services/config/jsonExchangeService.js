@@ -1,5 +1,6 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
+import { sanitizeRichHtml } from '../../core/sanitize.js';
 import { createPlantilla } from '../inventario/productoService.js';
 import { createReceta, addRecetaEtapa, addRecetaLinea } from '../produccion/recetaService.js';
 
@@ -67,9 +68,11 @@ const REGISTRY = {
       };
       if (existing) {
         if (mode === 'skip_existing') return 'skipped';
+        categoriaRepo.validate(data, { partial: true });
         categoriaRepo.update(existing.id, data);
         return 'updated';
       }
+      categoriaRepo.validate(data);
       categoriaRepo.create(data);
       return 'created';
     },
@@ -97,9 +100,11 @@ const REGISTRY = {
       const data = { atributo, valor, abreviatura: normStr(item.abreviatura) };
       if (existing) {
         if (mode === 'skip_existing') return 'skipped';
+        varianteRepo.validate(data, { partial: true });
         varianteRepo.update(existing.id, data);
         return 'updated';
       }
+      varianteRepo.validate(data);
       varianteRepo.create(data);
       return 'created';
     },
@@ -118,6 +123,7 @@ const REGISTRY = {
         codigo: c.codigo,
         nombre: c.nombre,
         tipo: c.tipo,
+        naturaleza: c.naturaleza || 'deudora',
         imputable: Number(c.imputable ?? 1),
         padre_codigo: c.padre_id ? (byId.get(c.padre_id)?.codigo || '') : '',
         activa: Number(c.activa ?? 1),
@@ -127,23 +133,42 @@ const REGISTRY = {
       const codigo = normStr(item.codigo);
       const nombre = normStr(item.nombre);
       if (!codigo || !nombre) throw new Error('Falta código o nombre de cuenta');
+      const tipo = normStr(item.tipo) || 'egreso';
+      const defaultNat = (tipo === 'ingreso' || tipo === 'pasivo' || tipo === 'patrimonio') ? 'acreedora' : 'deudora';
       const padre = item.padre_codigo ? planCuentaRepo.query().where('codigo', normStr(item.padre_codigo)).get() : null;
       const existing = planCuentaRepo.query().where('codigo', codigo).get();
       const data = {
         codigo,
         nombre,
-        tipo: normStr(item.tipo) || 'egreso',
+        tipo,
+        naturaleza: normStr(item.naturaleza) || defaultNat,
         imputable: item.imputable !== undefined ? (item.imputable ? 1 : 0) : 1,
         padre_id: padre?.id || null,
-        activa: item.activa !== undefined ? (item.activa ? 1 : 0) : 1,
+        activo: (item.activo ?? item.activa) !== undefined ? ((item.activo ?? item.activa) ? 1 : 0) : 1,
       };
       if (existing) {
         if (mode === 'skip_existing') return 'skipped';
+        planCuentaRepo.validate(data, { partial: true });
         planCuentaRepo.update(existing.id, data);
         return 'updated';
       }
+      planCuentaRepo.validate(data);
       planCuentaRepo.create(data);
       return 'created';
+    },
+    afterImport: (items) => {
+      const all = planCuentaRepo.findAll();
+      const byCod = new Map(all.map(c => [normStr(c.codigo), c]));
+      for (const item of items) {
+        const pc = byCod.get(normStr(item.codigo));
+        const padreCod = normStr(item.padre_codigo);
+        if (pc && padreCod && !pc.padre_id) {
+          const padre = byCod.get(padreCod);
+          if (padre && padre.id !== pc.id) {
+            planCuentaRepo.update(pc.id, { padre_id: padre.id });
+          }
+        }
+      }
     },
   },
 
@@ -185,8 +210,11 @@ const REGISTRY = {
       const nombre = normStr(item.nombre);
       if (!nombre) throw new Error('Falta nombre de contacto');
       const cuit = normStr(item.cuit);
+      const cuitDigits = cuit.replace(/\D+/g, '');
+      const emailNorm = normStr(item.email).toLowerCase();
       const all = contactoRepo.findAll();
-      const existing = (cuit && all.find(c => normStr(c.cuit) === cuit))
+      const existing = (cuitDigits && all.find(c => String(c.cuit || '').replace(/\D+/g, '') === cuitDigits))
+        || (emailNorm && all.find(c => normStr(c.email).toLowerCase() === emailNorm))
         || all.find(c => normStr(c.nombre).toLowerCase() === nombre.toLowerCase());
       const data = {
         nombre,
@@ -202,13 +230,15 @@ const REGISTRY = {
         es_proveedor: item.es_proveedor ? 1 : 0,
         es_taller: item.es_taller ? 1 : 0,
         es_empleado: item.es_empleado ? 1 : 0,
-        notas: normStr(item.notas),
+        observaciones: normStr(item.observaciones ?? item.notas),
       };
       if (existing) {
         if (mode === 'skip_existing') return 'skipped';
+        contactoRepo.validate(data, { partial: true });
         contactoRepo.update(existing.id, data);
         return 'updated';
       }
+      contactoRepo.validate(data);
       contactoRepo.create(data);
       return 'created';
     },
@@ -280,12 +310,12 @@ const REGISTRY = {
       const ctaC = item.cuenta_compra_codigo ? planCuentaRepo.query().where('codigo', normStr(item.cuenta_compra_codigo)).get()?.id : null;
 
       if (existing) {
-        plantillaRepo.update(existing.id, {
+        const updData = {
           nombre,
           codigo: normStr(item.codigo),
           categoria_id: catId,
           unidad_id: uomId,
-          descripcion: normStr(item.descripcion),
+          descripcion: sanitizeRichHtml(normStr(item.descripcion)),
           precio_base: Number(item.precio_base || 0),
           costo_base: Number(item.costo_base || 0),
           stock_minimo: Number(item.stock_minimo || 0),
@@ -294,7 +324,9 @@ const REGISTRY = {
           se_vende: item.se_vende ? 1 : 0,
           cuenta_venta_id: ctaV || existing.cuenta_venta_id || null,
           cuenta_compra_id: ctaC || existing.cuenta_compra_id || null,
-        });
+        };
+        plantillaRepo.validate(updData, { partial: true });
+        plantillaRepo.update(existing.id, updData);
         for (const v of (Array.isArray(item.variantes) ? item.variantes : [])) {
           const comboKey = JSON.stringify(v.combinacion || {});
           const varRow = productoRepo.findWhere({ plantilla_id: existing.id }).find(
@@ -342,7 +374,7 @@ const REGISTRY = {
         codigo: normStr(item.codigo),
         categoria_id: catId,
         unidad_id: uomId,
-        descripcion: normStr(item.descripcion),
+        descripcion: sanitizeRichHtml(normStr(item.descripcion)),
         precio_base: Number(item.precio_base || 0),
         costo_base: Number(item.costo_base || 0),
         stock_minimo: Number(item.stock_minimo || 0),
@@ -402,10 +434,21 @@ const REGISTRY = {
       const contactos = new Map(contactoRepo.findAll().map(c => [c.id, c.nombre]));
       const ctas = new Map(planCuentaRepo.findAll().map(c => [c.id, c.codigo]));
 
+      const etapasByReceta = new Map();
+      for (const e of recetaEtapaRepo.query().orderBy('orden', 'ASC').all()) {
+        if (!etapasByReceta.has(e.receta_id)) etapasByReceta.set(e.receta_id, []);
+        etapasByReceta.get(e.receta_id).push(e);
+      }
+      const lineasByReceta = new Map();
+      for (const l of recetaLineaRepo.query().orderBy('id', 'ASC').all()) {
+        if (!lineasByReceta.has(l.receta_id)) lineasByReceta.set(l.receta_id, []);
+        lineasByReceta.get(l.receta_id).push(l);
+      }
+
       return recetaRepo.findAll().map(r => {
-        const etapas = recetaEtapaRepo.query().where('receta_id', r.id).orderBy('orden', 'ASC').all();
+        const etapas = etapasByReceta.get(r.id) || [];
         const etapaById = new Map(etapas.map(e => [e.id, e.nombre]));
-        const lineas = recetaLineaRepo.query().where('receta_id', r.id).orderBy('id', 'ASC').all();
+        const lineas = lineasByReceta.get(r.id) || [];
         const prodCab = r.producto_id ? prods.get(r.producto_id) : null;
 
         return {
@@ -457,13 +500,14 @@ const REGISTRY = {
         : null;
 
       let recetaId;
+      const safeFichaHtml = sanitizeRichHtml(item.ficha_tecnica_html || '');
       if (existing) {
         recetaRepo.update(existing.id, {
           referencia: normStr(item.referencia),
           producto_id: prodCab?.id || null,
           activa: item.activa !== undefined ? (item.activa ? 1 : 0) : 1,
           notas: normStr(item.notas),
-          ficha_tecnica_html: String(item.ficha_tecnica_html || ''),
+          ficha_tecnica_html: safeFichaHtml,
         });
         recetaId = existing.id;
         recetaLineaRepo.query().where('receta_id', recetaId).delete();
@@ -476,7 +520,7 @@ const REGISTRY = {
           referencia: normStr(item.referencia),
           activa: item.activa !== undefined ? Boolean(item.activa) : true,
           notas: normStr(item.notas),
-          ficha_tecnica_html: String(item.ficha_tecnica_html || ''),
+          ficha_tecnica_html: safeFichaHtml,
         });
       }
 
@@ -563,9 +607,14 @@ export function importEntityJson(entidad, payload, { mode = 'upsert' } = {}) {
         else if (status === 'updated') result.updated++;
         else result.skipped++;
       } catch (err) {
-        result.errors.push({ index: idx, error: err.message });
+        const abortErr = new Error(`Importación JSON abortada (rollback completo) — Registro #${idx + 1}: ${err.message}`);
+        abortErr.statusCode = 400;
+        throw abortErr;
       }
     });
+    if (typeof def.afterImport === 'function') {
+      def.afterImport(items);
+    }
     return result;
   });
 }

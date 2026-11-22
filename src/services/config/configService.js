@@ -28,7 +28,7 @@ const jurisdiccionRepo = new BaseRepository({ table: 'jurisdicciones' });
 const recetaLineaRepo = new BaseRepository({ table: 'receta_lineas', columns: ['udm_receta'] });
 const puntoVentaRepo = new BaseRepository({
   table: 'puntos_venta',
-  columns: ['numero', 'nombre', 'es_default', 'es_electronica', 'activo'],
+  columns: ['numero', 'nombre', 'es_default', 'es_electronica', 'cai', 'cai_vto', 'activo'],
 });
 
 export function getEmpresaConfig() {
@@ -87,6 +87,9 @@ export function updateEmpresaConfig(b) {
     print_mostrar_logo: b.print_mostrar_logo !== undefined ? (b.print_mostrar_logo ? 1 : 0) : (cur.print_mostrar_logo ?? 1),
     print_modo_economico: b.print_modo_economico !== undefined ? (b.print_modo_economico ? 1 : 0) : (cur.print_modo_economico ?? 0),
     print_pie_comprobante: b.print_pie_comprobante !== undefined ? String(b.print_pie_comprobante) : (cur.print_pie_comprobante ?? ''),
+    lct_ultimo_deposito_fecha: b.lct_ultimo_deposito_fecha !== undefined ? String(b.lct_ultimo_deposito_fecha || '') : (cur.lct_ultimo_deposito_fecha ?? ''),
+    lct_ultimo_deposito_banco: b.lct_ultimo_deposito_banco !== undefined ? String(b.lct_ultimo_deposito_banco || '') : (cur.lct_ultimo_deposito_banco ?? ''),
+    lct_ultimo_deposito_periodo: b.lct_ultimo_deposito_periodo !== undefined ? String(b.lct_ultimo_deposito_periodo || '') : (cur.lct_ultimo_deposito_periodo ?? ''),
     cta_clientes_id: ctaField('cta_clientes_id'),
     cta_proveedores_id: ctaField('cta_proveedores_id'),
     cta_ventas_id: ctaField('cta_ventas_id'),
@@ -273,6 +276,8 @@ export function createPuntoVenta(b) {
     nombre,
     es_default: esDefault,
     es_electronica: esElectronica,
+    cai: String(b.cai || '').trim(),
+    cai_vto: String(b.cai_vto || '').trim(),
     activo: 1,
   });
 }
@@ -284,6 +289,8 @@ export function updatePuntoVenta(id, b) {
   const nombre = b.nombre !== undefined ? b.nombre.trim() : ex.nombre;
   const esDefault = b.es_default !== undefined ? (b.es_default ? 1 : 0) : ex.es_default;
   const esElectronica = b.es_electronica !== undefined ? (b.es_electronica ? 1 : 0) : (ex.es_electronica ? 1 : 0);
+  const cai = b.cai !== undefined ? String(b.cai || '').trim() : (ex.cai || '');
+  const caiVto = b.cai_vto !== undefined ? String(b.cai_vto || '').trim() : (ex.cai_vto || '');
   const activo = b.activo !== undefined ? (b.activo ? 1 : 0) : ex.activo;
   if (esDefault) puntoVentaRepo.query().update({ es_default: 0 });
   puntoVentaRepo.update(id, {
@@ -291,6 +298,8 @@ export function updatePuntoVenta(id, b) {
     nombre,
     es_default: esDefault,
     es_electronica: esElectronica,
+    cai,
+    cai_vto: caiVto,
     activo,
   });
   return true;

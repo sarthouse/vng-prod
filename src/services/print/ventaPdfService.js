@@ -2,6 +2,7 @@ import { PdfDocument, PAGE_SIZES_MM, fmtDateAr, fmtNumAr, wrapTextMm } from './p
 import { splitComprobanteNumero } from './remitoPdfService.js';
 import { isFacturaAMonotributo } from '../afip/fiscalRules.js';
 import { encodeQrMatrix } from './qrEncoder.js';
+import { stampUnifiedFooter } from './printLayout.js';
 
 const COPY_LABELS = {
   original: ['ORIGINAL'],
@@ -349,7 +350,24 @@ function renderVentaSheetPage(doc, { venta = {}, lineas = [] }, emp, copyLabel, 
 
     const linesCount = wrapTextMm(desc, cDescW - 4, baseSz, false).length;
     const rowH = Math.max(5.5, linesCount * 3.8 + 1.5);
-    if (rowY + rowH > footerTop - 2) break;
+    if (rowY + rowH > footerTop - 2) {
+      doc.addPage(spec.w, spec.h);
+      doc.rect(m, yTop, w, yBottom - yTop, { stroke: borderCol, lineWidth: 0.85 });
+      doc.rect(m, yTop, w, topBarH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.65 });
+      doc.text(`${copyLabel} · CONTINUACIÓN`, midX, yTop + (isA5 ? 1.3 : 1.6), { size: isA5 ? 7.5 : 8.5, bold: true, align: 'center' });
+      const contY = yTop + topBarH + 2;
+      doc.rect(m, contY, w, thH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
+      doc.text('Descripción del Producto', xDesc + 2, contY + 1.8, { size: thSz, bold: true });
+      doc.text('Cant.', xCant + cCantW - 2, contY + 1.8, { size: thSz, bold: true, align: 'right' });
+      doc.text('U.M.', xUm + 2, contY + 1.8, { size: thSz, bold: true });
+      doc.text(discriminaIva ? 'Precio Neto' : 'Precio Unit.', xPu + cPuW - 2, contY + 1.8, { size: thSz, bold: true, align: 'right' });
+      if (discriminaIva) doc.text('IVA', xIva + cIvaW - 2, contY + 1.8, { size: thSz, bold: true, align: 'right' });
+      doc.text('Subtotal', xSub + cSubW - 2, contY + 1.8, { size: thSz, bold: true, align: 'right' });
+      for (const vx of vLines) {
+        doc.line(vx, contY, vx, yBottom - 4, { color: '#CBD5E1', lineWidth: 0.45 });
+      }
+      rowY = contY + thH + 1.5;
+    }
 
     doc.textBlock(desc, xDesc + 2, rowY, cDescW - 4, { size: baseSz, lineHeight: 1.25 });
     doc.text(fmtNumAr(cant), xCant + cCantW - 2, rowY, { size: baseSz, align: 'right' });
@@ -376,5 +394,7 @@ export function generateVentaPdf(payload = {}, emp = {}) {
   for (const copyLabel of labels) {
     renderVentaSheetPage(doc, payload, emp, copyLabel, fmt);
   }
+  const spec = PAGE_SIZES_MM[fmt] || PAGE_SIZES_MM.A4;
+  stampUnifiedFooter(doc, emp, { margin: spec.margin });
   return doc.toBuffer();
 }

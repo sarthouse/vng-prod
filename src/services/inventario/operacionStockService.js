@@ -1,7 +1,15 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
+import { createStateMachine } from '../../core/stateMachine.js';
+import { domainBus } from '../../core/eventBus.js';
 import { MODELS } from '../../db/models.js';
 import { registrarMovimientoStock, resolveOrCreateLote } from './inventarioService.js';
 import { convertUnitFromDb, resolveNumeroDocumento } from '../config/configService.js';
+
+export const OP_STOCK_SM = createStateMachine({
+  Borrador: ['Confirmado'],
+  Confirmado: ['Anulado'],
+  Anulado: [],
+}, { label: 'Operación de Stock' });
 
 export const operacionStockRepo = new BaseRepository({
   model: MODELS.operaciones_stock,
@@ -219,6 +227,25 @@ export function createOperacionStock(b, user = null) {
         ubicacion_destino_id: destId,
         motivo: (b.motivo || '').trim(),
       }, lineas, false, user);
+      if (tipo === 'entrega' && (b.referencia_tipo || '').trim() === 'venta' && b.referencia_id) {
+        domainBus.emit('entrega_venta.confirmada', {
+          operacion: {
+            id,
+            numero,
+            fecha,
+            tipo,
+            referencia_tipo: 'venta',
+            referencia_id: Number(b.referencia_id),
+          },
+          lineas,
+          user,
+        });
+      }
+      domainBus.emit('operacion_stock.confirmada', {
+        operacion: { id, numero, fecha, tipo },
+        lineas,
+        user,
+      });
     }
     return id;
   });
@@ -245,9 +272,7 @@ export function confirmarOperacionStock(id, b = {}, user = null) {
   }
   const ex = getOperacionStockById(id);
   if (!ex) return false;
-  if (ex.operacion.estado !== 'Borrador') {
-    throw new Error('Solo se pueden confirmar documentos en estado Borrador');
-  }
+  OP_STOCK_SM.assertTransition(ex.operacion.estado, 'Confirmado');
 
   const partialMap = new Map();
   if (Array.isArray(b?.lineas)) {
@@ -312,6 +337,19 @@ export function confirmarOperacionStock(id, b = {}, user = null) {
     operacionStockRepo.update(id, { estado: 'Confirmado' }, user);
     applyOperacionMovements(ex.operacion, confirmedLines, false, user);
 
+    if (ex.operacion.tipo === 'entrega' && ex.operacion.referencia_tipo === 'venta' && ex.operacion.referencia_id) {
+      domainBus.emit('entrega_venta.confirmada', {
+        operacion: ex.operacion,
+        lineas: confirmedLines,
+        user,
+      });
+    }
+    domainBus.emit('operacion_stock.confirmada', {
+      operacion: ex.operacion,
+      lineas: confirmedLines,
+      user,
+    });
+
     let backorderId = null;
     if (backorderLines.length > 0 && b?.generar_backorder !== false) {
       backorderId = createOperacionStock({
@@ -341,12 +379,18 @@ export function confirmarOperacionStock(id, b = {}, user = null) {
 export function anularOperacionStock(id, user = null) {
   const ex = getOperacionStockById(id);
   if (!ex) return false;
-  if (ex.operacion.estado !== 'Confirmado') {
-    throw new Error('Solo se pueden anular documentos Confirmados');
-  }
+  OP_STOCK_SM.assertTransition(ex.operacion.estado, 'Anulado');
   return operacionStockRepo.transaction(() => {
     operacionStockRepo.update(id, { estado: 'Anulado' }, user);
     applyOperacionMovements(ex.operacion, ex.lineas, true, user);
+    if (ex.operacion.cmv_asiento_id || (ex.operacion.tipo === 'entrega' && ex.operacion.referencia_tipo === 'venta')) {
+      domainBus.emit('entrega_venta.anulada', { operacion: ex.operacion, user });
+    }
+    domainBus.emit('operacion_stock.confirmada', {
+      operacion: ex.operacion,
+      lineas: ex.lineas,
+      user,
+    });
     return true;
   });
 }

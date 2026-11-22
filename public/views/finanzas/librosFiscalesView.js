@@ -1,6 +1,6 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, fmtDate } from '../../lib/format.js';
-import { mountPageView } from '../../lib/engine/index.js';
+import { mountPageView, renderSpreadsheetTable, showConfirmModal } from '../../lib/engine/index.js';
 
 function currentMonthRange() {
   const now = new Date();
@@ -342,98 +342,142 @@ export async function renderLibrosFiscalesView() {
   async function renderPadronTab(body) {
     const items = await api('/api/fiscal/padron');
     body.innerHTML = `
-      <div class="sx-ec06b9">
-        <form id="form-padron-add" class="card m-0">
-          <div class="card-header"><h2>Agregar / Actualizar CUIT</h2></div>
-          <div class="form-grid">
-            <label><span>CUIT *</span><input type="text" name="cuit" required placeholder="20-12345678-9" /></label>
-            <label>
-              <span>Jurisdicción *</span>
-              <select name="jurisdiccion_codigo">
-                ${(jurisdicciones || []).map(j => `<option value="${esc(j.codigo)}" ${j.codigo === '902' ? 'selected' : ''}>${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
-              </select>
-            </label>
-            <label>
-              <span>Tipo</span>
-              <select name="tipo">
-                <option value="percepcion">Percepción</option>
-                <option value="retencion">Retención</option>
-              </select>
-            </label>
-            <label><span>Alícuota % *</span><input type="number" step="0.01" min="0" max="30" name="alicuota" required value="3.0" /></label>
-            <div class="full"><button type="submit" class="btn btn-primary">Guardar Alícuota</button></div>
-          </div>
-        </form>
+      <form id="form-padron-import" class="card mb-md">
+        <div class="card-header"><h2>Importar Padrón ARBA / AGIP</h2></div>
+        <div class="form-grid">
+          <label>
+            <span>Jurisdicción</span>
+            <select name="jurisdiccion_codigo">
+              ${(jurisdicciones || []).map(j => `<option value="${esc(j.codigo)}" ${j.codigo === '902' ? 'selected' : ''}>${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span>Tipo</span>
+            <select name="tipo">
+              <option value="percepcion">Percepción</option>
+              <option value="retencion">Retención</option>
+            </select>
+          </label>
+          <label class="full">
+            <span>Líneas (CUIT;alícuota)</span>
+            <textarea name="contenido" rows="3" placeholder="30-71111111-9;3.5"></textarea>
+          </label>
+          <div class="full"><button type="submit" class="btn">Importar Líneas</button></div>
+        </div>
+      </form>
 
-        <form id="form-padron-import" class="card m-0">
-          <div class="card-header"><h2>Importar Padrón ARBA / AGIP</h2></div>
-          <div class="form-grid">
-            <label>
-              <span>Jurisdicción</span>
-              <select name="jurisdiccion_codigo">
-                ${(jurisdicciones || []).map(j => `<option value="${esc(j.codigo)}" ${j.codigo === '902' ? 'selected' : ''}>${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
-              </select>
-            </label>
-            <label>
-              <span>Tipo</span>
-              <select name="tipo">
-                <option value="percepcion">Percepción</option>
-                <option value="retencion">Retención</option>
-              </select>
-            </label>
-            <label class="full">
-              <span>Líneas (CUIT;alícuota)</span>
-              <textarea name="contenido" rows="3" placeholder="30-71111111-9;3.5"></textarea>
-            </label>
-            <div class="full"><button type="submit" class="btn">Importar Líneas</button></div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Padrón de Alícuotas IIBB</h2>
+            <span class="muted text-sm">Click en una celda para editar o completá la fila inferior para agregar un CUIT.</span>
           </div>
-        </form>
-      </div>
-
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>CUIT</th>
-              <th>Jurisdicción</th>
-              <th>Tipo</th>
-              <th class="num">Alícuota</th>
-              <th>Origen</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.length ? items.map(p => `
-              <tr>
-                <td><code>${esc(p.cuit)}</code></td>
-                <td>${esc(p.jurisdiccion_codigo)} · ${esc(jurMap.get(p.jurisdiccion_codigo) || '')}</td>
-                <td>${esc(p.tipo)}</td>
-                <td class="num"><strong>${Number(p.alicuota || 0)}%</strong></td>
-                <td>${esc(p.origen || 'manual')}</td>
-                <td><button type="button" class="btn btn-sm btn-danger" data-del-padron="${p.id}">Eliminar</button></td>
-              </tr>
-            `).join('') : '<tr><td colspan="6" class="muted text-center">Sin registros en el padrón de alícuotas.</td></tr>'}
-          </tbody>
-        </table>
+        </div>
+        <div id="padron-sheet-host"></div>
       </div>
     `;
 
-    body.querySelector('#form-padron-add')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      try {
-        await api('/api/fiscal/padron', {
-          method: 'POST',
-          body: JSON.stringify({
-            cuit: fd.get('cuit'),
-            jurisdiccion_codigo: fd.get('jurisdiccion_codigo'),
-            tipo: fd.get('tipo'),
-            alicuota: Number(fd.get('alicuota')) || 0,
-          }),
-        });
-        toast('Alícuota guardada en padrón');
-        renderPadronTab(body);
-      } catch (err) { toast(err.message, true); }
+    renderSpreadsheetTable(body.querySelector('#padron-sheet-host'), {
+      rows: items,
+      emptyText: 'Sin registros en el padrón de alícuotas.',
+      compact: true,
+      defaultNewRow: () => ({
+        cuit: '',
+        jurisdiccion_codigo: '902',
+        tipo: 'percepcion',
+        alicuota: 3.0,
+        origen: 'manual',
+      }),
+      onCreateRow: async ({ row }) => {
+        if (!String(row.cuit || '').trim()) return false;
+        try {
+          await api('/api/fiscal/padron', {
+            method: 'POST',
+            body: JSON.stringify({
+              cuit: String(row.cuit).trim(),
+              jurisdiccion_codigo: row.jurisdiccion_codigo || '902',
+              tipo: row.tipo || 'percepcion',
+              alicuota: Number(row.alicuota) || 0,
+            }),
+          });
+          toast('Alícuota guardada en padrón');
+          await renderPadronTab(body);
+          return false;
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
+      columns: [
+        {
+          key: 'cuit',
+          label: 'CUIT',
+          type: 'text',
+          nowrap: true,
+          parse: v => String(v || '').trim(),
+          render: p => (p.cuit ? `<code>${esc(p.cuit)}</code>` : '<span class="muted">20-12345678-9</span>'),
+        },
+        {
+          key: 'jurisdiccion_codigo',
+          label: 'Jurisdicción',
+          type: 'select',
+          options: (jurisdicciones || []).map(j => ({ value: j.codigo, label: `${j.codigo} · ${j.nombre}` })),
+          render: p => `${esc(p.jurisdiccion_codigo)} · ${esc(jurMap.get(p.jurisdiccion_codigo) || '')}`,
+        },
+        {
+          key: 'tipo',
+          label: 'Tipo',
+          type: 'select',
+          options: [
+            { value: 'percepcion', label: 'Percepción' },
+            { value: 'retencion', label: 'Retención' },
+          ],
+        },
+        {
+          key: 'alicuota',
+          label: 'Alícuota %',
+          type: 'number',
+          step: 0.01,
+          min: 0,
+          max: 30,
+          align: 'right',
+          parse: v => Number(v) || 0,
+          render: p => `<strong>${Number(p.alicuota || 0)}%</strong>`,
+        },
+        {
+          key: 'origen',
+          label: 'Origen',
+          editable: () => false,
+          render: p => esc(p.origen || 'manual'),
+        },
+      ],
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          await api('/api/fiscal/padron', {
+            method: 'POST',
+            body: JSON.stringify({
+              cuit: key === 'cuit' ? String(value).trim() : row.cuit,
+              jurisdiccion_codigo: key === 'jurisdiccion_codigo' ? value : row.jurisdiccion_codigo,
+              tipo: key === 'tipo' ? value : row.tipo,
+              alicuota: key === 'alicuota' ? Number(value) : Number(row.alicuota || 0),
+            }),
+          });
+          toast('Alícuota actualizada en padrón');
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
+      onDeleteRow: async (p) => {
+        if (!(await showConfirmModal('¿Eliminar este registro del padrón?'))) return;
+        try {
+          await api(`/api/fiscal/padron/${p.id}`, { method: 'DELETE' });
+          toast('Registro eliminado');
+          await renderPadronTab(body);
+        } catch (err) {
+          toast(err.message, true);
+        }
+      },
     });
 
     body.querySelector('#form-padron-import')?.addEventListener('submit', async (e) => {
@@ -451,16 +495,6 @@ export async function renderLibrosFiscalesView() {
         toast(`Importadas ${res.imported || 0} alícuotas`);
         renderPadronTab(body);
       } catch (err) { toast(err.message, true); }
-    });
-
-    body.querySelectorAll('[data-del-padron]').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        try {
-          await api(`/api/fiscal/padron/${btn.dataset.delPadron}`, { method: 'DELETE' });
-          toast('Registro eliminado');
-          renderPadronTab(body);
-        } catch (err) { toast(err.message, true); }
-      });
     });
   }
 

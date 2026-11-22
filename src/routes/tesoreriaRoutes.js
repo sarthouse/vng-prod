@@ -43,6 +43,15 @@ export async function handleTesoreriaRoutes(req, res, pathname, user) {
     catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
+  const pagoConfMatch = pathname.match(/^\/api\/tesoreria\/pagos\/(\d+)\/confirmar$/);
+  if (pagoConfMatch && req.method === 'POST') {
+    try {
+      const b = await parseBody(req).catch(() => ({}));
+      if (!tesSvc.confirmarPago(Number(pagoConfMatch[1]), b, user)) json(res, 404, { error: 'Pago no encontrado' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
   const pagoArchMatch = pathname.match(/^\/api\/tesoreria\/pagos\/(\d+)\/archivar$/);
   if (pagoArchMatch && req.method === 'POST') {
     const b = await parseBody(req).catch(() => ({}));
@@ -79,6 +88,15 @@ export async function handleTesoreriaRoutes(req, res, pathname, user) {
   if (pathname === '/api/tesoreria/cobros' && req.method === 'POST') {
     try { json(res, 201, { id: tesSvc.createCobro(await parseBody(req), user) }); }
     catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const cobroConfMatch = pathname.match(/^\/api\/tesoreria\/cobros\/(\d+)\/confirmar$/);
+  if (cobroConfMatch && req.method === 'POST') {
+    try {
+      const b = await parseBody(req).catch(() => ({}));
+      if (!tesSvc.confirmarCobro(Number(cobroConfMatch[1]), b, user)) json(res, 404, { error: 'Cobro no encontrado' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
   const cobroArchMatch = pathname.match(/^\/api\/tesoreria\/cobros\/(\d+)\/archivar$/);

@@ -1,7 +1,7 @@
 import { api, toast } from '../../lib/api.js';
 import { esc, exportRowsToCSV, renderProvinciaOptions, setupFileDropzones, formatDocumento, bindDocumentoInput } from '../../lib/format.js';
 import { renderSeguridadSection } from './seguridadSection.js';
-import { showConfirmModal } from '../../lib/engine/index.js';
+import { showConfirmModal, renderSpreadsheetTable } from '../../lib/engine/index.js';
 
 let activeConfigTab = 'empresa';
 
@@ -211,6 +211,18 @@ export async function renderConfigView() {
           <span>Pie / Leyenda fija en comprobantes</span>
           <input type="text" name="print_pie_comprobante" value="${esc(empresa.print_pie_comprobante || '')}" placeholder="Ej: Alias: MI.EMPRESA.MP · Los cambios se realizan dentro de los 15 días." />
         </label>
+        <label>
+          <span>Últ. Depósito LCT (Período)</span>
+          <input type="text" name="lct_ultimo_deposito_periodo" value="${esc(empresa.lct_ultimo_deposito_periodo || '')}" placeholder="Ej: 2026-10" />
+        </label>
+        <label>
+          <span>Últ. Depósito LCT (Fecha)</span>
+          <input type="date" name="lct_ultimo_deposito_fecha" value="${esc(empresa.lct_ultimo_deposito_fecha || '')}" />
+        </label>
+        <label>
+          <span>Últ. Depósito LCT (Banco)</span>
+          <input type="text" name="lct_ultimo_deposito_banco" value="${esc(empresa.lct_ultimo_deposito_banco || '')}" placeholder="Ej: Banco Nación" />
+        </label>
         <div class="full sx-0db129">
           <label class="checkbox-field"><input type="checkbox" name="print_mostrar_logo" ${Number(empresa.print_mostrar_logo ?? 1) === 1 ? 'checked' : ''} /> <span>Mostrar logo en comprobantes</span></label>
           <label class="checkbox-field"><input type="checkbox" name="print_modo_economico" ${Number(empresa.print_modo_economico ?? 0) === 1 ? 'checked' : ''} /> <span>Modo tinta económico (B/N sin rellenos)</span></label>
@@ -241,47 +253,10 @@ export async function renderConfigView() {
       <div class="card-header">
         <div>
           <h2>Puntos de Venta</h2>
-          <p class="muted text-sm">Formato fiscal estándar: <code>{prefijo} {puntoventa}-{comprobante}</code> (ej. <code>FA 0001-00000001</code>).</p>
+          <p class="muted text-sm">Formato fiscal estándar: <code>{prefijo} {puntoventa}-{comprobante}</code> (ej. <code>FA 0001-00000001</code>). Click en una celda para editar o completá la fila inferior.</p>
         </div>
       </div>
-      <form id="form-add-pv" class="toolbar mb-lg">
-        <input type="number" name="numero" min="1" max="9999" required placeholder="Número" class="sx-957822" />
-        <input type="text" name="nombre" required placeholder="Nombre" class="sx-6686b3" />
-        <label class="checkbox-inline m-0"><input type="checkbox" name="es_default" /><span>Por defecto</span></label>
-        <label class="checkbox-inline m-0"><input type="checkbox" name="es_electronica" /><span>Electrónica (WSFE)</span></label>
-        <button type="submit" class="btn btn-primary">+ Agregar Punto de Venta</button>
-      </form>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Punto</th>
-              <th>Nombre</th>
-              <th>Facturación</th>
-              <th>Estado</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${puntosVenta.map(pv => `
-              <tr>
-                <td><strong>${String(pv.numero).padStart(4, '0')}</strong></td>
-                <td>${esc(pv.nombre)} ${pv.es_default ? '<span class="badge badge-ok">Por defecto</span>' : ''}</td>
-                <td><span class="badge ${pv.es_electronica ? 'badge-ok' : 'badge-muted'}">${pv.es_electronica ? 'Electrónica WSFE' : 'Manual'}</span></td>
-                <td><span class="badge ${pv.activo ? 'badge-ok' : 'badge-muted'}">${pv.activo ? 'Activo' : 'Inactivo'}</span></td>
-                <td>
-                  <div class="actions">
-                    ${!pv.es_default ? `<button type="button" class="btn btn-sm" data-pv-default="${pv.id}">Hacer default</button>` : ''}
-                    <button type="button" class="btn btn-sm" data-pv-elec="${pv.id}" data-elec="${pv.es_electronica ? 1 : 0}">${pv.es_electronica ? 'Pasar a Manual' : 'Hacer Electrónica'}</button>
-                    <button type="button" class="btn btn-sm" data-pv-toggle="${pv.id}" data-activo="${pv.activo ? 1 : 0}">${pv.activo ? 'Desactivar' : 'Activar'}</button>
-                    <button type="button" class="btn btn-sm btn-danger" data-del-pv="${pv.id}">Eliminar</button>
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div id="pv-sheet-host"></div>
     </div>
 
     ${afip ? `
@@ -634,6 +609,9 @@ export async function renderConfigView() {
           print_formato: fd.get('print_formato') || 'A4',
           print_copias: fd.get('print_copias') || 'original',
           print_pie_comprobante: fd.get('print_pie_comprobante') ?? '',
+          lct_ultimo_deposito_periodo: fd.get('lct_ultimo_deposito_periodo') ?? '',
+          lct_ultimo_deposito_fecha: fd.get('lct_ultimo_deposito_fecha') ?? '',
+          lct_ultimo_deposito_banco: fd.get('lct_ultimo_deposito_banco') ?? '',
           print_mostrar_logo: fd.get('print_mostrar_logo') === 'on' ? 1 : 0,
           print_modo_economico: fd.get('print_modo_economico') === 'on' ? 1 : 0,
           logo_data: fd.get('logo_data') ?? '',
@@ -646,53 +624,131 @@ export async function renderConfigView() {
     }
   });
 
-  root.querySelector('#form-add-pv').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    try {
-      await api('/api/puntos-venta', {
-        method: 'POST',
-        body: JSON.stringify({
-          numero: Number(fd.get('numero')),
-          nombre: fd.get('nombre'),
-          es_default: fd.get('es_default') === 'on',
-          es_electronica: fd.get('es_electronica') === 'on',
-        }),
-      });
-      toast('Punto de venta agregado');
-      await renderConfigView();
-    } catch (err) {
-      toast(err.message, true);
-    }
+  renderSpreadsheetTable(root.querySelector('#pv-sheet-host'), {
+    rows: puntosVenta,
+    emptyText: 'No hay puntos de venta configurados.',
+    compact: true,
+    defaultNewRow: () => ({
+      numero: '',
+      nombre: '',
+      es_default: 0,
+      es_electronica: 0,
+      cai: '',
+      cai_vto: '',
+      activo: 1,
+    }),
+    onCreateRow: async ({ row }) => {
+      if (!Number(row.numero) || !String(row.nombre || '').trim()) return false;
+      try {
+        const res = await api('/api/puntos-venta', {
+          method: 'POST',
+          body: JSON.stringify({
+            numero: Number(row.numero),
+            nombre: String(row.nombre).trim(),
+            es_default: Boolean(Number(row.es_default)),
+            es_electronica: Boolean(Number(row.es_electronica)),
+            cai: String(row.cai || '').trim(),
+            cai_vto: String(row.cai_vto || '').trim(),
+          }),
+        });
+        if (res?.id) row.id = res.id;
+        toast('Punto de venta agregado');
+        if (Number(row.es_default)) {
+          await renderConfigView();
+          return false;
+        }
+        return true;
+      } catch (err) {
+        toast(err.message, true);
+        throw err;
+      }
+    },
+    columns: [
+      {
+        key: 'numero',
+        label: 'Punto',
+        type: 'number',
+        min: 1,
+        max: 9999,
+        nowrap: true,
+        parse: v => Number(v) || 0,
+        render: pv => (pv.numero ? `<strong>${String(pv.numero).padStart(4, '0')}</strong>` : '<span class="muted">Ej: 1</span>'),
+      },
+      {
+        key: 'nombre',
+        label: 'Nombre',
+        type: 'text',
+        parse: v => String(v || '').trim(),
+        render: pv => (pv.nombre ? esc(pv.nombre) : '<span class="muted">Nuevo punto de venta...</span>'),
+      },
+      {
+        key: 'es_default',
+        label: 'Por defecto',
+        type: 'checkbox',
+        align: 'center',
+        getValue: pv => (pv.es_default ? 1 : 0),
+      },
+      {
+        key: 'es_electronica',
+        label: 'Electrónica (WSFE)',
+        type: 'checkbox',
+        align: 'center',
+        getValue: pv => (pv.es_electronica ? 1 : 0),
+      },
+      {
+        key: 'cai',
+        label: 'CAI Remito R',
+        type: 'text',
+        width: 130,
+      },
+      {
+        key: 'cai_vto',
+        label: 'Vto CAI',
+        type: 'text',
+        width: 100,
+      },
+      {
+        key: 'activo',
+        label: 'Activo',
+        type: 'checkbox',
+        align: 'center',
+        getValue: pv => (pv.activo !== 0 ? 1 : 0),
+      },
+    ],
+    onCellChange: async ({ row, key, value }) => {
+      try {
+        await api(`/api/puntos-venta/${row.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            numero: key === 'numero' ? Number(value) : Number(row.numero),
+            nombre: key === 'nombre' ? value : row.nombre,
+            es_default: key === 'es_default' ? Boolean(Number(value)) : Boolean(row.es_default),
+            es_electronica: key === 'es_electronica' ? Boolean(Number(value)) : Boolean(row.es_electronica),
+            cai: key === 'cai' ? String(value || '').trim() : (row.cai || ''),
+            cai_vto: key === 'cai_vto' ? String(value || '').trim() : (row.cai_vto || ''),
+            activo: key === 'activo' ? Boolean(Number(value)) : Boolean(row.activo !== 0),
+          }),
+        });
+        toast('Punto de venta actualizado');
+        if (key === 'es_default' && Number(value) === 1) {
+          await renderConfigView();
+        }
+      } catch (err) {
+        toast(err.message, true);
+        throw err;
+      }
+    },
+    onDeleteRow: async (pv) => {
+      if (!(await showConfirmModal('¿Eliminar este punto de venta?'))) return;
+      try {
+        await api(`/api/puntos-venta/${pv.id}`, { method: 'DELETE' });
+        toast('Punto de venta eliminado');
+        await renderConfigView();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    },
   });
-  root.querySelectorAll('[data-pv-default]').forEach(btn => btn.addEventListener('click', async () => {
-    try {
-      await api(`/api/puntos-venta/${btn.dataset.pvDefault}`, { method: 'PUT', body: JSON.stringify({ es_default: true }) });
-      toast('Punto de venta por defecto actualizado');
-      await renderConfigView();
-    } catch (err) { toast(err.message, true); }
-  }));
-  root.querySelectorAll('[data-pv-elec]').forEach(btn => btn.addEventListener('click', async () => {
-    try {
-      await api(`/api/puntos-venta/${btn.dataset.pvElec}`, { method: 'PUT', body: JSON.stringify({ es_electronica: btn.dataset.elec !== '1' }) });
-      toast('Modalidad de facturación del punto de venta actualizada');
-      await renderConfigView();
-    } catch (err) { toast(err.message, true); }
-  }));
-  root.querySelectorAll('[data-pv-toggle]').forEach(btn => btn.addEventListener('click', async () => {
-    try {
-      await api(`/api/puntos-venta/${btn.dataset.pvToggle}`, { method: 'PUT', body: JSON.stringify({ activo: btn.dataset.activo !== '1' }) });
-      await renderConfigView();
-    } catch (err) { toast(err.message, true); }
-  }));
-  root.querySelectorAll('[data-del-pv]').forEach(btn => btn.addEventListener('click', async () => {
-    if (!(await showConfirmModal('¿Eliminar este punto de venta?'))) return;
-    try {
-      await api(`/api/puntos-venta/${btn.dataset.delPv}`, { method: 'DELETE' });
-      toast('Punto de venta eliminado');
-      await renderConfigView();
-    } catch (err) { toast(err.message, true); }
-  }));
 
   root.querySelector('#afip-entorno')?.addEventListener('change', async (e) => {
     try {

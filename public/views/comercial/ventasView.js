@@ -191,7 +191,7 @@ export async function renderVentasView() {
     });
     root.querySelectorAll('[data-anul-vta]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!(await showConfirmModal('¿Anular esta venta? Se revertirán sus operaciones de stock asociadas si existieran.'))) return;
+        if (!(await showConfirmModal('¿Anular esta venta? Se revertirán el asiento contable y las operaciones de stock asociadas.'))) return;
         try {
           await api(`/api/ventas/${btn.dataset.anulVta}`, {
             method: 'PUT',
@@ -315,7 +315,7 @@ export async function renderVentaFormView({ id } = {}) {
   const isEdit = Boolean(id);
   const params = new URLSearchParams(window.location.search);
 
-  const [clientes, productos, empresa, puntosVenta, nextSeq, existing, impuestosConfig, ubicaciones, diarios, enviosConfig, recargosConfig, cuentas, nextCobroSeq, terminosPago, metodosPago, listasPrecios] = await Promise.all([
+  const [clientes, productos, empresa, puntosVenta, nextSeq, existing, impuestosConfig, ubicaciones, diarios, enviosConfig, recargosConfig, cuentas, nextCobroSeq, terminosPago, metodosPago, listasPrecios, operacionesStock] = await Promise.all([
     api('/api/contactos?es_cliente=1'),
     api('/api/productos?se_vende=1'),
     api('/api/empresa'),
@@ -332,7 +332,10 @@ export async function renderVentaFormView({ id } = {}) {
     api('/api/terminos-pago?solo_activos=1').catch(() => []),
     api('/api/metodos-pago?solo_activos=1').catch(() => []),
     api('/api/listas-precios?solo_activos=1').catch(() => []),
+    isEdit ? api('/api/operaciones-stock').catch(() => []) : Promise.resolve([]),
   ]);
+  const opsVenta = (operacionesStock || []).filter(o => o.referencia_tipo === 'venta' && Number(o.referencia_id) === Number(id));
+  const prevEstado = existing?.venta?.estado || 'Confirmada';
   const cobroBundle = existing;
   const enviosActivos = (enviosConfig || []).filter(e => e.activo !== 0);
   const recargosActivos = (recargosConfig || []).filter(r => r.activo !== 0);
@@ -594,6 +597,20 @@ export async function renderVentaFormView({ id } = {}) {
       </form>
       ${isEdit ? `
         <div class="card sx-a005fc">
+          <div class="card-header"><h2>Trazabilidad / Documentos Vinculados</h2></div>
+          <div class="card-body">
+            <div class="actions">
+              ${v.asiento_id
+                ? `<a href="/contabilidad" data-link class="btn btn-sm">Asiento Contable #${v.asiento_id}${v.estado === 'Anulada' ? ' (Revertido)' : ''}</a>`
+                : `<span class="badge badge-muted">Sin asiento contable${['Presupuesto', 'Borrador'].includes(v.estado) ? ' (pendiente de confirmación)' : ''}</span>`}
+              ${opsVenta.length
+                ? opsVenta.map(op => `<a href="/operaciones-stock/${op.id}" data-link class="btn btn-sm">${esc(op.tipo)}: ${esc(op.numero || '#' + op.id)} (${esc(op.estado)})</a>`).join('')
+                : '<span class="badge badge-muted">Sin operaciones de stock</span>'}
+            </div>
+          </div>
+        </div>
+
+        <div class="card sx-a005fc">
           <div class="card-header">
             <div>
               <h2>Cobros Asociados</h2>
@@ -643,7 +660,8 @@ export async function renderVentaFormView({ id } = {}) {
                         <td>
                           <div class="actions">
                             <button type="button" class="btn btn-sm" data-print-cobro-det="${cb.id}">PDF</button>
-                            <button type="button" class="btn btn-sm btn-danger" data-del-cobro-det="${cb.id}">Eliminar</button>
+                            ${(cb.estado || 'Confirmado') === 'Confirmado' ? `<button type="button" class="btn btn-sm" data-anul-cobro-det="${cb.id}">Anular</button>` : ''}
+                            ${cb.estado === 'Borrador' ? `<button type="button" class="btn btn-sm btn-danger" data-del-cobro-det="${cb.id}">Eliminar</button>` : ''}
                           </div>
                         </td>
                       </tr>
@@ -692,8 +710,16 @@ export async function renderVentaFormView({ id } = {}) {
         if (!cb) return;
         await printReciboCobro({ cobro: cb, venta: v });
       }));
+      root.querySelectorAll('[data-anul-cobro-det]').forEach(btn => btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular este cobro? Se revertirá su asiento contable y el saldo de la cuenta.'))) return;
+        try {
+          await api(`/api/tesoreria/cobros/${btn.dataset.anulCobroDet}/anular`, { method: 'POST' });
+          toast('Cobro anulado');
+          await renderVentaFormView({ id });
+        } catch (err) { toast(err.message, true); }
+      }));
       root.querySelectorAll('[data-del-cobro-det]').forEach(btn => btn.addEventListener('click', async () => {
-        if (!(await showConfirmModal('¿Eliminar este cobro? Se revertirá el saldo de la cuenta.'))) return;
+        if (!(await showConfirmModal('¿Eliminar este cobro en borrador?'))) return;
         try {
           await api(`/api/tesoreria/cobros/${btn.dataset.delCobroDet}`, { method: 'DELETE' });
           toast('Cobro eliminado');
@@ -724,7 +750,7 @@ export async function renderVentaFormView({ id } = {}) {
         } catch (err) { toast(err.message, true); }
       });
       root.querySelector('#btn-vta-anular')?.addEventListener('click', async () => {
-        if (!(await showConfirmModal('¿Anular esta venta? Se revertirán sus operaciones de stock asociadas si existieran.'))) return;
+        if (!(await showConfirmModal('¿Anular esta venta? Se revertirán el asiento contable y las operaciones de stock asociadas.'))) return;
         try {
           await api(`/api/ventas/${id}`, {
             method: 'PUT',
@@ -1227,7 +1253,10 @@ export async function renderVentaFormView({ id } = {}) {
       try {
         if (isEdit) {
           await api(`/api/ventas/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
-          toast('Venta actualizada');
+          const pasoAConfirmada = ['Presupuesto', 'Borrador'].includes(prevEstado) && ['Confirmada', 'Entregada'].includes(payload.estado);
+          toast(pasoAConfirmada
+            ? 'Venta confirmada: se generó el asiento contable y la operación de stock'
+            : 'Venta actualizada');
           await renderVentaFormView({ id });
         } else {
           const res = await api('/api/ventas', { method: 'POST', body: JSON.stringify(payload) });

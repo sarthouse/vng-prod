@@ -5,7 +5,6 @@ import { showConfirmModal, showFormModal, renderSpreadsheetTable } from '../../l
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { openPdfFromEndpoint } from '../../lib/print/index.js';
 import { mountDetailView } from '../../lib/engine/detailEngine.js';
-import { mountCombobox, mountMultiSelect, quickCreateProducto } from '../../lib/autocomplete.js';
 
 export async function renderRecetaDetalleView({ id }) {
   const root = document.getElementById('app-view');
@@ -48,13 +47,6 @@ export async function renderRecetaDetalleView({ id }) {
     : variantes;
   const targetAttrs = new Set(targetVariantes.map(v => String(v.atributo).trim().toLowerCase()));
 
-  let editingLineId = null;
-  let selectedProdId = insumoProductos[0]?.id ?? '';
-  let formEtapaId = etapas[0]?.id ?? '';
-  let formCoef = '1';
-  let formUdmReceta = insumoProductos[0]?.udm || unidades[0]?.nombre || 'unidades';
-  let formVariantes = new Set();
-  let formEmparejar = false;
   let activeTab = 'insumos';
 
   const buildHdrVarOptions = (pltId, selectedVarId) => {
@@ -72,11 +64,6 @@ export async function renderRecetaDetalleView({ id }) {
   };
 
   const render = () => {
-    const currentProd = insumoProductos.find(p => String(p.id) === String(selectedProdId)) || insumoProductos[0];
-    const prodUnits = currentProd ? compatibleUnits(currentProd.udm) : unidades;
-    if (currentProd && !prodUnits.some(u => u.nombre === formUdmReceta)) {
-      formUdmReceta = currentProd.udm;
-    }
 
     const headerFormHtml = `
       <div class="card">
@@ -120,108 +107,13 @@ export async function renderRecetaDetalleView({ id }) {
     const etapasHtml = `
       <div class="card">
         <div class="card-header">
-          <h2>Etapas de Producción</h2>
-          <span class="muted text-md">Orden y días estimados propios de esta receta</span>
-        </div>
-        <form id="form-add-receta-etapa"></form>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th class="w-70">Orden</th>
-                <th>Etapa</th>
-                <th>Descripción</th>
-                <th class="w-85">Días Est.</th>
-                <th class="sx-9c41f6">Costo / u ($)</th>
-                <th>Taller</th>
-                <th>Cuenta Contable</th>
-                <th class="w-160">Depende de</th>
-                <th>Imagen</th>
-                <th class="sx-25ccdc">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${etapas.map(et => `
-                <tr data-receta-etapa-row="${et.id}" data-img-data="${esc(et.imagen_data || '')}">
-                  <td><input type="number" class="et-orden w-60" min="1" value="${et.orden}" /></td>
-                  <td><input type="text" class="et-nombre sx-307c3d" value="${esc(et.nombre)}" /></td>
-                  <td><input type="text" class="et-desc mw-140" value="${esc(et.descripcion || '')}" placeholder="Sin descripción" /></td>
-                  <td><input type="number" class="et-dias sx-afd60f" min="1" value="${et.dias_estimados}" /></td>
-                  <td><input type="number" class="et-costo sx-41f7c3" min="0" step="0.01" value="${Number(et.costo_unidad || 0)}" /></td>
-                  <td><select class="et-taller sx-bd123a">${tallerOpts(et.taller_id)}</select></td>
-                  <td><select class="et-cta mw-150">${cuentaOpts(et.plan_cuenta_id)}</select></td>
-                  <td>
-                    <select class="et-depende mw-140">
-                      <option value="">-- Ninguna --</option>
-                      ${etapas.filter(o => o.id !== et.id).map(o => `<option value="${o.id}" ${Number(et.depende_de_id) === Number(o.id) ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('')}
-                    </select>
-                  </td>
-                  <td>
-                    <div class="sx-c59ad0">
-                      <img src="${esc(et.imagen_data || '')}" class="img-thumb et-img-prev ${et.imagen_data ? '' : 'hidden'} sx-4684e7" alt="Etapa" />
-                      <label class="btn btn-sm sx-b76a9b">
-                        Foto
-                        <input type="file" class="et-img-file sx-cb4589" accept="image/jpeg,image/png,image/webp" />
-                      </label>
-                      <button type="button" class="btn btn-sm btn-danger et-img-clear ${et.imagen_data ? '' : 'hidden'}" title="Quitar foto">×</button>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="actions">
-                      <button type="button" class="btn btn-sm" data-save-etapa="${et.id}">Guardar</button>
-                      <button type="button" class="btn btn-sm btn-danger" data-del-etapa="${et.id}">Eliminar</button>
-                    </div>
-                  </td>
-                </tr>
-              `).join('')}
-              <tr class="sx-682310">
-                <td><input type="number" name="orden" form="form-add-receta-etapa" min="1" value="${(etapas[etapas.length - 1]?.orden || 0) + 1}" class="w-60" title="Orden" /></td>
-                <td><input type="text" name="nombre" form="form-add-receta-etapa" required placeholder="Nueva etapa..." class="sx-307c3d" /></td>
-                <td><input type="text" name="descripcion" form="form-add-receta-etapa" placeholder="Descripción" class="mw-140" /></td>
-                <td><input type="number" name="dias_estimados" form="form-add-receta-etapa" min="1" value="1" class="sx-afd60f" title="Días estimados" /></td>
-                <td><input type="number" name="costo_unidad" form="form-add-receta-etapa" min="0" step="0.01" value="0" class="sx-41f7c3" title="Costo proceso por unidad ($)" /></td>
-                <td><select name="taller_id" form="form-add-receta-etapa" class="sx-bd123a">${tallerOpts(null)}</select></td>
-                <td><select name="plan_cuenta_id" form="form-add-receta-etapa" class="mw-150">${cuentaOpts(null)}</select></td>
-                <td>
-                  <select name="depende_de_id" form="form-add-receta-etapa" class="mw-140">
-                    <option value="">-- Ninguna --</option>
-                    ${etapas.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}
-                  </select>
-                </td>
-                <td class="muted text-xs">-</td>
-                <td><button type="submit" form="form-add-receta-etapa" class="btn btn-primary btn-sm">+ Agregar</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-
-    const renderInsumoEditorRow = () => `
-      <tr id="line-editor-card" class="sx-682310">
-        <td><div id="line-prod-combo" class="mw-220"></div></td>
-        <td>
-          <select name="receta_etapa_id" form="form-receta-linea" class="sx-bd123a">
-            <option value="">General</option>
-            ${etapas.map(et => `<option value="${et.id}" ${String(et.id) === String(formEtapaId || '') ? 'selected' : ''}>${et.orden}. ${esc(et.nombre)} (${et.dias_estimados}d)</option>`).join('')}
-          </select>
-        </td>
-        <td class="num">
-          <input type="number" step="0.0001" min="0" name="coeficiente" id="line-coef-input" form="form-receta-linea" required value="${esc(formCoef)}" class="sx-b2cc2e" />
-        </td>
-        <td>
-          <select name="udm_receta" id="line-udm-select" form="form-receta-linea" required class="sx-fdeecb">
-            ${prodUnits.map(u => `<option value="${esc(u.nombre)}" ${u.nombre === formUdmReceta ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}
-          </select>
-        </td>
-        <td><div id="line-variantes-multi" class="mw-170"></div></td>
-        <td>
-          <div class="actions">
-            <button type="submit" form="form-receta-linea" class="btn btn-sm btn-primary">${editingLineId ? 'Guardar' : '+ Agregar'}</button>
-            ${editingLineId ? '<button type="button" id="btn-cancel-edit-line" class="btn btn-sm">Cancelar</button>' : ''}
+          <div>
+            <h2>Etapas de Producción</h2>
+            <span class="muted text-sm">Orden y días estimados propios de esta receta. Click en celda para editar o completá la fila inferior.</span>
           </div>
-        </td>
-      </tr>
+        </div>
+        <div id="receta-etapas-sheet"></div>
+      </div>
     `;
 
     const insumosHtml = `
@@ -233,61 +125,7 @@ export async function renderRecetaDetalleView({ id }) {
           </div>
           <button type="button" class="btn btn-sm" id="btn-map-plantilla-variantes">+ Mapear por variante</button>
         </div>
-        <form id="form-receta-linea"></form>
-        ${editingLineId ? `
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Insumo / Producto</th>
-                  <th>Etapa</th>
-                  <th class="num">Cantidad</th>
-                  <th>UdM</th>
-                  <th>Equiv.</th>
-                  <th>Variantes</th>
-                  <th title="Emparejar variante automáticamente">Emparejar</th>
-                  <th class="num">Precio Unit.</th>
-                  <th class="num">Costo / u.</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${lineas.map(l => {
-                  if (Number(editingLineId) === Number(l.id)) return renderInsumoEditorRow();
-                  return `
-                    <tr>
-                      <td>
-                        <strong>${esc(l.producto_nombre)}</strong>
-                        <div class="muted text-xs">${esc(l.categoria)}${l.proveedor_nombre ? ` · ${esc(l.proveedor_nombre)}` : ''}</div>
-                      </td>
-                      <td><span class="badge badge-muted">${esc(l.etapa_nombre || 'General')}</span></td>
-                      <td class="num">${fmtNum(l.coeficiente)}</td>
-                      <td class="nowrap">${esc(l.udm_receta)}</td>
-                      <td class="muted nowrap">${fmtNum(l.coef_convertido)} ${esc(l.udm)}</td>
-                      <td>
-                        ${l.variantes && l.variantes.length
-                          ? l.variantes.map(v => {
-                              const label = typeof v === 'string' ? v : `${v.atributo}: ${v.valor}`;
-                              return `<span class="badge badge-warn sx-4aa43e">${esc(label)}</span>`;
-                            }).join('')
-                          : '<span class="muted">Todas</span>'}
-                      </td>
-                      <td class="text-center">${Number(l.emparejar_variante) === 1 ? '<span class="badge badge-ok">Sí</span>' : '<span class="muted">-</span>'}</td>
-                      <td class="num nowrap">${fmtMoney(l.precio)} / ${esc(l.udm)}</td>
-                      <td class="num nowrap"><strong>${fmtMoney(l.costo_par)}</strong></td>
-                      <td>
-                        <div class="actions">
-                          <button type="button" class="btn btn-sm" data-edit-line="${l.id}">Editar</button>
-                          <button type="button" class="btn btn-sm btn-danger" data-del-line="${l.id}">Quitar</button>
-                        </div>
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        ` : `<div id="receta-insumos-sheet"></div>`}
+        <div id="receta-insumos-sheet"></div>
       </div>
       ${(() => {
         const comunes = lineas.filter(l => !l.variantes || l.variantes.length === 0);
@@ -489,8 +327,175 @@ export async function renderRecetaDetalleView({ id }) {
           }
         });
 
+        const etapasSheetHost = container.querySelector('#receta-etapas-sheet');
+        if (etapasSheetHost) {
+          const tallerMap = new Map(talleres.map(t => [String(t.id), t.nombre]));
+          const cuentaMap = new Map(cuentasEgreso.map(c => [String(c.id), `${c.codigo} · ${c.nombre}`]));
+          const etapaNameMap = new Map(etapas.map(e => [String(e.id), e.nombre]));
+
+          renderSpreadsheetTable(etapasSheetHost, {
+            rows: etapas,
+            emptyText: 'No hay etapas configuradas.',
+            compact: true,
+            defaultNewRow: () => ({
+              orden: (etapas[etapas.length - 1]?.orden || 0) + 1,
+              nombre: '',
+              descripcion: '',
+              dias_estimados: 1,
+              costo_unidad: 0,
+              taller_id: '',
+              plan_cuenta_id: '',
+              depende_de_id: '',
+              imagen_data: '',
+            }),
+            onCreateRow: async ({ row }) => {
+              if (!String(row.nombre || '').trim()) return false;
+              try {
+                await api(`/api/recetas/${id}/etapas`, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    orden: Number(row.orden) || 1,
+                    nombre: String(row.nombre).trim(),
+                    descripcion: row.descripcion || '',
+                    dias_estimados: Number(row.dias_estimados) || 1,
+                    costo_unidad: Number(row.costo_unidad) || 0,
+                    taller_id: row.taller_id ? Number(row.taller_id) : null,
+                    plan_cuenta_id: row.plan_cuenta_id ? Number(row.plan_cuenta_id) : null,
+                    depende_de_id: row.depende_de_id ? Number(row.depende_de_id) : null,
+                  }),
+                });
+                toast('Etapa agregada a la receta');
+                await renderRecetaDetalleView({ id });
+                return false;
+              } catch (err) {
+                toast(err.message, true);
+                throw err;
+              }
+            },
+            columns: [
+              {
+                key: 'orden',
+                label: 'Orden',
+                type: 'number',
+                min: 1,
+                align: 'right',
+                parse: v => Number(v) || 1,
+              },
+              {
+                key: 'nombre',
+                label: 'Etapa',
+                type: 'text',
+                parse: v => String(v || '').trim(),
+                render: et => (et.nombre ? `<strong>${esc(et.nombre)}</strong>` : '<span class="muted">Nueva etapa...</span>'),
+              },
+              {
+                key: 'descripcion',
+                label: 'Descripción',
+                type: 'text',
+                parse: v => String(v || '').trim(),
+                render: et => (et.descripcion ? esc(et.descripcion) : '<span class="muted">Sin descripción</span>'),
+              },
+              {
+                key: 'dias_estimados',
+                label: 'Días Est.',
+                type: 'number',
+                min: 1,
+                align: 'right',
+                parse: v => Math.max(1, Number(v) || 1),
+              },
+              {
+                key: 'costo_unidad',
+                label: 'Costo / u ($)',
+                type: 'number',
+                min: 0,
+                step: 0.01,
+                align: 'right',
+                parse: v => Math.max(0, Number(v) || 0),
+                render: et => fmtMoney(et.costo_unidad || 0),
+              },
+              {
+                key: 'taller_id',
+                label: 'Taller',
+                type: 'select',
+                options: [{ value: '', label: '-- Sin taller --' }, ...talleres.map(t => ({ value: String(t.id), label: t.nombre }))],
+                getValue: et => (et.taller_id ? String(et.taller_id) : ''),
+                parse: v => (v ? Number(v) : null),
+                render: et => (et.taller_id ? esc(tallerMap.get(String(et.taller_id)) || '-') : '<span class="muted">-- Sin taller --</span>'),
+              },
+              {
+                key: 'plan_cuenta_id',
+                label: 'Cuenta Contable',
+                type: 'select',
+                options: [{ value: '', label: '-- Por defecto --' }, ...cuentasEgreso.map(c => ({ value: String(c.id), label: `${c.codigo} · ${c.nombre}` }))],
+                getValue: et => (et.plan_cuenta_id ? String(et.plan_cuenta_id) : ''),
+                parse: v => (v ? Number(v) : null),
+                render: et => (et.plan_cuenta_id ? esc(cuentaMap.get(String(et.plan_cuenta_id)) || '-') : '<span class="muted">-- Por defecto --</span>'),
+              },
+              {
+                key: 'depende_de_id',
+                label: 'Depende de',
+                type: 'select',
+                options: et => [
+                  { value: '', label: '-- Ninguna --' },
+                  ...etapas.filter(o => o.id !== et.id).map(o => ({ value: String(o.id), label: o.nombre })),
+                ],
+                getValue: et => (et.depende_de_id ? String(et.depende_de_id) : ''),
+                parse: v => (v ? Number(v) : null),
+                render: et => (et.depende_de_id ? esc(etapaNameMap.get(String(et.depende_de_id)) || '-') : '<span class="muted">-- Ninguna --</span>'),
+              },
+              {
+                key: 'imagen_data',
+                label: 'Imagen',
+                editable: () => false,
+                render: et => (et.__isNew
+                  ? '<span class="muted text-xs">-</span>'
+                  : `<div class="sx-c59ad0" data-receta-etapa-row="${et.id}">
+                      <img src="${esc(et.imagen_data || '')}" class="img-thumb et-img-prev ${et.imagen_data ? '' : 'hidden'} sx-4684e7" alt="Etapa" />
+                      <label class="btn btn-sm sx-b76a9b">
+                        Foto
+                        <input type="file" class="et-img-file sx-cb4589" data-et-id="${et.id}" accept="image/jpeg,image/png,image/webp" />
+                      </label>
+                      <button type="button" class="btn btn-sm btn-danger et-img-clear ${et.imagen_data ? '' : 'hidden'}" data-et-id="${et.id}" title="Quitar foto">×</button>
+                    </div>`),
+              },
+            ],
+            onCellChange: async ({ row, key, value }) => {
+              try {
+                await api(`/api/receta-etapas/${row.id}`, {
+                  method: 'PUT',
+                  body: JSON.stringify({
+                    orden: key === 'orden' ? Number(value) : (Number(row.orden) || 1),
+                    nombre: key === 'nombre' ? String(value).trim() : row.nombre,
+                    descripcion: key === 'descripcion' ? value : (row.descripcion || ''),
+                    dias_estimados: key === 'dias_estimados' ? Number(value) : (Number(row.dias_estimados) || 1),
+                    costo_unidad: key === 'costo_unidad' ? Number(value) : (Number(row.costo_unidad) || 0),
+                    taller_id: key === 'taller_id' ? (value ? Number(value) : null) : (row.taller_id ? Number(row.taller_id) : null),
+                    plan_cuenta_id: key === 'plan_cuenta_id' ? (value ? Number(value) : null) : (row.plan_cuenta_id ? Number(row.plan_cuenta_id) : null),
+                    depende_de_id: key === 'depende_de_id' ? (value ? Number(value) : null) : (row.depende_de_id ? Number(row.depende_de_id) : null),
+                    imagen_data: row.imagen_data || '',
+                  }),
+                });
+                toast('Etapa actualizada');
+              } catch (err) {
+                toast(err.message, true);
+                throw err;
+              }
+            },
+            onDeleteRow: async (et) => {
+              if (!(await showConfirmModal('¿Eliminar esta etapa de la receta?'))) return;
+              try {
+                await api(`/api/receta-etapas/${et.id}`, { method: 'DELETE' });
+                toast('Etapa eliminada');
+                await renderRecetaDetalleView({ id });
+              } catch (err) {
+                toast(err.message, true);
+              }
+            },
+          });
+        }
+
         const sheetHost = container.querySelector('#receta-insumos-sheet');
-        if (sheetHost && !editingLineId) {
+        if (sheetHost) {
           const etapaOptions = [
             { value: '', label: 'General' },
             ...etapas.map(et => ({ value: String(et.id), label: `${et.orden}. ${et.nombre}` })),
@@ -591,6 +596,13 @@ export async function renderRecetaDetalleView({ id }) {
                       return `<span class="badge badge-warn sx-4aa43e">${esc(label)}</span>`;
                     }).join('')
                   : '<span class="muted">Todas</span>'),
+              },
+              {
+                key: 'costo_par',
+                label: 'Costo / u.',
+                align: 'right',
+                editable: () => false,
+                render: (l) => (l.__isNew ? '<span class="muted">-</span>' : `<strong>${fmtMoney(l.costo_par || 0)}</strong>`),
               },
             ],
             onDeleteRow: async (l) => {
@@ -703,169 +715,34 @@ export async function renderRecetaDetalleView({ id }) {
           await renderRecetaDetalleView({ id });
         });
 
-        const otherLines = lineas.filter(l => Number(l.id) !== Number(editingLineId));
-        const usedProdIds = new Set(otherLines.map(l => String(l.producto_id)));
-        const availableInsumos = insumoProductos.filter(p => !usedProdIds.has(String(p.id)) || String(p.id) === String(selectedProdId));
-
-        const prodComboEl = container.querySelector('#line-prod-combo');
-        if (prodComboEl) {
-          mountCombobox(prodComboEl, {
-            name: 'producto_id',
-            form: 'form-receta-linea',
-            required: true,
-            value: selectedProdId ? String(selectedProdId) : '',
-            placeholder: 'Buscar o crear insumo...',
-            items: availableInsumos.map(p => ({
-              value: String(p.id),
-              label: p.nombre,
-              raw: p,
-            })),
-            getDetailUrl: (it) => it.raw?.plantilla_id ? `/plantillas/${it.raw.plantilla_id}` : null,
-            onSelect: (it) => {
-              if (!it) { selectedProdId = ''; return; }
-              selectedProdId = it.value;
-              const prod = it.raw || insumoProductos.find(p => String(p.id) === String(selectedProdId));
-              if (prod) formUdmReceta = prod.udm;
-              formCoef = container.querySelector('#line-coef-input')?.value || formCoef;
-              const udmSel = container.querySelector('#line-udm-select');
-              if (udmSel && prod) {
-                const units = compatibleUnits(prod.udm);
-                udmSel.innerHTML = units.map(u => `<option value="${esc(u.nombre)}" ${u.nombre === formUdmReceta ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('');
-              }
-            },
-            onCreate: async (q) => {
-              const created = await quickCreateProducto(q, { se_compra: true, se_fabrica: false });
-              if (created) {
-                productos.push(created.raw);
-                insumoProductos.push(created.raw);
-                selectedProdId = created.value;
-                formUdmReceta = created.raw.udm || 'unidades';
-                const udmSel = container.querySelector('#line-udm-select');
-                if (udmSel) {
-                  const units = compatibleUnits(formUdmReceta);
-                  udmSel.innerHTML = units.map(u => `<option value="${esc(u.nombre)}" ${u.nombre === formUdmReceta ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('');
-                }
-              }
-              return created;
-            },
-          });
-        }
-
-        // Solo excluir variantes ya asignadas al MISMO insumo en la misma etapa
-        const usedVarKeys = new Set();
-        for (const l of otherLines) {
-          if (String(l.producto_id) !== String(selectedProdId)) continue;
-          if (String(l.receta_etapa_id || '') !== String(formEtapaId || '')) continue;
-          for (const v of (l.variantes || [])) {
-            usedVarKeys.add(typeof v === 'string' ? v : `${v.atributo}: ${v.valor}`);
-          }
-        }
-        const availableVariantes = targetVariantes.filter(v => {
-          const key = `${v.atributo}: ${v.valor}`;
-          return !usedVarKeys.has(key) || formVariantes.has(key);
-        });
-
-        const varMultiEl = container.querySelector('#line-variantes-multi');
-        const lineVariantesMulti = varMultiEl
-          ? mountMultiSelect(varMultiEl, {
-              name: 'variantes',
-              values: Array.from(formVariantes),
-              placeholder: 'Todas las variantes...',
-              items: availableVariantes.map(v => {
-                const key = `${v.atributo}: ${v.valor}`;
-                return { value: key, label: key };
-              }),
-              onChange: (vals) => { formVariantes = new Set(vals); },
-            })
-          : null;
-
-        container.querySelector('#btn-cancel-edit-line')?.addEventListener('click', () => {
-          editingLineId = null;
-          formCoef = '1';
-          formVariantes = new Set();
-          formEmparejar = false;
-          activeTab = 'insumos';
-          render();
-        });
-
-        container.querySelectorAll('[data-edit-line]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const line = lineas.find(l => String(l.id) === String(btn.dataset.editLine));
-            if (!line) return;
-            editingLineId = line.id;
-            selectedProdId = String(line.producto_id);
-            formEtapaId = line.receta_etapa_id ? String(line.receta_etapa_id) : (line.etapa_id ? String(line.etapa_id) : '');
-            formCoef = String(line.coeficiente);
-            formUdmReceta = line.udm_receta;
-            formVariantes = new Set((line.variantes || []).map(v => typeof v === 'string' ? v : `${v.atributo}: ${v.valor}`));
-            formEmparejar = Number(line.emparejar_variante) === 1;
-            activeTab = 'insumos';
-            render();
-            root.querySelector('#line-editor-card')?.scrollIntoView({ behavior: 'smooth' });
-          });
-        });
-
-        container.querySelectorAll('[data-del-line]').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            if (!(await showConfirmModal('¿Quitar insumo de esta receta?'))) return;
-            try {
-              await api(`/api/receta-lineas/${btn.dataset.delLine}`, { method: 'DELETE' });
-              toast('Línea quitada');
-              await renderRecetaDetalleView({ id });
-            } catch (err) {
-              toast(err.message, true);
-            }
-          });
-        });
-
-        container.querySelector('#form-add-receta-etapa')?.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          try {
-            await api(`/api/recetas/${id}/etapas`, {
-              method: 'POST',
-              body: JSON.stringify({
-                orden: Number(fd.get('orden')) || 1,
-                nombre: fd.get('nombre'),
-                descripcion: fd.get('descripcion') || '',
-                dias_estimados: Number(fd.get('dias_estimados')) || 1,
-                costo_unidad: Number(fd.get('costo_unidad')) || 0,
-                taller_id: fd.get('taller_id') ? Number(fd.get('taller_id')) : null,
-                plan_cuenta_id: fd.get('plan_cuenta_id') ? Number(fd.get('plan_cuenta_id')) : null,
-                depende_de_id: fd.get('depende_de_id') ? Number(fd.get('depende_de_id')) : null,
-              }),
-            });
-            toast('Etapa agregada a la receta');
-            await renderRecetaDetalleView({ id });
-          } catch (err) {
-            toast(err.message, true);
-          }
-        });
-
         container.querySelectorAll('.et-img-file').forEach(inp => {
           inp.addEventListener('change', async (e) => {
             const file = e.target.files?.[0];
-            if (!file) return;
-            const row = inp.closest('[data-receta-etapa-row]');
+            const etId = inp.dataset.etId;
+            if (!file || !etId) return;
             try {
               const dataUrl = await compressImageToDataUrl(file);
-              row.dataset.imgData = dataUrl;
-              const prev = row.querySelector('.et-img-prev');
-              const clr = row.querySelector('.et-img-clear');
-              if (prev) { prev.src = dataUrl; prev.classList.remove('hidden'); }
-              if (clr) clr.classList.remove('hidden');
+              await api(`/api/receta-etapas/${etId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ imagen_data: dataUrl }),
+              });
+              toast('Imagen de etapa guardada');
+              await renderRecetaDetalleView({ id });
             } catch (err) { toast(err.message, true); }
           });
         });
         container.querySelectorAll('.et-img-clear').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const row = btn.closest('[data-receta-etapa-row]');
-            row.dataset.imgData = '';
-            const prev = row.querySelector('.et-img-prev');
-            const f = row.querySelector('.et-img-file');
-            if (prev) { prev.src = ''; prev.classList.add('hidden'); }
-            if (f) f.value = '';
-            btn.classList.add('hidden');
+          btn.addEventListener('click', async () => {
+            const etId = btn.dataset.etId;
+            if (!etId) return;
+            try {
+              await api(`/api/receta-etapas/${etId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ imagen_data: '' }),
+              });
+              toast('Imagen quitada');
+              await renderRecetaDetalleView({ id });
+            } catch (err) { toast(err.message, true); }
           });
         });
 
@@ -881,75 +758,6 @@ export async function renderRecetaDetalleView({ id }) {
             toast('Ficha técnica guardada');
             await renderRecetaDetalleView({ id });
           } catch (err) { toast(err.message, true); }
-        });
-
-        container.querySelectorAll('[data-save-etapa]').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            const row = container.querySelector(`[data-receta-etapa-row="${btn.dataset.saveEtapa}"]`);
-            const depVal = row.querySelector('.et-depende')?.value;
-            const tallerVal = row.querySelector('.et-taller')?.value;
-            const ctaVal = row.querySelector('.et-cta')?.value;
-            try {
-              await api(`/api/receta-etapas/${btn.dataset.saveEtapa}`, {
-                method: 'PUT',
-                body: JSON.stringify({
-                  orden: Number(row.querySelector('.et-orden').value) || 1,
-                  nombre: row.querySelector('.et-nombre').value.trim(),
-                  descripcion: row.querySelector('.et-desc')?.value.trim() || '',
-                  dias_estimados: Number(row.querySelector('.et-dias').value) || 1,
-                  costo_unidad: Number(row.querySelector('.et-costo')?.value) || 0,
-                  taller_id: tallerVal ? Number(tallerVal) : null,
-                  plan_cuenta_id: ctaVal ? Number(ctaVal) : null,
-                  depende_de_id: depVal ? Number(depVal) : null,
-                  imagen_data: row.dataset.imgData || '',
-                }),
-              });
-              toast('Etapa actualizada');
-              await renderRecetaDetalleView({ id });
-            } catch (err) {
-              toast(err.message, true);
-            }
-          });
-        });
-
-        container.querySelectorAll('[data-del-etapa]').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            if (!(await showConfirmModal('¿Eliminar esta etapa de la receta?'))) return;
-            try {
-              await api(`/api/receta-etapas/${btn.dataset.delEtapa}`, { method: 'DELETE' });
-              toast('Etapa eliminada');
-              await renderRecetaDetalleView({ id });
-            } catch (err) {
-              toast(err.message, true);
-            }
-          });
-        });
-
-        container.querySelector('#form-receta-linea')?.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          const vars = lineVariantesMulti ? lineVariantesMulti.getValues() : Array.from(formVariantes);
-          const prodIdVal = Number(fd.get('producto_id') || selectedProdId);
-          const payload = {
-            producto_id: prodIdVal,
-            receta_etapa_id: fd.get('receta_etapa_id') ? Number(fd.get('receta_etapa_id')) : null,
-            coeficiente: Number(fd.get('coeficiente')),
-            udm_receta: fd.get('udm_receta'),
-            variantes: vars,
-            emparejar_variante: fd.get('emparejar_variante') === 'on' ? 1 : 0,
-          };
-          try {
-            if (editingLineId) {
-              await api(`/api/receta-lineas/${editingLineId}`, { method: 'PUT', body: JSON.stringify(payload) });
-              toast('Línea actualizada');
-            } else {
-              await api(`/api/recetas/${id}/lineas`, { method: 'POST', body: JSON.stringify(payload) });
-              toast('Insumo agregado a la receta');
-            }
-            await renderRecetaDetalleView({ id });
-          } catch (err) {
-            toast(err.message, true);
-          }
         });
       },
     });

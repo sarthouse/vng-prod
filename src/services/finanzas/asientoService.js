@@ -441,6 +441,39 @@ export class AsientoService {
       lineas,
     });
   }
+
+  generarAsientoCmvEntrega({ operacionId, ventaId = null, numero = '', fecha = null, costoTotal = 0 } = {}) {
+    const monto = Number((Number(costoTotal) || 0).toFixed(2));
+    if (!(monto > 0)) return null;
+
+    const ctaCmv = this.resolveDefaultCuenta('cta_cmv_id', '5.1.01');
+    const ctaMerc = this.resolveDefaultCuenta('cta_mercaderias_id', '1.1.06');
+    if (!ctaCmv || !ctaMerc) return null;
+
+    const diario = this.resolveDiario('general');
+    return this.createAsiento({
+      diario_id: diario?.id || null,
+      fecha: fecha || new Date().toISOString().slice(0, 10),
+      tipo_origen: 'operacion_stock_cmv',
+      origen_id: Number(operacionId),
+      concepto: `CMV Entrega ${numero || `#${operacionId}`}${ventaId ? ` (Venta #${ventaId})` : ''}`,
+      estado: 'Confirmado',
+      lineas: [
+        {
+          plan_cuenta_id: ctaCmv.id,
+          debe: monto,
+          haber: 0,
+          descripcion: 'Costo de Mercadería Vendida (CMV)',
+        },
+        {
+          plan_cuenta_id: ctaMerc.id,
+          debe: 0,
+          haber: monto,
+          descripcion: 'Baja de Inventario / Mercaderías',
+        },
+      ],
+    });
+  }
 }
 
 export const defaultAsientoService = new AsientoService();

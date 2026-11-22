@@ -27,7 +27,7 @@ export function generateExistenciasPdf(payload = {}, emp = {}) {
 
   if (items.length === 0) {
     doc.text('No hay existencias para los filtros seleccionados.', m + 4, ctx.y + 4, { size: 8, color: mutedCol });
-    return doc.build();
+    return ctx.finish();
   }
 
   let totalValorizado = 0;
@@ -74,5 +74,5 @@ export function generateExistenciasPdf(payload = {}, emp = {}) {
     align: 'right',
   });
 
-  return doc.build();
+  return ctx.finish();
 }

@@ -1,8 +1,5 @@
 import { PdfDocument, PAGE_SIZES_MM, fmtDateAr, fmtNumAr, wrapTextMm } from './pdfBuilder.js';
-
-function fmtMoneyAr(n) {
-  return '$' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+import { stampUnifiedFooter, fmtMoneyAr } from './printLayout.js';
 
 export function generateOrdenPdf(detail = {}, emp = {}) {
   const orden = detail.orden || detail || {};
@@ -131,7 +128,20 @@ export function generateOrdenPdf(detail = {}, emp = {}) {
 
   for (const ins of insumos) {
     const rH = 5.8;
-    if (curY + rH > footerTop - 2) break;
+    if (curY + rH > footerTop - 2) {
+      doc.addPage(spec.w, spec.h);
+      doc.rect(m, yTop, w, yBottom - yTop, { stroke: borderCol, lineWidth: 0.85 });
+      doc.rect(m, yTop, w, 6.5, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
+      doc.text('ORDEN DE PRODUCCIÓN · INSUMOS (CONTINUACIÓN)', midX, yTop + 1.6, { size: 8.5, bold: true, align: 'center' });
+      curY = yTop + 8.5;
+      doc.rect(m, curY, w, thEtH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.55 });
+      doc.text('Etapa', m + 2, curY + 1.4, { size: baseSz - 0.3, bold: true });
+      doc.text('Insumo / Material', m + 36, curY + 1.4, { size: baseSz - 0.3, bold: true });
+      doc.text('Categoría', m + 115, curY + 1.4, { size: baseSz - 0.3, bold: true });
+      doc.text('Cant. Requerida', m + 162, curY + 1.4, { size: baseSz - 0.3, bold: true, align: 'right' });
+      doc.text('Stock Act.', m + w - 2, curY + 1.4, { size: baseSz - 0.3, bold: true, align: 'right' });
+      curY += thEtH;
+    }
     doc.text(String(ins.etapa_nombre || 'General').slice(0, 16), m + 2, curY + 1.3, { size: baseSz - 0.5, color: mutedCol });
     doc.text(String(ins.producto_nombre || '-').slice(0, 42), m + 36, curY + 1.3, { size: baseSz - 0.3, bold: true });
     doc.text(String(ins.categoria || '-').slice(0, 18), m + 115, curY + 1.3, { size: baseSz - 0.5, color: mutedCol });
@@ -158,5 +168,6 @@ export function generateOrdenPdf(detail = {}, emp = {}) {
   doc.text('Conformidad Taller / Control:', midX + 4, footerTop + 8.5, { size: baseSz - 0.3, bold: true });
   doc.line(midX + 48, lineY, m + w - 6, lineY, { color: '#334155', lineWidth: 0.5 });
 
+  stampUnifiedFooter(doc, emp, { margin: m });
   return doc.toBuffer();
 }

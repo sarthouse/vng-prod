@@ -155,8 +155,8 @@ export async function renderOrdenDetalleView({ id }) {
     <div class="card">
       <div class="card-header"><h2>Documentos Vinculados</h2></div>
       <div class="actions sx-30973c">
-        ${opsOrden.map(o => `<a href="/operaciones-stock/${o.id}" data-link class="btn btn-sm">Operación: ${esc(o.numero)} (${esc(o.estado)})</a>`).join('')}
-        ${comprasOrden.map(c => `<a href="/compras/${c.id}" data-link class="btn btn-sm">Compra: ${esc(c.numero || '#' + c.id)} — ${esc(c.proveedor_nombre)} (${esc(c.estado)})</a>`).join('')}
+        ${opsOrden.map(o => `<a href="/operaciones-stock/${o.id}" data-link class="btn btn-sm">${esc(o.tipo || 'Operación')}: ${esc(o.numero)} (${esc(o.estado)})</a>`).join('')}
+        ${comprasOrden.map(c => `<a href="/compras/${c.id}" data-link class="btn btn-sm">Compra: ${esc(c.numero || '#' + c.id)} — ${esc(c.proveedor_nombre)} (${esc(c.estado)})</a>${c.asiento_id ? `<a href="/contabilidad" data-link class="badge badge-muted" title="Ver asiento contable de la compra">Asiento #${c.asiento_id}</a>` : ''}`).join('')}
       </div>
     </div>
   ` : '';
@@ -412,7 +412,9 @@ export async function renderOrdenDetalleView({ id }) {
             key: 'stock_consumido',
             label: 'Stock',
             type: 'readonly',
-            render: (e) => e.stock_consumido ? '<span class="badge badge-ok">Descontado</span>' : '<span class="muted">Pendiente</span>',
+            render: (e) => e.stock_consumido
+              ? '<span class="badge badge-ok" title="El stock de esta etapa ya fue descontado; no se puede reabrir sin revertir movimientos">Descontado (fijo)</span>'
+              : '<span class="muted">Pendiente</span>',
           },
         ],
         extraActions: (e) => {

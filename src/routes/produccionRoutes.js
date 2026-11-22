@@ -278,12 +278,6 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
     json(res, 200, pedSvc.listEntregas());
     return true;
   }
-  if (pathname === '/api/entregas' && req.method === 'POST') {
-    const b = await parseBody(req);
-    if (!Number(b.lote)) { json(res, 400, { error: 'El número de Lote es obligatorio' }); return true; }
-    json(res, 201, pedSvc.createEntrega(b));
-    return true;
-  }
   const entMatch = pathname.match(/^\/api\/entregas\/(\d+)$/);
   if (entMatch && req.method === 'GET') {
     const e = pedSvc.getEntregaById(Number(entMatch[1]));
@@ -291,14 +285,8 @@ export async function handleProduccionRoutes(req, res, pathname, user) {
     else json(res, 200, e);
     return true;
   }
-  if (entMatch && req.method === 'PUT') {
-    if (!pedSvc.updateEntrega(Number(entMatch[1]), await parseBody(req))) json(res, 404, { error: 'Entrega no encontrada' });
-    else json(res, 200, { ok: true });
-    return true;
-  }
-  if (entMatch && req.method === 'DELETE') {
-    pedSvc.deleteEntrega(Number(entMatch[1]));
-    json(res, 200, { ok: true });
+  if ((pathname === '/api/entregas' || entMatch) && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
+    json(res, 410, { error: 'Circuito legacy de entregas deprecado. Usá /api/operaciones-stock.' });
     return true;
   }
   if (pathname === '/api/pendientes' && req.method === 'GET') {

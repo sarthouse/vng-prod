@@ -1,8 +1,5 @@
 import { PdfDocument, PAGE_SIZES_MM, fmtDateAr, fmtNumAr, wrapTextMm } from './pdfBuilder.js';
-
-function fmtMoneyAr(n) {
-  return '$' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+import { stampUnifiedFooter, fmtMoneyAr } from './printLayout.js';
 
 export function generatePresupuestoPdf(presupuesto = {}, emp = {}) {
   const doc = new PdfDocument();
@@ -116,7 +113,21 @@ export function generatePresupuestoPdf(presupuesto = {}, emp = {}) {
   curY += thH;
   for (const it of items) {
     const rowH = 6.2;
-    if (curY + rowH > footerTop - 2) break;
+    if (curY + rowH > footerTop - 2) {
+      doc.addPage(spec.w, spec.h);
+      doc.rect(m, yTop, w, yBottom - yTop, { stroke: borderCol, lineWidth: 0.85 });
+      doc.rect(m, yTop, w, topBarH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
+      doc.text('PRESUPUESTO DE PRODUCCIÓN · CONTINUACIÓN', midX, yTop + 1.6, { size: 8.5, bold: true, align: 'center' });
+      curY = yTop + topBarH + 2;
+      doc.rect(m, curY, w, thH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
+      doc.text('Insumo / Componente', xProd + 2, curY + 2, { size: baseSz, bold: true });
+      doc.text('Categoría', xCat + 2, curY + 2, { size: baseSz, bold: true });
+      doc.text('Proveedor', xProv + 2, curY + 2, { size: baseSz, bold: true });
+      doc.text('Precio Unit.', xPre + cPreW - 2, curY + 2, { size: baseSz, bold: true, align: 'right' });
+      doc.text('A Comprar', xCant + cCantW - 2, curY + 2, { size: baseSz, bold: true, align: 'right' });
+      doc.text('Subtotal', xSub + cSubW - 2, curY + 2, { size: baseSz, bold: true, align: 'right' });
+      curY += thH;
+    }
     const nomLines = wrapTextMm(it.nombre || '-', cProdW - 3, baseSz - 0.4, true);
     doc.text(nomLines[0] || '-', xProd + 2, curY + 1.5, { size: baseSz - 0.4, bold: true });
     doc.text(String(it.categoria || '-').slice(0, 18), xCat + 2, curY + 1.5, { size: baseSz - 0.5, color: mutedCol });
@@ -128,5 +139,6 @@ export function generatePresupuestoPdf(presupuesto = {}, emp = {}) {
     doc.line(m, curY, m + w, curY, { color: '#E2E8F0', lineWidth: 0.35 });
   }
 
+  stampUnifiedFooter(doc, emp, { margin: m });
   return doc.toBuffer();
 }

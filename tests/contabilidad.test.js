@@ -6,6 +6,7 @@ import { initDb, runWithDatabase, closeConnection } from '../src/db.js';
 import * as contactoSvc from '../src/services/comercial/contactoService.js';
 import * as prodSvc from '../src/services/inventario/productoService.js';
 import * as compraSvc from '../src/services/comercial/compraService.js';
+import * as ocSvc from '../src/services/comercial/ordenCompraService.js';
 import * as ventaSvc from '../src/services/comercial/ventaService.js';
 import * as asientoSvc from '../src/services/finanzas/asientoService.js';
 import * as opStockSvc from '../src/services/inventario/operacionStockService.js';
@@ -191,15 +192,16 @@ describe('Contabilidad, Notas de Crédito/Débito y Remito Unificado', () => {
       const remOrdenDet = opStockSvc.getOperacionStockById(remitosOrden[0].id);
       assert.equal(remOrdenDet.lineas[0].cantidad, 10);
 
-      const comprasOrden = compraSvc.compraRepo.query()
-        .where('orden_id', ordenId)
+      const ocsOrden = ocSvc.ocRepo.query()
+        .where('origen_tipo', 'orden')
+        .where('origen_id', ordenId)
         .all();
-      assert.equal(comprasOrden.length, 1);
-      assert.equal(comprasOrden[0].estado, 'Borrador');
-      const cmpOrdenDet = compraSvc.getCompraById(comprasOrden[0].id);
-      assert.equal(cmpOrdenDet.lineas[0].cantidad, 5);
+      assert.equal(ocsOrden.length, 1);
+      assert.equal(ocsOrden[0].estado, 'Borrador');
+      const ocOrdenDet = ocSvc.getOrdenCompraById(ocsOrden[0].id);
+      assert.equal(ocOrdenDet.lineas[0].cantidad, 5);
 
-      const updated = compraSvc.updateCompra(comprasOrden[0].id, {
+      const convRes = ocSvc.convertirOrdenCompraACompra(ocsOrden[0].id, {
         numero: '0001-00009999',
         lineas: [{
           producto_id: insumoProd.id,
@@ -210,16 +212,17 @@ describe('Contabilidad, Notas de Crédito/Débito y Remito Unificado', () => {
           alicuota_iva: 21,
         }],
       });
-      assert.equal(updated, true);
-      const cmpAfterEdit = compraSvc.getCompraById(comprasOrden[0].id);
+      assert.equal(convRes.ok, true);
+      const cmpAfterEdit = compraSvc.getCompraById(convRes.compra_id);
       assert.equal(cmpAfterEdit.compra.numero, '0001-00009999');
+      assert.equal(cmpAfterEdit.compra.orden_compra_id, ocsOrden[0].id);
       assert.equal(cmpAfterEdit.lineas[0].cantidad, 7);
       assert.equal(cmpAfterEdit.compra.total, 847);
 
-      compraSvc.confirmarCompra(comprasOrden[0].id, {});
-      assert.throws(() => compraSvc.updateCompra(comprasOrden[0].id, { numero: '0001-00000000' }), /Borrador/);
+      compraSvc.confirmarCompra(convRes.compra_id, {});
+      assert.throws(() => compraSvc.updateCompra(convRes.compra_id, { numero: '0001-00000000' }), /Borrador/);
 
-      // Circuito Retail: se_vende=1, se_compra=1, se_fabrica=0 -> Venta sin stock dispara Compra Borrador
+      // Circuito Retail: se_vende=1, se_compra=1, se_fabrica=0 -> Venta sin stock dispara Orden de Compra Borrador
       const retailPltId = prodSvc.createPlantilla({
         nombre: 'Cordón Retail Test',
         se_fabrica: 0,
@@ -242,14 +245,18 @@ describe('Contabilidad, Notas de Crédito/Débito y Remito Unificado', () => {
         lineas: [{ producto_id: retailProds[0].id, descripcion: retailProds[0].nombre, cantidad: 4, precio_unitario: 300 }],
       });
       assert.ok(vtaRetailId > 0);
-      const comprasRetail = compraSvc.compraRepo.query()
-        .where('contacto_id', provId)
-        .where('estado', 'Borrador')
+      const ocsRetail = ocSvc.ocRepo.query()
+        .where('origen_tipo', 'venta')
+        .where('origen_id', vtaRetailId)
         .all();
-      assert.ok(comprasRetail.length >= 1);
-      const cmpRetailDet = compraSvc.getCompraById(comprasRetail[0].id);
-      // Faltante = 4 - 2 = 2, pero minimo_compra = 5 -> compra Borrador por 5
-      assert.equal(cmpRetailDet.lineas[0].cantidad, 5);
+      assert.equal(ocsRetail.length, 1);
+      assert.equal(ocsRetail[0].estado, 'Borrador');
+      const ocRetailDet = ocSvc.getOrdenCompraById(ocsRetail[0].id);
+      // Faltante = 4 - 2 = 2, pero minimo_compra = 5 -> OC Borrador por 5
+      assert.equal(ocRetailDet.lineas[0].cantidad, 5);
+      // Convertir OC Retail a Compra Borrador
+      const convRetail = ocSvc.convertirOrdenCompraACompra(ocsRetail[0].id, { estado: 'Borrador' });
+      assert.ok(convRetail.compra_id > 0);
 
       const dash = tesSvc.getDashboardSummary();
       assert.ok(dash.borradores.compras >= 1);
@@ -294,8 +301,10 @@ describe('Contabilidad, Notas de Crédito/Débito y Remito Unificado', () => {
       assert.equal(ctas2.find(c => c.id === cta1Id).saldo_actual, 1200);
       assert.equal(ctas2.find(c => c.id === cta2Id).saldo_actual, 5500);
 
-      tesSvc.deletePago(pagoMultiId);
-      tesSvc.deleteCobro(cobroMultiId);
+      assert.throws(() => tesSvc.deletePago(pagoMultiId), /No se puede eliminar un pago confirmado o anulado/i);
+      assert.throws(() => tesSvc.deleteCobro(cobroMultiId), /No se puede eliminar un cobro confirmado o anulado/i);
+      tesSvc.anularPago(pagoMultiId);
+      tesSvc.anularCobro(cobroMultiId);
       const ctas3 = tesSvc.listCuentas();
       assert.equal(ctas3.find(c => c.id === cta1Id).saldo_actual, 1000);
       assert.equal(ctas3.find(c => c.id === cta2Id).saldo_actual, 5000);

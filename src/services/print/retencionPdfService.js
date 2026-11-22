@@ -1,19 +1,15 @@
 import { PdfDocument, PAGE_SIZES_MM, fmtDateAr } from './pdfBuilder.js';
-
-function fmtMoneyAr(n) {
-  return '$' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+import { getPrintTheme, drawEmpresaBlock, stampUnifiedFooter, fmtMoneyAr } from './printLayout.js';
 
 export function generateRetencionPdf({ pago = {}, retencion = {} } = {}, emp = {}) {
   const spec = PAGE_SIZES_MM.A4;
   const doc = new PdfDocument();
   doc.addPage(spec.w, spec.h);
 
+  const theme = getPrintTheme(emp);
+  const { fillHeader, borderCol, mutedCol } = theme;
   const m = spec.margin;
   const w = spec.w - m * 2;
-  const borderCol = '#0F1F2A';
-  const mutedCol = '#475569';
-  const fillHeader = '#F1F5F9';
 
   // Marco exterior
   doc.rect(m, m, w, 130, { stroke: borderCol, lineWidth: 0.85 });
@@ -22,17 +18,14 @@ export function generateRetencionPdf({ pago = {}, retencion = {} } = {}, emp = {
   doc.rect(m, m, w, 12, { stroke: borderCol, fill: fillHeader, lineWidth: 0.7 });
   doc.text('CERTIFICADO DE RETENCIÓN IMPOSITIVA', m + w / 2, m + 4, { size: 11, bold: true, align: 'center' });
 
-  let y = m + 16;
+  let y = m + 15;
   const midX = m + w / 2;
-  doc.line(midX, m + 12, midX, m + 46, { color: borderCol, lineWidth: 0.5 });
-  doc.line(m, m + 46, m + w, m + 46, { color: borderCol, lineWidth: 0.7 });
+  doc.line(midX, m + 12, midX, m + 50, { color: borderCol, lineWidth: 0.5 });
+  doc.line(m, m + 50, m + w, m + 50, { color: borderCol, lineWidth: 0.7 });
 
   // Agente de Retención (izquierda)
-  const emisor = emp.razon_social || emp.nombre_fantasia || 'Empresa Emisora';
   doc.text('AGENTE DE RETENCIÓN', m + 3, y, { size: 7.5, bold: true, color: mutedCol });
-  y += 4.5;
-  doc.textBlock(emisor, m + 3, y, w / 2 - 6, { size: 9.5, bold: true });
-  y += 5;
+  drawEmpresaBlock(doc, emp, { x: m + 3, y: y + 4, maxW: w / 2 - 6, isCompact: true });
   if (emp.cuit) {
     doc.text(`CUIT: ${emp.cuit}`, m + 3, y, { size: 8.5 });
     y += 4.5;
@@ -95,5 +88,6 @@ export function generateRetencionPdf({ pago = {}, retencion = {} } = {}, emp = {
   doc.line(m + w - 65, m + 118, m + w - 8, m + 118, { color: borderCol, lineWidth: 0.5 });
   doc.text('Firma y Sello Agente de Retención', m + w - 36.5, m + 121, { size: 7.5, color: mutedCol, align: 'center' });
 
+  stampUnifiedFooter(doc, emp, { margin: m });
   return doc.toBuffer();
 }

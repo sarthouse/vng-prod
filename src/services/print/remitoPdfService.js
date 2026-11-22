@@ -1,4 +1,9 @@
 import { PdfDocument, PAGE_SIZES_MM, fmtDateAr, fmtNumAr, wrapTextMm } from './pdfBuilder.js';
+import { stampUnifiedFooter } from './printLayout.js';
+import { BaseRepository } from '../../core/BaseRepository.js';
+import { MODELS } from '../../db/models.js';
+
+const puntoVentaRepo = new BaseRepository({ model: MODELS.puntos_venta });
 
 const COPY_LABELS = {
   original: ['ORIGINAL'],
@@ -270,7 +275,23 @@ function renderRemitoSheetPage(doc, data, emp, copyLabel, fmt) {
       const descText = subDesc ? `${nombre}\n${subDesc}` : nombre;
       const linesCount = wrapTextMm(descText, cDescW - 4, baseSz, false).length;
       const rowH = Math.max(5.5, linesCount * 3.8 + 1.5);
-      if (rowY + rowH > footerTop - 2) break;
+      if (rowY + rowH > footerTop - 2) {
+        doc.addPage(spec.w, spec.h);
+        doc.rect(m, yTop, w, yBottom - yTop, { stroke: borderCol, lineWidth: 0.85 });
+        doc.rect(m, yTop, w, topBarH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.65 });
+        doc.text(`${copyLabel} · CONTINUACIÓN`, midX, yTop + (isA5 ? 1.3 : 1.6), { size: isA5 ? 7.5 : 8.5, bold: true, align: 'center' });
+        const contY = yTop + topBarH + 2;
+        doc.rect(m, contY, w, thH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
+        doc.text('Ítem', xNum + cNumW / 2, contY + 1.8, { size: thSz, bold: true, align: 'center' });
+        doc.text('Descripción del Producto', xDesc + 2, contY + 1.8, { size: thSz, bold: true });
+        doc.text('Lote / Código', xLote + 2, contY + 1.8, { size: thSz, bold: true });
+        doc.text('Cantidad', xCant + cCantW - 2, contY + 1.8, { size: thSz, bold: true, align: 'right' });
+        doc.text('UdM', xUdm + 2, contY + 1.8, { size: thSz, bold: true });
+        for (const vx of [xDesc, xLote, xCant, xUdm]) {
+          doc.line(vx, contY, vx, yBottom - 4, { color: '#CBD5E1', lineWidth: 0.45 });
+        }
+        rowY = contY + thH + 1.5;
+      }
 
       doc.text(String(idx + 1).padStart(2, '0'), xNum + cNumW / 2, rowY, { size: baseSz, align: 'center' });
       doc.textBlock(descText, xDesc + 2, rowY, cDescW - 4, { size: baseSz, lineHeight: 1.25 });
@@ -350,11 +371,24 @@ function renderRemitoTicketPage(doc, data, emp, copyLabel, fmt) {
 }
 
 export function generateRemitoPdf(data = {}, emp = {}) {
-  const fmt = ['A4', 'A5', 'ticket80', 'ticket58'].includes(data.formato || emp.print_formato)
-    ? (data.formato || emp.print_formato)
+  let enrichedData = data;
+  if (!data?.cai) {
+    try {
+      const { ptoVta } = splitComprobanteNumero(data?.numero);
+      const pvNum = parseInt(String(ptoVta || '').replace(/\D/g, ''), 10);
+      const pv = (pvNum ? puntoVentaRepo.where('numero', pvNum).first() : null)
+        || puntoVentaRepo.where('es_default', 1).first();
+      if (pv?.cai) {
+        enrichedData = { ...data, cai: pv.cai, caiVto: data.caiVto || pv.cai_vto || '' };
+      }
+    } catch { /* sin conexión DB activa en tests puros */ }
+  }
+
+  const fmt = ['A4', 'A5', 'ticket80', 'ticket58'].includes(enrichedData.formato || emp.print_formato)
+    ? (enrichedData.formato || emp.print_formato)
     : 'A4';
-  const copiasMode = ['original', 'duplicado', 'triplicado'].includes(data.copias || emp.print_copias)
-    ? (data.copias || emp.print_copias)
+  const copiasMode = ['original', 'duplicado', 'triplicado'].includes(enrichedData.copias || emp.print_copias)
+    ? (enrichedData.copias || emp.print_copias)
     : 'original';
   const labels = COPY_LABELS[copiasMode] || ['ORIGINAL'];
 
@@ -362,8 +396,12 @@ export function generateRemitoPdf(data = {}, emp = {}) {
   const isTicket = fmt === 'ticket80' || fmt === 'ticket58';
 
   for (const copyLabel of labels) {
-    if (isTicket) renderRemitoTicketPage(doc, data, emp, copyLabel, fmt);
-    else renderRemitoSheetPage(doc, data, emp, copyLabel, fmt);
+    if (isTicket) renderRemitoTicketPage(doc, enrichedData, emp, copyLabel, fmt);
+    else renderRemitoSheetPage(doc, enrichedData, emp, copyLabel, fmt);
+  }
+  if (!isTicket) {
+    const spec = PAGE_SIZES_MM[fmt] || PAGE_SIZES_MM.A4;
+    stampUnifiedFooter(doc, emp, { margin: spec.margin });
   }
   return doc.toBuffer();
 }

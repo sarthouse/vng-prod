@@ -32,8 +32,10 @@ import {
 
 import { renderComprasView, renderCompraFormView } from './views/comercial/comprasView.js';
 import { renderVentasView, renderVentaFormView } from './views/comercial/ventasView.js';
+import { renderWooView } from './views/comercial/wooView.js';
 import { renderComercialReglasView } from './views/comercial/comercialReglasView.js';
 import { renderCondicionesComercialesView } from './views/comercial/condicionesComercialesView.js';
+import { renderOrdenesCompraView } from './views/comercial/ordenesCompraView.js';
 import { renderContactosView, renderContactoFormView } from './views/comercial/contactosView.js';
 import { renderCronogramaView } from './views/comercial/cronogramaView.js';
 
@@ -55,6 +57,8 @@ import {
   renderConciliacionBancariaView,
   renderCierresYMonedasView,
 } from './views/finanzas/contabilidadAvanzadaView.js';
+import { renderActivosFijosView } from './views/finanzas/activosFijosView.js';
+import { renderNominaView } from './views/finanzas/nominaView.js';
 
 import { renderConfigView } from './views/config/configView.js';
 import { renderDashboardView } from './views/dashboard/dashboardView.js';
@@ -77,6 +81,8 @@ addRoute('/compras/nueva', () => renderCompraFormView(), 'comercial.editar');
 addRoute('/compras/:id', (_c, params) => renderCompraFormView(params), 'comercial.ver');
 
 addRoute('/ventas', () => renderVentasView(), 'comercial.ver');
+addRoute('/woo', () => renderWooView(), 'comercial.ver');
+addRoute('/ordenes-compra', () => renderOrdenesCompraView(), 'comercial.ver');
 addRoute('/ventas/reglas', () => renderComercialReglasView(), 'comercial.ver');
 addRoute('/condiciones-comerciales', () => renderCondicionesComercialesView(), 'comercial.ver');
 addRoute('/ventas/nueva', () => renderVentaFormView(), 'comercial.editar');
@@ -102,6 +108,8 @@ addRoute('/contabilidad/plan-cuentas', () => renderPlanCuentasView(), 'contabili
 addRoute('/contabilidad/impuestos', () => renderImpuestosView(), 'contabilidad.ver');
 addRoute('/contabilidad/libros-fiscales', () => renderLibrosFiscalesView(), 'contabilidad.ver');
 addRoute('/contabilidad/posicion-iva', () => renderPosicionIvaView(), 'contabilidad.ver');
+addRoute('/contabilidad/activos-fijos', () => renderActivosFijosView(), 'contabilidad.ver');
+addRoute('/contabilidad/nomina', () => renderNominaView(), 'contabilidad.ver');
 addRoute('/contabilidad/cierres', () => renderCierresYMonedasView(), 'contabilidad.ver');
 addRoute('/tesoreria/conciliacion', () => renderConciliacionBancariaView(), 'tesoreria.ver');
 

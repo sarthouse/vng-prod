@@ -10,6 +10,36 @@ import {
   showConfirmModal,
 } from '../../lib/engine/index.js';
 
+function renderTesoreriaEstadoAsientoCell(doc) {
+  const est = doc.estado || 'Confirmado';
+  const cls = est === 'Anulado' ? 'badge-cancelado' : est === 'Borrador' ? 'badge-warn' : 'badge-ok';
+  return `
+    <span class="badge ${cls}">${esc(est)}</span>
+    ${doc.asiento_id
+      ? `<a href="/contabilidad" data-link class="badge badge-muted" title="Ver en Libro Diario">Asiento #${doc.asiento_id}${est === 'Anulado' ? ' (Rev.)' : ''}</a>`
+      : ''}
+  `;
+}
+
+function renderTesoreriaRowActions(doc, tipo) {
+  const est = doc.estado || 'Confirmado';
+  const isPago = tipo === 'pago';
+  const printAttr = isPago ? 'data-print-pago' : 'data-print-cobro';
+  const metaAttr = isPago ? 'data-meta-pago' : 'data-meta-cobro';
+  const confAttr = isPago ? 'data-conf-pago' : 'data-conf-cobro';
+  const anulAttr = isPago ? 'data-anul-pago' : 'data-anul-cobro';
+  const delAttr = isPago ? 'data-del-pago' : 'data-del-cobro';
+  return `
+    <div class="actions">
+      <button type="button" class="btn btn-sm" ${printAttr}="${doc.id}">PDF</button>
+      <button type="button" class="btn btn-sm" ${metaAttr}="${doc.id}">Notas</button>
+      ${est === 'Borrador' ? `<button type="button" class="btn btn-sm btn-primary" ${confAttr}="${doc.id}">Confirmar</button>` : ''}
+      ${est === 'Confirmado' ? `<button type="button" class="btn btn-sm" ${anulAttr}="${doc.id}">Anular</button>` : ''}
+      ${est === 'Borrador' ? `<button type="button" class="btn btn-sm btn-danger" ${delAttr}="${doc.id}">Eliminar</button>` : ''}
+    </div>
+  `;
+}
+
 export async function renderTesoreriaView() {
   const root = document.getElementById('app-view');
 
@@ -134,6 +164,7 @@ export async function renderTesoreriaView() {
                 },
                 { label: 'Concepto', render: c => esc(c.concepto || '-') },
                 { label: 'Método', render: c => esc(c.metodo) },
+                { label: 'Estado / Asiento', render: c => renderTesoreriaEstadoAsientoCell(c) },
                 {
                   label: 'Monto',
                   align: 'right',
@@ -142,13 +173,7 @@ export async function renderTesoreriaView() {
                 },
                 {
                   label: 'Acciones',
-                  render: c => `
-                    <div class="actions">
-                      <button type="button" class="btn btn-sm" data-print-cobro="${c.id}">PDF</button>
-                      <button type="button" class="btn btn-sm" data-meta-cobro="${c.id}">Notas</button>
-                      <button type="button" class="btn btn-sm btn-danger" data-del-cobro="${c.id}">Eliminar</button>
-                    </div>
-                  `,
+                  render: c => renderTesoreriaRowActions(c, 'cobro'),
                 },
               ],
             });
@@ -173,8 +198,26 @@ export async function renderTesoreriaView() {
               metaEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }));
 
+            panelEl.querySelectorAll('[data-conf-cobro]').forEach(btn => btn.addEventListener('click', async () => {
+              if (!(await showConfirmModal('¿Confirmar este cobro? Se generará el asiento contable y se actualizarán los saldos.'))) return;
+              try {
+                await api(`/api/tesoreria/cobros/${btn.dataset.confCobro}/confirmar`, { method: 'POST' });
+                toast('Cobro confirmado');
+                await loadAndRender();
+              } catch (err) { toast(err.message, true); }
+            }));
+
+            panelEl.querySelectorAll('[data-anul-cobro]').forEach(btn => btn.addEventListener('click', async () => {
+              if (!(await showConfirmModal('¿Anular este cobro? Se revertirán su asiento contable e imputaciones y se recalculará el saldo de la cuenta.'))) return;
+              try {
+                await api(`/api/tesoreria/cobros/${btn.dataset.anulCobro}/anular`, { method: 'POST' });
+                toast('Cobro anulado');
+                await loadAndRender();
+              } catch (err) { toast(err.message, true); }
+            }));
+
             panelEl.querySelectorAll('[data-del-cobro]').forEach(btn => btn.addEventListener('click', async () => {
-              if (!(await showConfirmModal('¿Eliminar este cobro?'))) return;
+              if (!(await showConfirmModal('¿Eliminar este cobro en borrador?'))) return;
               try {
                 await api(`/api/tesoreria/cobros/${btn.dataset.delCobro}`, { method: 'DELETE' });
                 toast('Cobro eliminado');
@@ -205,6 +248,7 @@ export async function renderTesoreriaView() {
                 },
                 { label: 'Concepto', render: p => esc(p.concepto || '-') },
                 { label: 'Método', render: p => esc(p.metodo) },
+                { label: 'Estado / Asiento', render: p => renderTesoreriaEstadoAsientoCell(p) },
                 {
                   label: 'Monto',
                   align: 'right',
@@ -213,13 +257,7 @@ export async function renderTesoreriaView() {
                 },
                 {
                   label: 'Acciones',
-                  render: p => `
-                    <div class="actions">
-                      <button type="button" class="btn btn-sm" data-print-pago="${p.id}">PDF</button>
-                      <button type="button" class="btn btn-sm" data-meta-pago="${p.id}">Notas</button>
-                      <button type="button" class="btn btn-sm btn-danger" data-del-pago="${p.id}">Eliminar</button>
-                    </div>
-                  `,
+                  render: p => renderTesoreriaRowActions(p, 'pago'),
                 },
               ],
             });
@@ -244,8 +282,26 @@ export async function renderTesoreriaView() {
               metaEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }));
 
+            panelEl.querySelectorAll('[data-conf-pago]').forEach(btn => btn.addEventListener('click', async () => {
+              if (!(await showConfirmModal('¿Confirmar este pago? Se generará el asiento contable y se actualizarán los saldos.'))) return;
+              try {
+                await api(`/api/tesoreria/pagos/${btn.dataset.confPago}/confirmar`, { method: 'POST' });
+                toast('Pago confirmado');
+                await loadAndRender();
+              } catch (err) { toast(err.message, true); }
+            }));
+
+            panelEl.querySelectorAll('[data-anul-pago]').forEach(btn => btn.addEventListener('click', async () => {
+              if (!(await showConfirmModal('¿Anular este pago? Se revertirán su asiento contable e imputaciones y se recalculará el saldo de la cuenta.'))) return;
+              try {
+                await api(`/api/tesoreria/pagos/${btn.dataset.anulPago}/anular`, { method: 'POST' });
+                toast('Pago anulado');
+                await loadAndRender();
+              } catch (err) { toast(err.message, true); }
+            }));
+
             panelEl.querySelectorAll('[data-del-pago]').forEach(btn => btn.addEventListener('click', async () => {
-              if (!(await showConfirmModal('¿Eliminar este pago?'))) return;
+              if (!(await showConfirmModal('¿Eliminar este pago en borrador?'))) return;
               try {
                 await api(`/api/tesoreria/pagos/${btn.dataset.delPago}`, { method: 'DELETE' });
                 toast('Pago eliminado');
@@ -532,17 +588,11 @@ export async function renderPagosView() {
           { label: 'Cuenta', render: p => esc(p.cuenta_nombre || '-') },
           { label: 'Proveedor / Categoría', render: p => p.proveedor_id ? `<a href="/contactos/${p.proveedor_id}" data-link class="link-primary">${esc(p.proveedor_nombre || '-')}</a>` : esc(p.categoria_gasto || '-') },
           { label: 'Método', render: p => esc(p.metodo) },
+          { label: 'Estado / Asiento', render: p => renderTesoreriaEstadoAsientoCell(p) },
           { label: 'Monto', align: 'right', render: p => `<strong>${fmtMoney(p.monto)}</strong>` },
           {
             label: 'Acciones',
-            render: p => `
-              <div class="actions">
-                <button type="button" class="btn btn-sm" data-print-pago="${p.id}">PDF</button>
-                <button type="button" class="btn btn-sm" data-meta-pago="${p.id}">Notas / Adj.</button>
-                ${(p.estado || 'Confirmado') !== 'Anulado' ? `<button type="button" class="btn btn-sm" data-anul-pago="${p.id}">Anular</button>` : ''}
-                <button type="button" class="btn btn-sm btn-danger" data-del-pago="${p.id}">Eliminar</button>
-              </div>
-            `,
+            render: p => renderTesoreriaRowActions(p, 'pago'),
           },
         ],
       });
@@ -565,6 +615,15 @@ export async function renderPagosView() {
           onClose: () => {},
         });
         panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }));
+
+      root.querySelectorAll('[data-conf-pago]').forEach(btn => btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Confirmar este pago? Se generará el asiento contable y se actualizarán los saldos.'))) return;
+        try {
+          await api(`/api/tesoreria/pagos/${btn.dataset.confPago}/confirmar`, { method: 'POST' });
+          toast('Pago confirmado');
+          await renderPagosView();
+        } catch (err) { toast(err.message, true); }
       }));
 
       root.querySelectorAll('[data-anul-pago]').forEach(btn => btn.addEventListener('click', async () => {
@@ -800,17 +859,11 @@ export async function renderCobrosView() {
           { label: 'Cuenta', render: c => esc(c.cuenta_nombre || '-') },
           { label: 'Cliente / Contraparte', render: c => c.cliente_id ? `<a href="/contactos/${c.cliente_id}" data-link class="link-primary">${esc(c.cliente_nombre || '-')}</a>` : esc(c.proveedor_nombre || '-') },
           { label: 'Método', render: c => esc(c.metodo) },
+          { label: 'Estado / Asiento', render: c => renderTesoreriaEstadoAsientoCell(c) },
           { label: 'Monto', align: 'right', render: c => `<strong>${fmtMoney(c.monto)}</strong>` },
           {
             label: 'Acciones',
-            render: c => `
-              <div class="actions">
-                <button type="button" class="btn btn-sm" data-print-cobro="${c.id}">PDF</button>
-                <button type="button" class="btn btn-sm" data-meta-cobro="${c.id}">Notas / Adj.</button>
-                ${(c.estado || 'Confirmado') !== 'Anulado' ? `<button type="button" class="btn btn-sm" data-anul-cobro="${c.id}">Anular</button>` : ''}
-                <button type="button" class="btn btn-sm btn-danger" data-del-cobro="${c.id}">Eliminar</button>
-              </div>
-            `,
+            render: c => renderTesoreriaRowActions(c, 'cobro'),
           },
         ],
       });
@@ -833,6 +886,15 @@ export async function renderCobrosView() {
           onClose: () => {},
         });
         panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }));
+
+      root.querySelectorAll('[data-conf-cobro]').forEach(btn => btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Confirmar este cobro? Se generará el asiento contable y se actualizarán los saldos.'))) return;
+        try {
+          await api(`/api/tesoreria/cobros/${btn.dataset.confCobro}/confirmar`, { method: 'POST' });
+          toast('Cobro confirmado');
+          await renderCobrosView();
+        } catch (err) { toast(err.message, true); }
       }));
 
       root.querySelectorAll('[data-anul-cobro]').forEach(btn => btn.addEventListener('click', async () => {

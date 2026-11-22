@@ -1,4 +1,5 @@
 import { PdfDocument, fmtNumAr } from './pdfBuilder.js';
+import { getPrintTheme, stampUnifiedFooter } from './printLayout.js';
 import { getRecetaById } from '../produccion/recetaService.js';
 import { getEmpresaConfig } from '../config/configService.js';
 
@@ -38,6 +39,7 @@ export function buildRecetaFichaPdf(recetaId, { conCostos = true } = {}) {
   if (!data) return null;
   const { receta, etapas = [], lineas = [] } = data;
   const empresa = getEmpresaConfig();
+  const theme = getPrintTheme(empresa);
 
   const doc = new PdfDocument();
   doc.addPage(210, 297);
@@ -53,7 +55,7 @@ export function buildRecetaFichaPdf(recetaId, { conCostos = true } = {}) {
   };
 
   // Cabecera
-  doc.rect(M, y, W, 32, { fill: '#F8FAFC', stroke: '#CBD5E1', lineWidth: 0.4 });
+  doc.rect(M, y, W, 32, { fill: theme.fillHeader, stroke: '#CBD5E1', lineWidth: 0.4 });
   const hasProdImg = Boolean(receta.plantilla_imagen);
   const textW = hasProdImg ? W - 38 : W - 8;
 
@@ -136,7 +138,7 @@ export function buildRecetaFichaPdf(recetaId, { conCostos = true } = {}) {
   y += 9;
 
   const drawInsumosHeader = () => {
-    doc.rect(M, y, W, 6.5, { fill: '#F1F5F9', stroke: '#CBD5E1', lineWidth: 0.3 });
+    doc.rect(M, y, W, 6.5, { fill: theme.fillHeader, stroke: '#CBD5E1', lineWidth: 0.3 });
     doc.text('Insumo', M + 2, y + 1.6, { size: 8, bold: true });
     doc.text('Etapa', M + 74, y + 1.6, { size: 8, bold: true });
     doc.text('Cant.', M + 125, y + 1.6, { size: 8, bold: true, align: 'right' });
@@ -191,5 +193,6 @@ export function buildRecetaFichaPdf(recetaId, { conCostos = true } = {}) {
     doc.text(`$${fmtNumAr(totCost, 2)}`, M + W - 3, y + 11.2, { size: 9, bold: true, color: '#0F172A', align: 'right' });
   }
 
+  stampUnifiedFooter(doc, empresa, { margin: M });
   return doc.toBuffer();
 }

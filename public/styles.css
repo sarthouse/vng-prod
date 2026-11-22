@@ -223,6 +223,13 @@ body {
   color: var(--color-surface);
 }
 
+.nav-group.has-active:not([open]) > .nav-group-title {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-left: 3px solid var(--color-accent);
+  padding-left: 7px;
+}
+
 .nav-group[open] > .nav-group-title::after {
   transform: rotate(90deg);
 }
@@ -344,6 +351,7 @@ body {
 
 .actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -598,20 +606,28 @@ body {
 
 .table-wrap {
   overflow-x: auto;
+  border: 1px solid var(--color-surface-alt);
+  border-radius: 6px;
 }
 
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .data-table th,
 .data-table td {
-  padding: 9px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--color-surface-alt);
+  border-right: 1px solid var(--color-surface-alt);
   text-align: left;
   vertical-align: middle;
+}
+
+.data-table th:last-child,
+.data-table td:last-child {
+  border-right: none;
 }
 
 .data-table th {
@@ -1358,9 +1374,12 @@ input[type="file"]::file-selector-button {
   display: inline-flex;
   align-items: center;
   width: 100%;
+  box-sizing: border-box;
 }
 .money-wrap > input.money-input {
-  width: 100%;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box;
   color: transparent !important;
   caret-color: transparent;
 }
@@ -1378,13 +1397,22 @@ input[type="file"]::file-selector-button {
   inset: 0;
   display: flex;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 8px;
+  box-sizing: border-box;
   pointer-events: none;
   font-size: inherit;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+.money-wrap.pv-num-input {
+  width: 112px;
+  max-width: 112px;
+}
+.money-wrap.pv-num-input > .money-display {
+  justify-content: flex-end;
 }
 .money-wrap > .money-display.is-empty {
   color: var(--color-muted);
@@ -1636,9 +1664,19 @@ input[type="file"]::file-selector-button {
 }
 
 .toolbar .combo-from-select,
-.filters .combo-from-select {
+.filters .combo-from-select,
+.actions .combo-from-select,
+.card-header .combo-from-select,
+.ve-filter-bar .combo-from-select,
+.combo-from-select.w-auto {
   width: auto;
-  min-width: 170px;
+  min-width: 120px;
+}
+
+.combo-from-select.input-sm .combo-input {
+  padding: 5px 24px 5px 8px;
+  font-size: 12.5px;
+  min-height: 30px;
 }
 
 /* View Engine: Switcher, Grouped List, Hierarchy Tree, Kanban */
@@ -1989,6 +2027,18 @@ input[type="file"]::file-selector-button {
   color: #15803d;
 }
 .ve-step.active {
+  border-color: var(--color-blue);
+  background: var(--color-blue);
+  color: #fff;
+  font-weight: 600;
+}
+.ve-step.active-success {
+  border-color: #16a34a;
+  background: #16a34a;
+  color: #fff;
+  font-weight: 600;
+}
+.ve-step.active-danger {
   border-color: var(--color-accent);
   background: var(--color-accent);
   color: #fff;
@@ -2578,25 +2628,40 @@ input[type="file"]::file-selector-button {
 }
 
 
-/* ═══ TABLE TOOLBAR (DENSIDAD + COLUMNAS) ═══ */
-.ve-table-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 8px;
-  position: relative;
+/* ═══ SELECTOR DE COLUMNAS EN HEADER ═══ */
+.data-table th.ve-col-picker-th,
+.data-table td.ve-col-picker-td {
+  width: 30px;
+  min-width: 30px;
+  max-width: 30px;
+  padding: 0 4px;
+  text-align: center;
+  border-right: none;
 }
 
-.ve-col-picker {
-  position: relative;
-  display: inline-block;
+.ve-col-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.ve-col-picker-btn:hover {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border-color: var(--color-border);
 }
 
 .ve-col-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
+  position: fixed;
   min-width: 210px;
   max-height: 280px;
   overflow-y: auto;
@@ -2605,10 +2670,21 @@ input[type="file"]::file-selector-button {
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
   padding: 6px;
-  z-index: 40;
+  z-index: 1200;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.ve-col-menu-title {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+  border-bottom: 1px solid var(--color-surface-alt);
+  margin-bottom: 2px;
 }
 
 .ve-col-menu[hidden] {
@@ -2829,7 +2905,6 @@ input[type="file"]::file-selector-button {
 
   .card-header,
   .section-header,
-  .ve-table-toolbar,
   .ve-table-pager,
   .ve-bulk-bar {
     flex-wrap: wrap;
@@ -2853,8 +2928,8 @@ input[type="file"]::file-selector-button {
 
   .data-table th,
   .data-table td {
-    padding: 7px 8px;
-    font-size: 12.5px;
+    padding: 5px 6px;
+    font-size: 12px;
   }
 
   .modal,
@@ -2910,6 +2985,18 @@ input[type="file"]::file-selector-button {
   flex-direction: column;
   gap: 8px;
   background: rgba(15, 23, 42, 0.35);
+}
+
+.sidebar-nav .sidebar-search-btn {
+  margin: 4px 0 6px;
+}
+
+.pv-num-input {
+  width: 92px;
+  max-width: 92px;
+  padding: 0 8px !important;
+  box-sizing: border-box;
+  text-align: right;
 }
 
 .sidebar-search-btn {
@@ -3278,11 +3365,6 @@ input[type="file"]::file-selector-button {
 .sx-496256 { text-transform:capitalize; min-width:150px; text-align:center; }
 
 /* ═══ SPREADSHEET ENGINE (HOJA DE CÁLCULO INLINE) ═══ */
-.ve-sheet-table th,
-.ve-sheet-table td {
-  border-right: 1px solid var(--color-surface-alt);
-}
-
 .ve-sheet-cell.is-editable {
   cursor: cell;
   transition: background-color 0.12s;

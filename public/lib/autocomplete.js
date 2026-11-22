@@ -18,6 +18,21 @@ function normText(s) {
   return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
+function normCompact(s) {
+  return normText(s).replace(/[-.\s/]+/g, '');
+}
+
+function matchItemQuery(item, q, qCompact) {
+  if (!q) return true;
+  if (normText(item.label).includes(q)) return true;
+  if (item.sublabel && normText(item.sublabel).includes(q)) return true;
+  if (qCompact) {
+    if (normCompact(item.label).includes(qCompact)) return true;
+    if (item.sublabel && normCompact(item.sublabel).includes(qCompact)) return true;
+  }
+  return false;
+}
+
 export function mountCombobox(container, opts) {
   if (!container) return null;
   const items = opts.items || [];
@@ -95,11 +110,9 @@ export function mountCombobox(container, opts) {
 
   const buildEntries = (query) => {
     const q = normText(query);
+    const qCompact = normCompact(query);
     const filtered = q
-      ? items.filter(i =>
-          normText(i.label).includes(q) ||
-          (i.sublabel && normText(i.sublabel).includes(q))
-        )
+      ? items.filter(i => matchItemQuery(i, q, qCompact))
       : items.slice(0, 50);
 
     const list = filtered.slice(0, 40).map(item => ({ type: 'item', item }));
@@ -355,10 +368,10 @@ export function mountMultiSelect(container, opts = {}) {
 
   const renderMenu = () => {
     const q = normText(inputEl.value);
+    const qCompact = normCompact(inputEl.value);
     visibleItems = items.filter(i => {
       if (selectedSet.has(String(i.value))) return false;
-      if (!q) return true;
-      return normText(i.label).includes(q) || (i.sublabel && normText(i.sublabel).includes(q));
+      return matchItemQuery(i, q, qCompact);
     });
 
     if (!visibleItems.length) {
@@ -780,13 +793,14 @@ export function enhanceSelect(selectEl) {
   selectEl.classList.add('select-sr-hidden');
   selectEl.tabIndex = -1;
   selectEl.setAttribute('aria-hidden', 'true');
-  if (wasFocused) queueMicrotask(() => wrap.querySelector('input')?.focus());
-
   const wrap = document.createElement('div');
   wrap.className = 'combo-wrap combo-from-select';
+  if (selectEl.classList.contains('w-auto')) wrap.classList.add('w-auto');
+  if (selectEl.classList.contains('input-sm')) wrap.classList.add('input-sm');
   if (selectEl.style.width) wrap.style.width = selectEl.style.width;
   if (selectEl.style.minWidth) wrap.style.minWidth = selectEl.style.minWidth;
   selectEl.insertAdjacentElement('afterend', wrap);
+  if (wasFocused) queueMicrotask(() => wrap.querySelector('input')?.focus());
 
   let items = [];
   let syncingFromSelect = false;

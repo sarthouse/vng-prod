@@ -235,9 +235,11 @@ export async function renderComprasView() {
 
     root.querySelectorAll('[data-del-cmp]').forEach(btn => btn.addEventListener('click', async () => {
       if (!(await showConfirmModal('¿Eliminar esta compra?'))) return;
-      await api(`/api/compras/${btn.dataset.delCmp}`, { method: 'DELETE' });
-      toast('Compra eliminada');
-      await renderComprasView();
+      try {
+        await api(`/api/compras/${btn.dataset.delCmp}`, { method: 'DELETE' });
+        toast('Compra eliminada');
+        await renderComprasView();
+      } catch (err) { toast(err.message, true); }
     }));
   };
 
@@ -296,7 +298,7 @@ export async function renderCompraFormView({ id } = {}) {
   const isEdit = Boolean(id);
   const params = new URLSearchParams(window.location.search);
 
-  const [proveedores, productos, empresa, cuentas, puntosVenta, nextCompraSeq, nextPagoSeq, existing, comprasList, impuestosConfig, planCuentas, ubicaciones, terminosPago, metodosPago] = await Promise.all([
+  const [proveedores, productos, empresa, cuentas, puntosVenta, nextCompraSeq, nextPagoSeq, existing, comprasList, impuestosConfig, planCuentas, ubicaciones, terminosPago, metodosPago, operacionesStock] = await Promise.all([
     api('/api/contactos?es_proveedor=1'),
     api('/api/productos?se_compra=1'),
     api('/api/empresa'),
@@ -311,7 +313,9 @@ export async function renderCompraFormView({ id } = {}) {
     api('/api/ubicaciones').catch(() => []),
     api('/api/terminos-pago?solo_activos=1').catch(() => []),
     api('/api/metodos-pago?solo_activos=1').catch(() => []),
+    isEdit ? api('/api/operaciones-stock').catch(() => []) : Promise.resolve([]),
   ]);
+  const opsCompra = (operacionesStock || []).filter(o => o.referencia_tipo === 'compra' && Number(o.referencia_id) === Number(id));
 
   const ubicacionesActivas = (ubicaciones || []).filter(u => u.activa !== 0 && u.activo !== 0);
   const cuentasEgreso = planCuentas.filter(pc => pc.activo !== 0 && pc.imputable !== 0 && pc.tipo === 'egreso');
@@ -592,7 +596,8 @@ export async function renderCompraFormView({ id } = {}) {
                       <td>
                         <div class="actions">
                           <button type="button" class="btn btn-sm" data-print-pago-cmp="${p.id}">PDF</button>
-                          <button type="button" class="btn btn-sm btn-danger" data-del-pago-cmp="${p.id}">Eliminar</button>
+                          ${(p.estado || 'Confirmado') === 'Confirmado' ? `<button type="button" class="btn btn-sm" data-anul-pago-cmp="${p.id}">Anular</button>` : ''}
+                          ${p.estado === 'Borrador' ? `<button type="button" class="btn btn-sm btn-danger" data-del-pago-cmp="${p.id}">Eliminar</button>` : ''}
                         </div>
                       </td>
                     </tr>
@@ -601,6 +606,20 @@ export async function renderCompraFormView({ id } = {}) {
               </table>
             </div>
           `}
+        </div>
+
+        <div class="card sx-a005fc">
+          <div class="card-header"><h2>Trazabilidad / Documentos Vinculados</h2></div>
+          <div class="card-body">
+            <div class="actions">
+              ${c.asiento_id
+                ? `<a href="/contabilidad" data-link class="btn btn-sm">Asiento Contable #${c.asiento_id}${c.estado === 'Anulada' ? ' (Revertido)' : ''}</a>`
+                : `<span class="badge badge-muted">Sin asiento contable${c.estado === 'Borrador' ? ' (pendiente de confirmación)' : ''}</span>`}
+              ${opsCompra.length
+                ? opsCompra.map(op => `<a href="/operaciones-stock/${op.id}" data-link class="btn btn-sm">${esc(op.tipo)}: ${esc(op.numero || '#' + op.id)} (${esc(op.estado)})</a>`).join('')
+                : '<span class="badge badge-muted">Sin operaciones de stock</span>'}
+            </div>
+          </div>
         </div>
 
         <div id="cmp-det-meta"></div>
@@ -701,11 +720,21 @@ export async function renderCompraFormView({ id } = {}) {
           await printOrdenPago({ pago: data.pago || {}, lineas: data.lineas || [] });
         } catch (err) { toast(err.message, true); }
       }));
+      root.querySelectorAll('[data-anul-pago-cmp]').forEach(btn => btn.addEventListener('click', async () => {
+        if (!(await showConfirmModal('¿Anular este pago? Se revertirán su asiento contable e imputaciones y se recalculará el saldo de la cuenta.'))) return;
+        try {
+          await api(`/api/tesoreria/pagos/${btn.dataset.anulPagoCmp}/anular`, { method: 'POST' });
+          toast('Pago anulado');
+          await renderCompraFormView({ id });
+        } catch (err) { toast(err.message, true); }
+      }));
       root.querySelectorAll('[data-del-pago-cmp]').forEach(btn => btn.addEventListener('click', async () => {
-        if (!(await showConfirmModal('¿Eliminar este pago?'))) return;
-        await api(`/api/tesoreria/pagos/${btn.dataset.delPagoCmp}`, { method: 'DELETE' });
-        toast('Pago eliminado');
-        await renderCompraFormView({ id });
+        if (!(await showConfirmModal('¿Eliminar este pago en borrador?'))) return;
+        try {
+          await api(`/api/tesoreria/pagos/${btn.dataset.delPagoCmp}`, { method: 'DELETE' });
+          toast('Pago eliminado');
+          await renderCompraFormView({ id });
+        } catch (err) { toast(err.message, true); }
       }));
     }
 

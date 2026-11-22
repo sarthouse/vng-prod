@@ -40,25 +40,25 @@ export async function renderFlujoStockView() {
           <button type="button" class="pill ${granularidad === 'semana' ? 'active' : ''}" data-fs-gran="semana">Por Semana</button>
           <button type="button" class="pill ${granularidad === 'mes' ? 'active' : ''}" data-fs-gran="mes">Por Mes</button>
         </div>
-        <select class="fs-rol-sel w-auto">
-          <option value="" ${filtroRol === '' ? 'selected' : ''}>Todos los productos</option>
+        <select class="fs-rol-sel w-auto input-sm" title="Tipo de producto">
+          <option value="" ${filtroRol === '' ? 'selected' : ''}>Todos los tipos</option>
           <option value="insumos" ${filtroRol === 'insumos' ? 'selected' : ''}>Insumos</option>
           <option value="fabricados" ${filtroRol === 'fabricados' ? 'selected' : ''}>Fabricados</option>
         </select>
-        <select class="fs-cat-sel w-auto">
+        <select class="fs-cat-sel w-auto input-sm" title="Categoría">
           <option value="">Todas las categorías</option>
           ${categorias.map(c => `<option value="${esc(c)}" ${c === filtroCategoria ? 'selected' : ''}>${esc(c)}</option>`).join('')}
         </select>
-        <select class="fs-prod-sel sx-9cfe42">
-          <option value="">-- Todos los productos (${inventario.length}) --</option>
+        <select class="fs-prod-sel w-auto input-sm sx-9cfe42" title="Producto">
+          <option value="">Todos los productos (${inventario.length})</option>
           ${inventario
             .filter(p => !filtroCategoria || p.categoria === filtroCategoria)
             .map(p => `<option value="${p.id}" ${String(p.id) === String(filtroProducto) ? 'selected' : ''}>${esc(p.nombre)} (${esc(p.udm)})</option>`).join('')}
         </select>
-        <select class="fs-hist-sel w-auto" title="Períodos históricos">
+        <select class="fs-hist-sel w-auto input-sm" title="Períodos históricos">
           ${[2, 4, 6, 8].map(n => `<option value="${n}" ${histPeriodos === n ? 'selected' : ''}>${n} ${granularidad === 'semana' ? 'sem.' : 'meses'} hist.</option>`).join('')}
         </select>
-        <select class="fs-proy-sel w-auto" title="Períodos proyectados">
+        <select class="fs-proy-sel w-auto input-sm" title="Períodos proyectados">
           ${[4, 6, 8, 12].map(n => `<option value="${n}" ${proyPeriodos === n ? 'selected' : ''}>+${n} ${granularidad === 'semana' ? 'sem.' : 'meses'} proy.</option>`).join('')}
         </select>
       </div>

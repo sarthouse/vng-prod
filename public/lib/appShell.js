@@ -29,10 +29,12 @@ export const NAV_GROUPS = [
     title: 'Comercial',
     items: [
       { href: '/ventas', label: 'Ventas', perm: 'comercial.ver' },
+      { href: '/ordenes-compra', label: 'Órdenes de Compra', perm: 'comercial.ver' },
       { href: '/compras', label: 'Compras', perm: 'comercial.ver' },
       { href: '/cronograma', label: 'Abastecimiento', perm: 'comercial.ver' },
       { href: '/contactos', label: 'Contactos', perm: 'comercial.ver' },
       { href: '/condiciones-comerciales', label: 'Condiciones', perm: 'comercial.ver' },
+      { href: '/woo', label: 'WooCommerce', perm: 'comercial.ver' },
     ],
   },
   {
@@ -56,6 +58,8 @@ export const NAV_GROUPS = [
       { href: '/contabilidad/impuestos', label: 'Impuestos', perm: 'contabilidad.ver' },
       { href: '/contabilidad/libros-fiscales', label: 'Libros IVA', perm: 'contabilidad.ver' },
       { href: '/contabilidad/posicion-iva', label: 'Posición IVA', perm: 'contabilidad.ver' },
+      { href: '/contabilidad/activos-fijos', label: 'Activos Fijos', perm: 'contabilidad.ver' },
+      { href: '/contabilidad/nomina', label: 'Nómina / Sueldos', perm: 'contabilidad.ver' },
       { href: '/contabilidad/cierres', label: 'Cierres', perm: 'contabilidad.ver' },
     ],
   },
@@ -103,14 +107,14 @@ export function mountAppShell(targetEl = document.body) {
         <nav class="sidebar-nav" id="main-nav">
           <a class="tab sx-a58b07" href="/" data-link>Dashboard</a>
           <a class="tab sx-a58b07" href="/tareas" data-link>Tareas</a>
-          ${navHtml}
-        </nav>
-        <div class="sidebar-footer" id="sidebar-footer">
           <button type="button" class="sidebar-search-btn" id="btn-cmd-palette" title="Ir a pantalla (Ctrl+K)">
             ${SEARCH_ICON_SVG}
             <span>Ir a...</span>
             <kbd>Ctrl+K</kbd>
           </button>
+          ${navHtml}
+        </nav>
+        <div class="sidebar-footer" id="sidebar-footer">
           <div class="sidebar-user-box sx-cb4589" id="topbar-user-box">
             <div class="sidebar-user-info">
               <span class="sidebar-user-group" id="topbar-user-group"></span>

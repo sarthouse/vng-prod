@@ -14,9 +14,8 @@ function addDaysIso(iso, days) {
 }
 
 export function listResponsables() {
-  return usuarioRepo.query()
+  return usuarioRepo.where('activo', 1)
     .select('id, nombre, username')
-    .where('activo', 1)
     .orderBy('nombre', 'ASC')
     .all();
 }

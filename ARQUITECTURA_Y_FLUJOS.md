@@ -42,6 +42,8 @@ src/
     BaseRepository.js          CRUD tipado + validación + auditoría + transacciones (SAVEPOINT re-entrantes)
     QueryBuilder.js            Query builder parametrizado (único lugar con SQL de consulta)
     schemaBuilder.js           Genera CREATE/ALTER desde MODELS
+    stateMachine.js            Máquina de estados declarativa (createStateMachine) para transiciones válidas
+    eventBus.js                Bus de eventos síncrono transaccional (domainBus, fail-fast dentro de SAVEPOINT)
     logger.js                  Logger por nivel/contexto, archivos app-*.log y error-*.log
   db/
     models.js                  ★ SSOT del esquema: MODELS (tablas) y VIEWS (vistas SQL)
@@ -117,7 +119,7 @@ logs/                          Logs de aplicación
 
 Menú actual: **Dashboard**, **Tareas**, **Producción** (Pedidos, Órdenes, Etapas, Pendientes, Recetas), **Inventario** (Productos, Existencias, Flujo de Stock, Operaciones, Categorías, Variantes, Unidades, Ubicaciones), **Comercial** (Ventas, Compras, Abastecimiento, Contactos, Condiciones), **Tesorería** (Cuentas y Pagos, Flujo de Caja, Cheques, Conciliación), **Contabilidad** (Diario, Mayor, Balance, Plan de Cuentas, Impuestos, Libros IVA, Posición IVA, Cierres), **Sistema** (Configuración, Bases de Datos).
 
-Alias de rutas: `/traslados`, `/remitos` y `/entregas` renderizan las mismas pantallas de Operaciones de Stock. `/presupuestos/:id` existe pero **no tiene entrada de menú** (se llega desde otras pantallas).
+Alias de rutas en frontend: `/traslados`, `/remitos` y `/entregas` siguen activas como alias visuales de Operaciones de Stock (`operacionesStockView`); en el backend, los endpoints legacy de escritura `POST/PUT/DELETE /api/entregas` están deprecados (`410 Gone`), manteniendo `GET /api/entregas` solo para lectura histórica. `/presupuestos/:id` existe pero **no tiene entrada de menú** (se llega desde otras pantallas).
 
 ### 4.2 Motores visuales (`public/lib/engine/`, punto de entrada `index.js`)
 | Motor | Exporta | Uso |
@@ -159,12 +161,13 @@ Alias de rutas: `/traslados`, `/remitos` y `/entregas` renderizan las mismas pan
 
 | Carpeta | Servicios |
 |---|---|
+| *(raíz)* | `domainEvents.js` (`registerDomainSubscribers`: suscripción idempotente de efectos cross-domain sobre `domainBus`) |
 | `auth/` | `authService` (sesiones, usuarios, grupos, permisos, reset), `dbManagerService` (multi-base), `metaService` (notas/adjuntos; `VALID_ENTIDADES` = compra, venta, movimiento, pago, cobro, orden, operacion_stock, receta, pedido, presupuesto, contacto, plantilla, tarea) |
 | `config/` | `configService` (empresa, categorías, unidades, variantes, etapas, impuestos, puntos de venta, secuencias y `getNextNumeroDocumento`), `importService` (CSV de productos y contactos) |
-| `comercial/` | `compraService`, `ventaService`, `contactoService`, `comercialReglasService` (envíos, cupones, recargos), `condicionesComercialesService` (términos/métodos de pago, listas de precio, tarifas proveedor, `resolverPrecioLista`/`resolverPrecioCompra`), `documentoComercialHelper` |
-| `inventario/` | `productoService` (plantillas, variantes, historial de costos/precios), `inventarioService` (ubicaciones, lotes, quants, `registrarMovimientoStock`, resumen, flujo proyectado), `operacionStockService` |
-| `produccion/` | `recetaService`, `curvaService`, `presupuestoService`, `pedidoService`, `produccionService` (órdenes, etapas, cronograma de compras, pendientes) |
-| `finanzas/` | `tesoreriaService` (cuentas, cobros, pagos, transferencias, flujo), `chequeService`, `imputacionService`, `asientoService`, `contabilidadAvanzadaService` (posición IVA, conciliación, cotizaciones, cierres), `planCuentasTemplates` |
+| `comercial/` | `compraService` (Facade + `compraEfectosHelper`), `ventaService` (Facade + `ventaEfectosHelper`), `contactoService`, `comercialReglasService` (envíos, cupones, recargos), `condicionesComercialesService` (términos/métodos de pago, listas de precio, tarifas proveedor, `resolverPrecioLista`/`resolverPrecioCompra`), `documentoComercialHelper` |
+| `inventario/` | `productoService` (plantillas, variantes, historial de costos/precios), `inventarioService` (Facade + `stockQuantHelper`, `stockProyeccionHelper`: ubicaciones, lotes, quants, `registrarMovimientoStock`, reservas, resumen, flujo proyectado), `operacionStockService` |
+| `produccion/` | `recetaService`, `curvaService`, `presupuestoService`, `pedidoService`, `produccionService` (orquestador + `produccionStockHelper`, `produccionCierreHelper`: órdenes, etapas, mermas, cierre, cronograma de compras, pendientes) |
+| `finanzas/` | `tesoreriaService` (Facade que re-exporta `cuentasService`, `pagosService`, `cobrosService` + flujos/dashboard/proyecciones), `chequeService`, `imputacionService`, `asientoService`, `contabilidadAvanzadaService` (posición IVA, conciliación, cotizaciones, cierres), `planCuentasTemplates` |
 | `afip/` | `afipService` (WSAA/WSFE/Padrón A5/WSCDC), `afipCrypto`, `fiscalRules` (matriz emisor × receptor), `libroIvaService` (Libro IVA Digital, SICORE/SIFERE, retenciones, reporte por jurisdicción) |
 | `print/` | Ver 3.5 |
 | `tareas/` | `tareaService` |
@@ -190,11 +193,16 @@ Cada `producto_plantillas` define `se_fabrica`, `se_compra`, `se_vende`, `tipo` 
 
 ### 8.1 Producción: Pedido → Orden → Etapas → Stock
 1. **Receta** (`/recetas/:id`): tabs Insumos / Etapas / Ficha Técnica / Cabecera. Insumos y Etapas se cargan **en la misma tabla** (fila de alta al pie; al editar, la fila se convierte en inline-edit). Cada etapa tiene taller, cuenta contable, costo/u, días, dependencia e imagen. La ficha técnica (texto enriquecido + imágenes por etapa y producto) se exporta a PDF con o sin costos o versión taller.
-2. **Pedido** (`/pedidos`): demanda por lote/cliente con receta elegida; guarda `pedido_insumos` (snapshot de insumos a comprar con flag `comprado`) y registra **Entregas** parciales (`entregas`). Estados: Confirmado, En Producción, Entrega Parcial, Entregado, Cancelado (sincronizados por `syncPedidoEstadoByLote`).
+2. **Pedido** (`/pedidos`): demanda por lote/cliente con receta elegida; guarda `pedido_insumos` (snapshot de insumos a comprar con flag `comprado`). Los endpoints legacy de escritura `POST/PUT/DELETE /api/entregas` están **deprecados (`410 Gone`)**; toda entrega física se canaliza por Operaciones de Stock.
 3. **Orden** (`/ordenes`): botón **Lanzar Orden de Producción** desde el Pedido (`POST /api/ordenes` con `pedido_id`) o alta manual. Al crear:
    - Etapas desde la receta (o `etapas_config`), con ventanas de fechas y dependencias.
    - `planificarDocumentosOrden`: stock disponible → **`remito_taller` en Borrador** (depósito → taller); faltante → **Compra en Borrador** agrupada por proveedor.
-4. **Ejecución**: al completar una etapa se consume stock (primero `TALLER-EXT`, luego `DEP-CENTRAL`), y si hay taller y costo real se crea una **compra interna** de mano de obra con asiento. Al completar todas, se ingresa el producto terminado a `PROD-TERM` y la orden queda `Completada`.
+   - **Borrado (`DELETE /api/ordenes/:id`)**: bloqueado si la orden está `En Proceso` o `Completada`, o si tiene operaciones de stock o compras `Confirmado`. En órdenes sin movimientos confirmados, limpia los borradores asociados.
+4. **Ejecución y Mermas**:
+   - Al completar una etapa (`stock_consumido = 0`), `consumirInsumosEtapa` consume stock (primero `TALLER-EXT`, luego `DEP-CENTRAL`) y `reconciliarRemitosTallerBorrador` descuenta del `remito_taller` en Borrador lo ya consumido desde depósito. Si `cantidad_merma > 0`, `registrarMermaEtapa` genera una operación `ajuste` confirmada (`VIRT-PROD` → `VIRT-AJUSTE`) para trazabilidad.
+   - **Inmutabilidad**: una etapa `Completada` con `stock_consumido = 1` **no puede reabrirse** hacia `En Proceso`/`Pendiente`.
+   - Si tiene taller y costo real se crea una **compra interna** (`INT`, `Confirmado`) con asiento automático.
+   - Al completar todas las etapas, `ingresarRemanenteAlCompletarOrden` (SSOT en `produccionCierreHelper`) ingresa a `PROD-TERM` el neto `ol.cantidad - mermasAcumuladas - yaIngresado` y la orden queda `Completada`.
 5. **Seguimiento**: `/produccion/etapas`, `/pendientes`, `/cronograma` (abastecimiento: lead time histórico, urgencias, stock mínimo).
 
 ### 8.2 Inventario: el stock nace de operaciones
@@ -207,14 +215,15 @@ Principio: **el stock no se edita; se mueve**. Todo cambio pasa por una **Operac
 - **Flujo de Stock** (`/inventario/flujo-stock`): matriz por período (semana/mes) con reales + proyectados (recepciones/compras en borrador, OP, consumos).
 
 ### 8.3 Compras (`/compras`)
-Borrador editable → confirmación genera **`recepcion` en Borrador** (o `entrega` si es NC) y el **asiento** (signo invertido en NC). Resuelve precio por tarifa de proveedor. Pagos desde la compra, retenciones en el pago, imputaciones, constatación de comprobante en ARCA.
+Borrador editable → confirmación genera **`recepcion` en Borrador** (o `entrega` si es NC) y el **asiento** (signo invertido en NC). Resuelve precio por tarifa de proveedor. Las compras `Confirmado` no pueden eliminarse físicamente (`DELETE`); deben anularse (`anularCompra`) para revertir asiento y operaciones de stock. Pagos desde la compra, retenciones en el pago, imputaciones, constatación de comprobante en ARCA.
 
 ### 8.4 Ventas (`/ventas`)
-Presupuesto/Borrador (sin efectos) → Confirmada: genera **`entrega` en Borrador** (o `recepcion` si es NC), **abastecimiento retail** automático (Compra en Borrador si falta stock de productos de reventa), asiento contable, y opcionalmente emisión CAE en ARCA con QR. Soporta término/método de pago, lista de precios, envío, cupón y recargo; letra fiscal resuelta por `fiscalRules` (emisor × receptor). Cobros e imputación desde la misma ficha.
+Presupuesto/Borrador (sin efectos) → Confirmada/Entregada (tanto en `createVenta` como al actualizar vía `updateVenta`): genera **`entrega` en Borrador** (o `recepcion` si es NC; confirmada si pasa a `Entregada`), **abastecimiento retail** automático (Compra en Borrador si falta stock de productos de reventa), **asiento contable** (`generarYGuardarAsientoVenta`), y opcionalmente emisión CAE en ARCA con QR. Al pasar a `Anulada`, revierte `asiento_id` (`revertirAsiento`), anula operaciones de stock confirmadas y elimina borradores de stock asociados. Las ventas confirmadas/entregadas no pueden eliminarse físicamente (`DELETE`). Soporta término/método de pago, lista de precios, envío, cupón y recargo; letra fiscal resuelta por `fiscalRules` (emisor × receptor). Cobros e imputación desde la misma ficha.
 
 ### 8.5 Tesorería y Contabilidad
 - Cuentas (efectivo/banco/billetera) con métodos permitidos por tipo; saldo recalculado (`recalcCuentaSaldo`) desde cobros, pagos y asientos de transferencia/ajuste/cheques.
 - Cobros/pagos **multimétodo** (`*_lineas`), cartera de **cheques** (terceros: cartera → depósito → acreditación/rechazo/endoso; propios diferidos) y **imputaciones N-a-N** con diferencia de cambio.
+- **Ciclo de vida de Pagos y Cobros**: los creados en `Borrador` pueden confirmarse mediante `confirmarPago`/`confirmarCobro` (`POST /api/tesoreria/(pagos|cobros)/:id/confirmar`), generando asiento, imputaciones y recálculo de saldos. Está **bloqueado el borrado físico (`DELETE`)** si el pago/cobro está `Confirmado` o `Anulado`; debe usarse `anularPago`/`anularCobro` (contra-asiento).
 - `AsientoService` exige partida doble (`SUM(debe) = SUM(haber)`), soporta asientos manuales y reversión por contra-asiento; `assertFechaAbierta` respeta **cierres de ejercicio**.
 - Reportes: Libro Diario/Mayor, Balance, Posición IVA (contabilizable), Libro IVA Digital, SICORE/SIFERE, flujo de caja real y proyectado (`flujo_proyecciones`), **conciliación bancaria** (importa extracto CSV, auto-concilia).
 
@@ -228,6 +237,20 @@ Estados `Pendiente`/`En Proceso`/`En Revisión`/`Completada`/`Cancelada`, priori
 - **Notas y adjuntos** por entidad (`metaPanel` ↔ `metaService`); en fichas con tabs el panel va **debajo** (`sidebarPosition: 'bottom'`).
 - **Importación CSV** de productos y contactos desde Configuración.
 - **Dashboard** (`GET /api/dashboard`): caja, cuentas por cobrar/pagar, valor de inventario, borradores pendientes, stock bajo mínimo, órdenes activas.
+
+### 8.9 Matriz de Impacto Documental
+
+| Documento / Transición | Operación de Stock | Asiento Contable | Reversión / Borrado permitido |
+|---|---|---|---|
+| **Pedido** (Crear / Editar / Cancelar) | Ninguna | Ninguna | `cancelarPedido` / `deletePedido` (si no tiene entregas ni OP activas) |
+| **Orden de Producción** (`createOrden`) | `remito_taller` en **Borrador** (si hay stock) + `compra` Borrador (faltante) | Ninguno | `cancelarOrden` anula ops confirmadas y borra borradores; `DELETE` solo si está en `Borrador`/`Planificada`/`Cancelada` sin ops/compras confirmadas |
+| **Etapa de OP** (`→ Completada`) | Confirma `entrega` (`TALLER-EXT`/`DEP-CENTRAL` → `VIRT-PROD`) + `ajuste` merma (`VIRT-PROD` → `VIRT-AJUSTE`) | Compra interna `INT` (`Confirmado`) si tiene taller + costo real → **asiento automático** | Bloqueada la reapertura si `stock_consumido = 1` |
+| **OP (Cierre / Ingreso)** | Confirma `recepcion` (`PROD-TERM`) descontando `mermasAcumuladas` | Ninguno | Anulable vía operación de stock o `cancelarOrden` (si no completada) |
+| **Compra** (`Confirmado` / `confirmarCompra`) | `recepcion` (`entrega` en NC) en **Borrador** (o `Confirmado` si `recibir_inmediato`) | **Asiento automático** (`generarAsientoCompra`) | `anularCompra` revierte asiento + stock; `DELETE` prohibido en `Confirmado` |
+| **Venta** (`Confirmada` / `Entregada`, alta o `updateVenta`) | `entrega` (`recepcion` en NC) en **Borrador** (`Confirmada`) o **Confirmado** (`Entregada`) | **Asiento automático** (`generarYGuardarAsientoVenta`) | `Anulada` revierte `asiento_id` + anula ops confirmadas + borra borradores; `DELETE` prohibido en `Confirmada`/`Entregada` |
+| **Operación de Stock** (`confirmarOperacionStock`) | Actualiza `stock_quants` y escribe `movimientos_stock` (inmutable) | Ninguno (ver CMV en 12.9) | `anularOperacionStock` genera contra-movimiento; `DELETE` solo en `Borrador` |
+| **Pago / Cobro** (`Confirmado` o `confirmarPago`/`confirmarCobro`) | Ninguna | **Asiento automático** + imputación + recálculo saldo cuenta | `anularPago`/`anularCobro` genera contra-asiento; `DELETE` solo en `Borrador` |
+| **Cheques** (Cartera / Depósito / Acreditación / Rechazo / Endoso / Débito) | Ninguna | **Asiento automático** por transición + recálculo saldo cuenta | Reversión mediante rechazo/anulación del comprobante origen |
 
 ---
 
@@ -271,12 +294,12 @@ Estados `Pendiente`/`En Proceso`/`En Revisión`/`Completada`/`Cancelada`, priori
 5. **ARCA/AFIP en producción**: homologación completa de WSAA/WSFEv1/Padrón/WSCDC con certificados de `empresa_config`, persistencia de CAE y vencimiento, manejo de rechazos.
 6. **Tareas contextuales**: crear/ver tareas desde Órdenes, Pedidos, Ventas, Compras y Contactos (`referencia_tipo/id`), widgets de vencidas en el Dashboard, notificaciones.
 7. **Presupuesto de producción**: decidir si se fusiona con el simulador de costos de Recetas o se expone con entrada de menú propia (hoy solo accesible por `/presupuestos/:id`).
-8. **Limpieza técnica**: unificar alias de rutas de stock (`/traslados`, `/remitos`, `/entregas`), revisar entradas legacy (`entregas`/`pedidos` vs operaciones de stock) y completar tests de rutas HTTP y de vistas críticas.
-
+8. **Limpieza técnica**: completar tests de rutas HTTP y de vistas críticas. A nivel de rutas `/entregas`, el alias visual del frontend permanece activo sobre Operaciones de Stock y en backend `POST/PUT/DELETE /api/entregas` ya están deprecados (`410 Gone`, con `GET /api/entregas` solo histórico); también quedaron resueltos la trazabilidad de mermas en OP y el bloqueo de borrado destructivo.
+9. **Asiento automático de CMV (Costo de Mercadería Vendida)**: generar el asiento contable de costo de ventas / baja de inventario al confirmar una `operaciones_stock` de tipo `entrega` vinculada a una venta.
 
 ---
 
-## 9. Reglas de Desarrollo Frontend (UI, CSS y Tablas)
+## 13. Reglas de Desarrollo Frontend (UI, CSS y Tablas)
 
 Para mantener consistencia visual, evitar regresiones en mobile y eliminar estilos ad-hoc:
 
@@ -284,7 +307,7 @@ Para mantener consistencia visual, evitar regresiones en mobile y eliminar estil
    - Usar clases estandarizadas definidas en `public/styles.css` (`.section-divider`, `.cert-upload-row`, `.flex-between`, `.text-sm-muted`, `.mt-sm`, `.mt-md`, `.mb-sm`, `.mb-md`, `.nowrap`, `.num`, `.actions`).
    - Migrar gradualmente los `style="..."` heredados a clases semánticas o utilitarias en `public/styles.css`.
 2. **Tablas (`.data-table`) y Motor Visual (`tableEngine.js`)**:
-   - Todas las tablas de listado deben usar `renderDataTable()` o `<table class="data-table">` dentro de `.table-wrap` para heredar automáticamente selección múltiple, exportación CSV, ordenamiento, densidad (`Compacta`/`Normal`) y selector de columnas (`.ve-table-toolbar`, persistido en `localStorage`).
+   - Todas las tablas de listado deben usar `renderDataTable()` o `<table class="data-table">` dentro de `.table-wrap` para heredar automáticamente el estilo unificado de grilla (tipo hoja de cálculo), selección múltiple, exportación CSV, ordenamiento y selector de columnas en el extremo derecho del header (`.ve-col-picker-th`, persistido en `localStorage`).
    - En `.data-table td`, el texto descriptivo permite wrap (`white-space: normal; word-break: normal;`), mientras que fechas, códigos, unidades compuestas (`1 unidades`), montos, badges y botones de acción deben llevar `.nowrap`, `.num` o `.actions` (`white-space: nowrap`).
 3. **Layout Shell y Navegación**:
    - El navbar y el drawer lateral viven exteriorizados en `public/lib/appShell.js` (`mountAppShell()`), manteniendo `public/index.html` mínimo.
@@ -299,3 +322,7 @@ Para mantener consistencia visual, evitar regresiones en mobile y eliminar estil
    - En **documentos confirmados** (`allowAppend: false` / solo lectura): **nunca** aparece fila vacía. En documentos en estado **Borrador**, la misma grilla permite edición y pasa a solo lectura al confirmarse.
 6. **Importador / Exportador JSON (`jsonExchangeService.js`)**:
    - Las entidades con relaciones jerárquicas o múltiples sub-tablas (`recetas`, `productos`, `cuentas_contables`, `contactos`, `categorias`, `variantes`) se exportan e importan mediante `/api/json/(plantilla|exportar|importar)/:entidad` resolviendo referencias por código, SKU o nombre.
+7. **Alineación UI con Reglas de Estado, Trazabilidad y Errores**:
+   - **Acciones por estado**: ocultar botones destructivos (`Eliminar`/`Borrar`) cuando el documento esté confirmado o anulado (usar `Anular` con modal de confirmación advirtiendo reversión de asiento/stock; `Confirmar` en borradores de pagos/cobros; `Cancelar` en órdenes activas; bloqueo visual de reapertura en etapas con `stock_consumido = 1`).
+   - **Trazabilidad visible**: las fichas de Ventas, Compras, Órdenes, Pagos y Cobros deben exponer badges/links directos hacia su `asiento_id` (`/contabilidad`) y `operaciones_stock` vinculadas (`/operaciones-stock/:id`).
+   - **Errores del backend**: `api()` en `public/lib/api.js` propaga `data.error` (HTTP 400/409); toda acción de UI debe envolverse en `try/catch` y mostrar `toast(err.message, true)`.

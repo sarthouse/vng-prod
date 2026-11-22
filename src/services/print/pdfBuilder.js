@@ -350,6 +350,19 @@ export class PdfDocument {
     return { wMm: drawWMm, hMm: drawHMm };
   }
 
+  stampAllPages(fn) {
+    const prev = this.current;
+    const total = this.pages.length;
+    try {
+      this.pages.forEach((p, idx) => {
+        this.current = p;
+        fn(idx + 1, total, p);
+      });
+    } finally {
+      this.current = prev;
+    }
+  }
+
   toBuffer() {
     // Objetos:
     // 1: Catalog, 2: Pages, 3: Font F1 (Helvetica), 4: Font F2 (Helvetica-Bold)

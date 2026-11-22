@@ -8,6 +8,7 @@ import { parseCookies, unsignValue } from './src/services/auth/authService.js';
 import { applySecurityHeaders } from './src/middlewares/security.js';
 import { handleApi, json } from './src/routes/api.js';
 import { createLogger } from './src/core/logger.js';
+import { startWooPollingWorker } from './src/services/comercial/wooService.js';
 
 const log = createLogger('SERVER');
 const httpLog = createLogger('HTTP');
@@ -83,6 +84,7 @@ server.listen(PORT, () => {
     logToFile: ENV.LOG_TO_FILE,
     logDir: ENV.LOG_TO_FILE ? ENV.LOG_DIR : undefined,
   });
+  startWooPollingWorker();
 });
 
 function shutdown(signal) {

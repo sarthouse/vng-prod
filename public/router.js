@@ -64,6 +64,9 @@ export async function resolveRoute() {
   navTabs.forEach(a => {
     a.classList.toggle('active', a === bestMatch);
   });
+  document.querySelectorAll('#sidebar .nav-group').forEach(group => {
+    group.classList.toggle('has-active', Boolean(group.querySelector('a.tab.active')));
+  });
 
   const container = document.getElementById('app-view');
   if (container) container.scrollTop = 0;

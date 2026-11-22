@@ -278,5 +278,13 @@ export async function handleVentasRoutes(req, res, pathname, user) {
     else json(res, 200, { ok: true });
     return true;
   }
+  const vtaNcMatch = pathname.match(/^\/api\/ventas\/(\d+)\/nota-credito$/);
+  if (vtaNcMatch && req.method === 'POST') {
+    try {
+      const ncId = ventaSvc.generarNotaCreditoDesdeVenta(Number(vtaNcMatch[1]), await parseBody(req).catch(() => ({})), user);
+      json(res, 201, { id: ncId });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
   return false;
 }

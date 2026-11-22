@@ -103,5 +103,5 @@ export function generateCuentaCorrientePdf(payload = {}, emp = {}) {
     doc.text('Este contacto no registra movimientos de cuenta corriente.', m + 4, ctx.y + 4, { size: 8, color: mutedCol });
   }
 
-  return doc.build();
+  return ctx.finish();
 }

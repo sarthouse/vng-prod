@@ -614,8 +614,6 @@ export async function renderBalanceResultadosView() {
 
 export async function renderPlanCuentasView() {
   const root = document.getElementById('app-view');
-  const formState = { codigo: '', nombre: '', tipo: 'egreso', naturaleza: 'deudora' };
-  const diarioState = { codigo: '', nombre: '', tipo: 'ventas', caracter: 'fiscal', es_fiscal: 1, punto_venta_id: '', cuenta_contable_id: '' };
 
   const draw = async () => {
     const [planCuentas, diarios, plantillas, puntosVenta] = await Promise.all([
@@ -652,28 +650,22 @@ export async function renderPlanCuentasView() {
       </div>
 
       <div class="card">
-        <div class="card-header"><h2>Nueva Cuenta Contable</h2></div>
-        <form id="form-add-pc">
-          <div id="pc-fields" class="form-grid"></div>
-          <div class="modal-footer">
-            <button type="submit" class="btn btn-primary btn-sm">+ Agregar Cuenta</button>
+        <div class="card-header">
+          <div>
+            <h2>Plan de Cuentas</h2>
+            <span class="muted text-sm">Click en una celda para editar · Completá Código y Nombre en la fila inferior para agregar una cuenta.</span>
           </div>
-        </form>
-      </div>
-
-      <div class="card">
-        <div class="card-header"><h2>Plan de Cuentas</h2></div>
+        </div>
         <div id="pc-table"></div>
       </div>
 
       <div class="card">
-        <div class="card-header"><h2>Diarios Contables</h2></div>
-        <form id="form-add-diario">
-          <div id="pc-diario-fields" class="form-grid"></div>
-          <div class="modal-footer">
-            <button type="submit" class="btn btn-primary btn-sm">+ Agregar Diario</button>
+        <div class="card-header">
+          <div>
+            <h2>Diarios Contables</h2>
+            <span class="muted text-sm">Click en una celda para editar · Completá Código y Nombre en la fila inferior para agregar un diario.</span>
           </div>
-        </form>
+        </div>
         <div id="pc-diarios-table"></div>
       </div>
     `;
@@ -685,39 +677,56 @@ export async function renderPlanCuentasView() {
       { label: 'Diarios Configurados', value: String(diarios.length) },
     ]);
 
-    mountFormFields(root.querySelector('#pc-fields'), [
-      { name: 'codigo', label: 'Código', type: 'text', required: true, placeholder: 'Ej: 5.2.08' },
-      { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Ej: Publicidad y Marketing' },
-      {
-        name: 'tipo',
-        label: 'Tipo',
-        type: 'select',
-        options: [
-          { value: 'egreso', label: 'Egreso' },
-          { value: 'ingreso', label: 'Ingreso' },
-          { value: 'activo', label: 'Activo' },
-          { value: 'pasivo', label: 'Pasivo' },
-          { value: 'patrimonio', label: 'Patrimonio' },
-        ],
-      },
-      {
-        name: 'naturaleza',
-        label: 'Naturaleza',
-        type: 'select',
-        options: [
-          { value: 'deudora', label: 'Deudora' },
-          { value: 'acreedora', label: 'Acreedora' },
-        ],
-      },
-    ], formState);
-
     renderSpreadsheetTable(root.querySelector('#pc-table'), {
       rows: planCuentas,
       emptyText: 'No hay cuentas contables.',
       compact: true,
+      defaultNewRow: () => ({
+        codigo: '',
+        nombre: '',
+        tipo: 'egreso',
+        naturaleza: 'deudora',
+        imputable: 1,
+        activo: 1,
+      }),
+      onCreateRow: async ({ row }) => {
+        if (!String(row.codigo || '').trim() || !String(row.nombre || '').trim()) return false;
+        try {
+          const res = await api('/api/tesoreria/plan-cuentas', {
+            method: 'POST',
+            body: JSON.stringify({
+              codigo: String(row.codigo).trim(),
+              nombre: String(row.nombre).trim(),
+              tipo: row.tipo || 'egreso',
+              naturaleza: row.naturaleza || 'deudora',
+              imputable: row.imputable !== 0 ? 1 : 0,
+              activo: row.activo !== 0 ? 1 : 0,
+            }),
+          });
+          if (res?.id) row.id = res.id;
+          toast('Cuenta contable creada');
+          return true;
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
       columns: [
-        { key: 'codigo', label: 'Código', type: 'text', nowrap: true, render: r => `<strong>${esc(r.codigo)}</strong>` },
-        { key: 'nombre', label: 'Nombre', type: 'text' },
+        {
+          key: 'codigo',
+          label: 'Código',
+          type: 'text',
+          nowrap: true,
+          parse: v => String(v || '').trim(),
+          render: r => (r.codigo ? `<strong>${esc(r.codigo)}</strong>` : '<span class="muted">Ej: 5.2.08</span>'),
+        },
+        {
+          key: 'nombre',
+          label: 'Nombre',
+          type: 'text',
+          parse: v => String(v || '').trim(),
+          render: r => (r.nombre ? esc(r.nombre) : '<span class="muted">Nueva cuenta...</span>'),
+        },
         {
           key: 'tipo',
           label: 'Tipo',
@@ -729,7 +738,7 @@ export async function renderPlanCuentasView() {
             { value: 'pasivo', label: 'Pasivo' },
             { value: 'patrimonio', label: 'Patrimonio' },
           ],
-          render: r => `<span class="badge badge-muted">${esc(r.tipo)}</span>`,
+          render: r => `<span class="badge badge-muted">${esc(r.tipo || 'egreso')}</span>`,
         },
         {
           key: 'naturaleza',
@@ -741,6 +750,13 @@ export async function renderPlanCuentasView() {
           ],
         },
         {
+          key: 'imputable',
+          label: 'Imputable',
+          type: 'checkbox',
+          align: 'center',
+          getValue: r => (r.imputable !== 0 ? 1 : 0),
+        },
+        {
           key: 'activo',
           label: 'Activa',
           type: 'checkbox',
@@ -748,7 +764,6 @@ export async function renderPlanCuentasView() {
           getValue: r => (r.activo !== 0 ? 1 : 0),
         },
       ],
-      extraActions: r => `<button type="button" class="btn btn-sm" data-edit-pc="${r.id}">Detalle</button>`,
       onCellChange: async ({ row, key, value }) => {
         try {
           await api(`/api/tesoreria/plan-cuentas/${row.id}`, {
@@ -758,6 +773,7 @@ export async function renderPlanCuentasView() {
               nombre: key === 'nombre' ? value : row.nombre,
               tipo: key === 'tipo' ? value : row.tipo,
               naturaleza: key === 'naturaleza' ? value : row.naturaleza,
+              imputable: key === 'imputable' ? Number(value) : (row.imputable !== 0 ? 1 : 0),
               activo: key === 'activo' ? Number(value) : (row.activo !== 0 ? 1 : 0),
             }),
           });
@@ -769,99 +785,149 @@ export async function renderPlanCuentasView() {
       },
     });
 
-    mountFormFields(root.querySelector('#pc-diario-fields'), [
-      { name: 'codigo', label: 'Código', type: 'text', required: true, placeholder: 'Ej: VTA-A' },
-      { name: 'nombre', label: 'Nombre', type: 'text', required: true, placeholder: 'Nombre del diario...' },
-      {
-        name: 'tipo',
-        label: 'Tipo',
-        type: 'select',
-        options: [
-          { value: 'ventas', label: 'Ventas' },
-          { value: 'compras', label: 'Compras' },
-          { value: 'caja', label: 'Caja' },
-          { value: 'banco', label: 'Banco' },
-          { value: 'general', label: 'General' },
-        ],
-      },
-      {
-        name: 'caracter',
-        label: 'Carácter',
-        type: 'select',
-        options: [
-          { value: 'fiscal', label: 'Fiscal' },
-          { value: 'interno', label: 'Interno' },
-          { value: 'ambos', label: 'Ambos' },
-        ],
-      },
-      {
-        name: 'es_fiscal',
-        label: 'Es Fiscal (AFIP/ARCA)',
-        type: 'select',
-        options: [
-          { value: 1, label: 'Sí (Facturas A/B/C)' },
-          { value: 0, label: 'No (Solo X / Interno)' },
-        ],
-      },
-      {
-        name: 'punto_venta_id',
-        label: 'Punto de Venta AFIP',
-        type: 'select',
-        options: [
-          { value: '', label: '-- Ninguno --' },
-          ...puntosVenta.map(pv => ({ value: pv.id, label: `${String(pv.numero).padStart(4, '0')} — ${pv.nombre}${pv.es_electronica ? ' (WSFE)' : ''}` })),
-        ],
-      },
-      {
-        name: 'cuenta_contable_id',
-        label: 'Cuenta Contable',
-        type: 'select',
-        options: [
-          { value: '', label: '-- Ninguna --' },
-          ...planCuentas.map(pc => ({ value: pc.id, label: `${pc.codigo} — ${pc.nombre}` })),
-        ],
-      },
-    ], diarioState);
-
-    renderDataTable(root.querySelector('#pc-diarios-table'), {
+    renderSpreadsheetTable(root.querySelector('#pc-diarios-table'), {
+      rows: diarios,
       emptyText: 'No hay diarios configurados.',
+      compact: true,
+      defaultNewRow: () => ({
+        codigo: '',
+        nombre: '',
+        tipo: 'ventas',
+        caracter: 'fiscal',
+        es_fiscal: 1,
+        punto_venta_id: '',
+        cuenta_contable_id: '',
+        activo: 1,
+      }),
+      onCreateRow: async ({ row }) => {
+        if (!String(row.codigo || '').trim() || !String(row.nombre || '').trim()) return false;
+        try {
+          const res = await api('/api/tesoreria/diarios', {
+            method: 'POST',
+            body: JSON.stringify({
+              codigo: String(row.codigo).trim(),
+              nombre: String(row.nombre).trim(),
+              tipo: row.tipo || 'ventas',
+              caracter: row.caracter || 'fiscal',
+              es_fiscal: Number(row.es_fiscal) ? 1 : 0,
+              punto_venta_id: row.punto_venta_id ? Number(row.punto_venta_id) : null,
+              cuenta_contable_id: row.cuenta_contable_id ? Number(row.cuenta_contable_id) : null,
+              activo: row.activo !== 0 ? 1 : 0,
+            }),
+          });
+          if (res?.id) row.id = res.id;
+          toast('Diario contable creado');
+          return true;
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
       columns: [
-        { label: 'Código', render: r => `<strong>${esc(r.codigo)}</strong>` },
-        { label: 'Nombre', key: 'nombre' },
-        { label: 'Tipo', render: r => `<span class="badge badge-muted">${esc(r.tipo)}</span>` },
         {
-          label: 'Fiscal',
-          render: r => (Number(r.es_fiscal) === 1 || r.caracter === 'fiscal'
-            ? '<span class="badge badge-ok">Fiscal (ARCA)</span>'
-            : '<span class="badge badge-muted">No fiscal (X)</span>'),
+          key: 'codigo',
+          label: 'Código',
+          type: 'text',
+          nowrap: true,
+          parse: v => String(v || '').trim(),
+          render: r => (r.codigo ? `<strong>${esc(r.codigo)}</strong>` : '<span class="muted">Ej: VTA-A</span>'),
         },
         {
+          key: 'nombre',
+          label: 'Nombre',
+          type: 'text',
+          parse: v => String(v || '').trim(),
+          render: r => (r.nombre ? esc(r.nombre) : '<span class="muted">Nombre del diario...</span>'),
+        },
+        {
+          key: 'tipo',
+          label: 'Tipo',
+          type: 'select',
+          options: [
+            { value: 'ventas', label: 'Ventas' },
+            { value: 'compras', label: 'Compras' },
+            { value: 'caja', label: 'Caja' },
+            { value: 'banco', label: 'Banco' },
+            { value: 'general', label: 'General' },
+          ],
+          render: r => `<span class="badge badge-muted">${esc(r.tipo || 'ventas')}</span>`,
+        },
+        {
+          key: 'caracter',
+          label: 'Carácter',
+          type: 'select',
+          options: [
+            { value: 'fiscal', label: 'Fiscal' },
+            { value: 'interno', label: 'Interno' },
+            { value: 'ambos', label: 'Ambos' },
+          ],
+        },
+        {
+          key: 'es_fiscal',
+          label: 'Fiscal (ARCA)',
+          type: 'checkbox',
+          align: 'center',
+          getValue: r => (Number(r.es_fiscal) === 1 ? 1 : 0),
+        },
+        {
+          key: 'punto_venta_id',
           label: 'PV AFIP',
+          type: 'select',
+          options: [
+            { value: '', label: '-- Ninguno --' },
+            ...puntosVenta.map(pv => ({ value: String(pv.id), label: `${String(pv.numero).padStart(4, '0')} — ${pv.nombre}${pv.es_electronica ? ' (WSFE)' : ''}` })),
+          ],
+          getValue: r => (r.punto_venta_id ? String(r.punto_venta_id) : ''),
+          parse: v => (v ? Number(v) : null),
           render: r => {
             const pv = puntosVenta.find(p => String(p.id) === String(r.punto_venta_id));
-            return pv ? `<code>${String(pv.numero).padStart(4, '0')}</code>` : '-';
+            return pv ? `<code>${String(pv.numero).padStart(4, '0')}</code>` : '<span class="muted">-</span>';
           },
         },
         {
+          key: 'cuenta_contable_id',
           label: 'Cuenta Contable',
+          type: 'select',
+          options: [
+            { value: '', label: '-- Ninguna --' },
+            ...planCuentas.map(pc => ({ value: String(pc.id), label: `${pc.codigo} — ${pc.nombre}` })),
+          ],
+          getValue: r => (r.cuenta_contable_id ? String(r.cuenta_contable_id) : ''),
+          parse: v => (v ? Number(v) : null),
           render: r => {
             const pc = planCuentas.find(p => String(p.id) === String(r.cuenta_contable_id));
-            return pc ? `${esc(pc.codigo)} — ${esc(pc.nombre)}` : '-';
+            return pc ? `${esc(pc.codigo)} — ${esc(pc.nombre)}` : '<span class="muted">-</span>';
           },
         },
-        { label: 'Estado', render: r => `<span class="badge ${r.activo !== 0 ? 'badge-ok' : 'badge-muted'}">${r.activo !== 0 ? 'Activo' : 'Inactivo'}</span>` },
         {
-          label: '',
-          align: 'right',
-          render: r => `
-            <div class="actions justify-end">
-              <button type="button" class="btn btn-sm" data-edit-diario="${r.id}">Editar</button>
-              <button type="button" class="btn btn-sm" data-toggle-diario="${r.id}" data-activo="${r.activo !== 0 ? 1 : 0}">${r.activo !== 0 ? 'Desactivar' : 'Activar'}</button>
-            </div>
-          `,
+          key: 'activo',
+          label: 'Activo',
+          type: 'checkbox',
+          align: 'center',
+          getValue: r => (r.activo !== 0 ? 1 : 0),
         },
       ],
-      rows: diarios,
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          await api(`/api/tesoreria/diarios/${row.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              codigo: key === 'codigo' ? value : row.codigo,
+              nombre: key === 'nombre' ? value : row.nombre,
+              tipo: key === 'tipo' ? value : row.tipo,
+              caracter: key === 'caracter' ? value : row.caracter,
+              es_fiscal: key === 'es_fiscal' ? (Number(value) ? 1 : 0) : (Number(row.es_fiscal) ? 1 : 0),
+              punto_venta_id: key === 'punto_venta_id' ? (value ? Number(value) : null) : (row.punto_venta_id ? Number(row.punto_venta_id) : null),
+              cuenta_contable_id: key === 'cuenta_contable_id' ? (value ? Number(value) : null) : (row.cuenta_contable_id ? Number(row.cuenta_contable_id) : null),
+              activo: key === 'activo' ? (Number(value) ? 1 : 0) : (row.activo !== 0 ? 1 : 0),
+            }),
+          });
+          toast('Diario contable actualizado');
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
     });
 
     root.querySelector('#pc-tpl-select')?.addEventListener('change', (e) => {
@@ -884,252 +950,6 @@ export async function renderPlanCuentasView() {
         await draw();
       } catch (err) { toast(err.message, true); }
     });
-
-    root.querySelector('#form-add-diario')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        await api('/api/tesoreria/diarios', {
-          method: 'POST',
-          body: JSON.stringify({
-            ...diarioState,
-            es_fiscal: Number(diarioState.es_fiscal) ? 1 : 0,
-            punto_venta_id: diarioState.punto_venta_id ? Number(diarioState.punto_venta_id) : null,
-            cuenta_contable_id: diarioState.cuenta_contable_id ? Number(diarioState.cuenta_contable_id) : null,
-          }),
-        });
-        toast('Diario contable creado');
-        diarioState.codigo = '';
-        diarioState.nombre = '';
-        await draw();
-      } catch (err) { toast(err.message, true); }
-    });
-
-    root.querySelector('#form-add-pc')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        await api('/api/tesoreria/plan-cuentas', {
-          method: 'POST',
-          body: JSON.stringify({ ...formState, imputable: 1, activo: 1 }),
-        });
-        toast('Cuenta contable creada');
-        formState.codigo = '';
-        formState.nombre = '';
-        await draw();
-      } catch (err) { toast(err.message, true); }
-    });
-
-    root.querySelectorAll('[data-edit-pc]').forEach(btn => btn.addEventListener('click', () => {
-      const pc = planCuentas.find(p => String(p.id) === String(btn.dataset.editPc));
-      if (!pc) return;
-      const editState = {
-        codigo: pc.codigo || '',
-        nombre: pc.nombre || '',
-        tipo: pc.tipo || 'egreso',
-        naturaleza: pc.naturaleza || 'deudora',
-        imputable: pc.imputable !== 0 ? 1 : 0,
-        activo: pc.activo !== 0 ? 1 : 0,
-      };
-      const { close } = createModal({
-        title: `Editar Cuenta — ${pc.codigo}`,
-        bodyHtml: `<form id="form-edit-pc"><div id="edit-pc-fields" class="form-grid"></div></form>`,
-        footerHtml: `
-          <button type="button" class="btn" id="btn-cancel-edit-pc">Cancelar</button>
-          <button type="submit" form="form-edit-pc" class="btn btn-primary">Guardar Cambios</button>
-        `,
-        onMount: (modalEl) => {
-          mountFormFields(modalEl.querySelector('#edit-pc-fields'), [
-            { name: 'codigo', label: 'Código *', type: 'text', required: true },
-            { name: 'nombre', label: 'Nombre *', type: 'text', required: true },
-            {
-              name: 'tipo',
-              label: 'Tipo',
-              type: 'select',
-              options: [
-                { value: 'activo', label: 'Activo' },
-                { value: 'pasivo', label: 'Pasivo' },
-                { value: 'patrimonio', label: 'Patrimonio' },
-                { value: 'ingreso', label: 'Ingreso' },
-                { value: 'egreso', label: 'Egreso' },
-              ],
-            },
-            {
-              name: 'naturaleza',
-              label: 'Naturaleza',
-              type: 'select',
-              options: [
-                { value: 'deudora', label: 'Deudora' },
-                { value: 'acreedora', label: 'Acreedora' },
-              ],
-            },
-            {
-              name: 'imputable',
-              label: 'Imputable',
-              type: 'select',
-              options: [
-                { value: 1, label: 'Sí' },
-                { value: 0, label: 'No (Título/Agrupadora)' },
-              ],
-            },
-            {
-              name: 'activo',
-              label: 'Estado',
-              type: 'select',
-              options: [
-                { value: 1, label: 'Activa' },
-                { value: 0, label: 'Inactiva' },
-              ],
-            },
-          ], editState);
-          modalEl.querySelector('#btn-cancel-edit-pc')?.addEventListener('click', () => close());
-          modalEl.querySelector('#form-edit-pc')?.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            try {
-              await api(`/api/tesoreria/plan-cuentas/${pc.id}`, {
-                method: 'PUT',
-                body: JSON.stringify({
-                  ...editState,
-                  imputable: Number(editState.imputable) ? 1 : 0,
-                  activo: Number(editState.activo) ? 1 : 0,
-                }),
-              });
-              toast('Cuenta contable actualizada');
-              close();
-              await draw();
-            } catch (err) { toast(err.message, true); }
-          });
-        },
-      });
-    }));
-
-    root.querySelectorAll('[data-toggle-pc]').forEach(btn => btn.addEventListener('click', async () => {
-      try {
-        const activo = btn.dataset.activo === '1' ? 0 : 1;
-        await api(`/api/tesoreria/plan-cuentas/${btn.dataset.togglePc}`, {
-          method: 'PUT',
-          body: JSON.stringify({ activo }),
-        });
-        toast(activo ? 'Cuenta activada' : 'Cuenta desactivada');
-        await draw();
-      } catch (err) { toast(err.message, true); }
-    }));
-
-    root.querySelectorAll('[data-edit-diario]').forEach(btn => btn.addEventListener('click', () => {
-      const d = diarios.find(x => String(x.id) === String(btn.dataset.editDiario));
-      if (!d) return;
-      const editD = {
-        codigo: d.codigo || '',
-        nombre: d.nombre || '',
-        tipo: d.tipo || 'ventas',
-        caracter: d.caracter || 'ambos',
-        es_fiscal: Number(d.es_fiscal) === 1 ? 1 : 0,
-        punto_venta_id: d.punto_venta_id || '',
-        cuenta_contable_id: d.cuenta_contable_id || '',
-        activo: d.activo !== 0 ? 1 : 0,
-      };
-      const { close } = createModal({
-        title: `Editar Diario — ${d.codigo}`,
-        bodyHtml: `<form id="form-edit-diario"><div id="edit-diario-fields" class="form-grid"></div></form>`,
-        footerHtml: `
-          <button type="button" class="btn" id="btn-cancel-edit-diario">Cancelar</button>
-          <button type="submit" form="form-edit-diario" class="btn btn-primary">Guardar Cambios</button>
-        `,
-        onMount: (modalEl) => {
-          mountFormFields(modalEl.querySelector('#edit-diario-fields'), [
-            { name: 'codigo', label: 'Código *', type: 'text', required: true },
-            { name: 'nombre', label: 'Nombre *', type: 'text', required: true },
-            {
-              name: 'tipo',
-              label: 'Tipo',
-              type: 'select',
-              options: [
-                { value: 'ventas', label: 'Ventas' },
-                { value: 'compras', label: 'Compras' },
-                { value: 'caja', label: 'Caja' },
-                { value: 'banco', label: 'Banco' },
-                { value: 'general', label: 'General' },
-              ],
-            },
-            {
-              name: 'caracter',
-              label: 'Carácter',
-              type: 'select',
-              options: [
-                { value: 'fiscal', label: 'Fiscal' },
-                { value: 'interno', label: 'Interno' },
-                { value: 'ambos', label: 'Ambos' },
-              ],
-            },
-            {
-              name: 'es_fiscal',
-              label: 'Es Fiscal (AFIP/ARCA)',
-              type: 'select',
-              options: [
-                { value: 1, label: 'Sí (Facturas A/B/C)' },
-                { value: 0, label: 'No (Solo X / Interno)' },
-              ],
-            },
-            {
-              name: 'punto_venta_id',
-              label: 'Punto de Venta AFIP',
-              type: 'select',
-              options: [
-                { value: '', label: '-- Ninguno --' },
-                ...puntosVenta.map(pv => ({ value: pv.id, label: `${String(pv.numero).padStart(4, '0')} — ${pv.nombre}${pv.es_electronica ? ' (WSFE)' : ''}` })),
-              ],
-            },
-            {
-              name: 'cuenta_contable_id',
-              label: 'Cuenta Contable',
-              type: 'select',
-              options: [
-                { value: '', label: '-- Ninguna --' },
-                ...planCuentas.map(pc => ({ value: pc.id, label: `${pc.codigo} — ${pc.nombre}` })),
-              ],
-            },
-            {
-              name: 'activo',
-              label: 'Estado',
-              type: 'select',
-              options: [
-                { value: 1, label: 'Activo' },
-                { value: 0, label: 'Inactivo' },
-              ],
-            },
-          ], editD);
-          modalEl.querySelector('#btn-cancel-edit-diario')?.addEventListener('click', () => close());
-          modalEl.querySelector('#form-edit-diario')?.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            try {
-              await api(`/api/tesoreria/diarios/${d.id}`, {
-                method: 'PUT',
-                body: JSON.stringify({
-                  ...editD,
-                  es_fiscal: Number(editD.es_fiscal) ? 1 : 0,
-                  punto_venta_id: editD.punto_venta_id ? Number(editD.punto_venta_id) : null,
-                  cuenta_contable_id: editD.cuenta_contable_id ? Number(editD.cuenta_contable_id) : null,
-                  activo: Number(editD.activo) ? 1 : 0,
-                }),
-              });
-              toast('Diario contable actualizado');
-              close();
-              await draw();
-            } catch (err) { toast(err.message, true); }
-          });
-        },
-      });
-    }));
-
-    root.querySelectorAll('[data-toggle-diario]').forEach(btn => btn.addEventListener('click', async () => {
-      try {
-        const activo = btn.dataset.activo === '1' ? 0 : 1;
-        await api(`/api/tesoreria/diarios/${btn.dataset.toggleDiario}`, {
-          method: 'PUT',
-          body: JSON.stringify({ activo }),
-        });
-        toast(activo ? 'Diario activado' : 'Diario desactivado');
-        await draw();
-      } catch (err) { toast(err.message, true); }
-    }));
   };
 
   await draw();

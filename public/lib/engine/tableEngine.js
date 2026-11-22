@@ -152,8 +152,12 @@ function bindBulkBarAndCheckboxes(rootEl, { rows, idList, bulkActions = [], expo
       if (!table) return;
       const ths = Array.from(table.querySelectorAll('thead th'));
       const keepIdx = ths
-        .map((th, i) => ({ i, text: th.dataset.colLabel || th.textContent.trim(), isBulk: th.classList.contains('bulk-col') }))
-        .filter(x => !x.isBulk && x.text.toLowerCase() !== 'acciones');
+        .map((th, i) => ({
+          i,
+          text: th.dataset.colLabel || th.textContent.trim(),
+          skip: th.classList.contains('bulk-col') || th.classList.contains('ve-col-picker-th'),
+        }))
+        .filter(x => !x.skip && x.text && x.text.toLowerCase() !== 'acciones');
       const headers = keepIdx.map(x => x.text);
       const trs = Array.from(table.querySelectorAll('tbody tr')).filter(tr => {
         const cb = tr.querySelector('[data-bulk-row]');
@@ -184,6 +188,83 @@ function renderBulkBarHtml(bulkActions = []) {
       </div>
     </div>
   `;
+}
+
+const COLUMNS_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>`;
+
+function renderColPickerThHtml() {
+  return `<th class="ve-col-picker-th" title="Mostrar u ocultar columnas"><button type="button" class="ve-col-picker-btn" data-ve-col-toggle aria-label="Mostrar u ocultar columnas" title="Mostrar u ocultar columnas">${COLUMNS_ICON_SVG}</button></th>`;
+}
+
+function renderColPickerMenuHtml(toggleableCols, hiddenCols) {
+  return `
+    <div class="ve-col-menu" data-ve-col-menu hidden>
+      <div class="ve-col-menu-title">Columnas visibles</div>
+      ${toggleableCols.map(({ id, label }) => `
+        <label class="ve-col-option">
+          <input type="checkbox" data-ve-col-id="${esc(id)}" ${!hiddenCols.has(id) ? 'checked' : ''} />
+          <span>${esc(label)}</span>
+        </label>
+      `).join('')}
+    </div>
+  `;
+}
+
+let activeColMenuCleanup = null;
+
+function bindHeaderColumnPicker(triggerBtn, menuEl, { hiddenCols, onToggle }) {
+  if (!triggerBtn || !menuEl) return;
+
+  const closeMenu = () => {
+    menuEl.hidden = true;
+    if (activeColMenuCleanup === closeMenu) activeColMenuCleanup = null;
+  };
+
+  const positionMenu = () => {
+    const rect = triggerBtn.getBoundingClientRect();
+    menuEl.style.top = `${Math.min(window.innerHeight - 20, rect.bottom + 4)}px`;
+    menuEl.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+    menuEl.style.left = 'auto';
+  };
+
+  triggerBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = menuEl.hidden;
+    if (activeColMenuCleanup && activeColMenuCleanup !== closeMenu) {
+      activeColMenuCleanup();
+    }
+    menuEl.hidden = !willOpen;
+    if (willOpen) {
+      positionMenu();
+      activeColMenuCleanup = closeMenu;
+    } else {
+      activeColMenuCleanup = null;
+    }
+  });
+
+  menuEl.addEventListener('click', (e) => e.stopPropagation());
+
+  menuEl.querySelectorAll('[data-ve-col-id]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.veColId;
+      if (cb.checked) hiddenCols.delete(id);
+      else hiddenCols.add(id);
+      onToggle?.(id, cb.checked);
+    });
+  });
+
+  if (!document.__veColMenuGlobalBound) {
+    document.__veColMenuGlobalBound = true;
+    document.addEventListener('click', () => {
+      activeColMenuCleanup?.();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') activeColMenuCleanup?.();
+    });
+    window.addEventListener('scroll', () => {
+      activeColMenuCleanup?.();
+    }, true);
+  }
 }
 
 /**
@@ -225,7 +306,6 @@ export function renderDataTable(container, {
   };
   const prefs = loadPrefs();
   const hiddenCols = new Set(Array.isArray(prefs.hiddenCols) ? prefs.hiddenCols : []);
-  let isCompact = Boolean(prefs.compact);
   const getColId = (c, idx) => String(c.key || c.label || `col_${idx}`);
 
   let sortColIdx = container.__veSortColIdx ?? -1;
@@ -273,31 +353,14 @@ export function renderDataTable(container, {
     const idList = visibleRows.map((r, i) => String(resolveId(r, i)));
     const hasFooter = activeColumns.some(c => typeof c.sum === 'function' || c.footer !== undefined);
     const toggleableCols = columns
-      .map((c, idx) => ({ c, idx, id: getColId(c, idx) }))
-      .filter(({ c }) => c.label && c.label.toLowerCase() !== 'acciones');
+      .map((c, idx) => ({ idx, id: getColId(c, idx), label: c.label }))
+      .filter(c => c.label && c.label.toLowerCase() !== 'acciones');
+    const showColPicker = toggleableCols.length > 1;
 
     container.innerHTML = `
-      <div class="ve-table-toolbar">
-        <button type="button" class="btn btn-sm secondary" data-ve-density title="Alternar densidad de filas">
-          Densidad: ${isCompact ? 'Compacta' : 'Normal'}
-        </button>
-        ${toggleableCols.length > 1 ? `
-          <div class="ve-col-picker">
-            <button type="button" class="btn btn-sm secondary" data-ve-col-toggle>Columnas ▾</button>
-            <div class="ve-col-menu" data-ve-col-menu hidden>
-              ${toggleableCols.map(({ c, id }) => `
-                <label class="ve-col-option">
-                  <input type="checkbox" data-ve-col-id="${esc(id)}" ${!hiddenCols.has(id) ? 'checked' : ''} />
-                  <span>${esc(c.label)}</span>
-                </label>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-      </div>
       ${selectable ? renderBulkBarHtml(bulkActions) : ''}
       <div class="table-wrap">
-        <table class="data-table ${isCompact ? 've-table-compact' : ''}">
+        <table class="data-table">
           <thead>
             <tr>
               ${selectable ? '<th class="bulk-col"><input type="checkbox" class="bulk-check" data-bulk-all title="Seleccionar todos" /></th>' : ''}
@@ -314,6 +377,7 @@ export function renderDataTable(container, {
                 ].filter(Boolean).join(' ');
                 return `<th class="${cls}" data-col-label="${esc(c.label)}" ${canSort ? `data-ve-sort="${idx}" title="Ordenar por ${esc(c.label)}"` : ''}>${esc(c.label)}${arrow ? `<span class="ve-sort-ind">${arrow}</span>` : ''}</th>`;
               }).join('')}
+              ${showColPicker ? renderColPickerThHtml() : ''}
             </tr>
           </thead>
           <tbody>
@@ -328,6 +392,7 @@ export function renderDataTable(container, {
                   ].filter(Boolean).join(' ');
                   return `<td class="${tdCls}">${content}</td>`;
                 }).join('')}
+                ${showColPicker ? '<td class="ve-col-picker-td"></td>' : ''}
               </tr>
             `).join('')}
           </tbody>
@@ -341,11 +406,13 @@ export function renderDataTable(container, {
                     : (c.footer !== undefined ? c.footer : (idx === 0 ? 'Totales' : ''));
                   return `<td class="${c.align === 'right' ? 'num' : ''}">${content}</td>`;
                 }).join('')}
+                ${showColPicker ? '<td class="ve-col-picker-td"></td>' : ''}
               </tr>
             </tfoot>
           ` : ''}
         </table>
       </div>
+      ${showColPicker ? renderColPickerMenuHtml(toggleableCols, hiddenCols) : ''}
       ${showPager ? `
         <div class="ve-table-pager">
           <div class="sx-72fafc">
@@ -370,7 +437,7 @@ export function renderDataTable(container, {
         rows: visibleRows,
         idList,
         bulkActions,
-        exportColumns: columns,
+        exportColumns: activeColumns,
         exportFilename,
       });
     }
@@ -404,28 +471,19 @@ export function renderDataTable(container, {
       if (currentPage < totalPages) { currentPage++; drawTable(); }
     });
 
-    container.querySelector('[data-ve-density]')?.addEventListener('click', () => {
-      isCompact = !isCompact;
-      savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
-      drawTable();
-    });
-
-    const colToggle = container.querySelector('[data-ve-col-toggle]');
-    const colMenu = container.querySelector('[data-ve-col-menu]');
-    colToggle?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (colMenu) colMenu.hidden = !colMenu.hidden;
-    });
-    colMenu?.addEventListener('click', (e) => e.stopPropagation());
-    colMenu?.querySelectorAll('[data-ve-col-id]').forEach(cb => {
-      cb.addEventListener('change', () => {
-        const id = cb.dataset.veColId;
-        if (cb.checked) hiddenCols.delete(id);
-        else hiddenCols.add(id);
-        savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
-        drawTable();
-      });
-    });
+    if (showColPicker) {
+      bindHeaderColumnPicker(
+        container.querySelector('[data-ve-col-toggle]'),
+        container.querySelector('[data-ve-col-menu]'),
+        {
+          hiddenCols,
+          onToggle: () => {
+            savePrefs({ hiddenCols: [...hiddenCols] });
+            drawTable();
+          },
+        }
+      );
+    }
   };
 
   drawTable();
@@ -527,18 +585,28 @@ function attachTableToolbar(table) {
   if (!table || table.dataset.veToolbarBound === '1') return;
   const tableWrap = table.closest('.table-wrap') || table;
   const parent = tableWrap.parentNode;
-  if (!parent || parent.querySelector(':scope > .ve-table-toolbar')) {
+  if (!parent) {
     table.dataset.veToolbarBound = '1';
     return;
   }
   const headTr = table.querySelector('thead tr');
-  if (!headTr) return;
+  if (!headTr || headTr.querySelector('.ve-col-picker-th')) {
+    table.dataset.veToolbarBound = '1';
+    return;
+  }
   table.dataset.veToolbarBound = '1';
 
   const ths = Array.from(headTr.children);
   const toggleable = ths
-    .map((th, idx) => ({ idx, label: (th.textContent || '').replace(/[▲▼]/g, '').trim(), isBulk: th.classList.contains('bulk-col') }))
+    .map((th, idx) => ({
+      idx,
+      id: (th.textContent || '').replace(/[▲▼]/g, '').trim(),
+      label: (th.textContent || '').replace(/[▲▼]/g, '').trim(),
+      isBulk: th.classList.contains('bulk-col'),
+    }))
     .filter(c => !c.isBulk && c.label && c.label.toLowerCase() !== 'acciones');
+
+  if (toggleable.length <= 1) return;
 
   const firstLabel = toggleable.slice(0, 3).map(c => c.label).join('|');
   const prefKey = `ve_table_prefs:${window.location.pathname}:${table.id || firstLabel || 'manual'}`;
@@ -551,68 +619,46 @@ function attachTableToolbar(table) {
 
   const prefs = loadPrefs();
   const hiddenCols = new Set(Array.isArray(prefs.hiddenCols) ? prefs.hiddenCols : []);
-  let isCompact = Boolean(prefs.compact);
 
   const applyPrefs = () => {
-    table.classList.toggle('ve-table-compact', isCompact);
-    const allRows = table.querySelectorAll('thead tr, tbody tr');
+    const allRows = table.querySelectorAll('thead tr, tbody tr, tfoot tr');
     allRows.forEach(tr => {
       const cells = Array.from(tr.children);
       if (cells.length === 1 && cells[0].hasAttribute('colspan')) return;
-      toggleable.forEach(({ idx, label }) => {
+      toggleable.forEach(({ idx, id }) => {
         const cell = cells[idx];
-        if (cell) cell.classList.toggle('ve-col-hidden', hiddenCols.has(label));
+        if (cell) cell.classList.toggle('ve-col-hidden', hiddenCols.has(id));
       });
     });
   };
 
-  const toolbar = document.createElement('div');
-  toolbar.className = 've-table-toolbar';
-  toolbar.innerHTML = `
-    <button type="button" class="btn btn-sm secondary" data-ve-density title="Alternar densidad de filas">
-      Densidad: ${isCompact ? 'Compacta' : 'Normal'}
-    </button>
-    ${toggleable.length > 1 ? `
-      <div class="ve-col-picker">
-        <button type="button" class="btn btn-sm secondary" data-ve-col-toggle>Columnas ▾</button>
-        <div class="ve-col-menu" data-ve-col-menu hidden>
-          ${toggleable.map(({ label }) => `
-            <label class="ve-col-option">
-              <input type="checkbox" data-ve-col-id="${esc(label)}" ${!hiddenCols.has(label) ? 'checked' : ''} />
-              <span>${esc(label)}</span>
-            </label>
-          `).join('')}
-        </div>
-      </div>
-    ` : ''}
-  `;
+  const thWrap = document.createElement('tr');
+  thWrap.innerHTML = renderColPickerThHtml();
+  headTr.appendChild(thWrap.firstElementChild);
 
-  const bulkBar = parent.querySelector(':scope > [data-bulk-bar]');
-  parent.insertBefore(toolbar, bulkBar || tableWrap);
-
-  const densityBtn = toolbar.querySelector('[data-ve-density]');
-  densityBtn?.addEventListener('click', () => {
-    isCompact = !isCompact;
-    densityBtn.textContent = `Densidad: ${isCompact ? 'Compacta' : 'Normal'}`;
-    savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
-    applyPrefs();
+  table.querySelectorAll('tbody tr, tfoot tr').forEach(tr => {
+    const cells = Array.from(tr.children);
+    if (cells.length === 1 && cells[0].hasAttribute('colspan')) {
+      cells[0].setAttribute('colspan', String(Number(cells[0].getAttribute('colspan') || 1) + 1));
+      return;
+    }
+    const td = document.createElement('td');
+    td.className = 've-col-picker-td';
+    tr.appendChild(td);
   });
 
-  const colToggle = toolbar.querySelector('[data-ve-col-toggle]');
-  const colMenu = toolbar.querySelector('[data-ve-col-menu]');
-  colToggle?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (colMenu) colMenu.hidden = !colMenu.hidden;
-  });
-  colMenu?.addEventListener('click', (e) => e.stopPropagation());
-  colMenu?.querySelectorAll('[data-ve-col-id]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const id = cb.dataset.veColId;
-      if (cb.checked) hiddenCols.delete(id);
-      else hiddenCols.add(id);
-      savePrefs({ hiddenCols: [...hiddenCols], compact: isCompact });
+  const menuWrap = document.createElement('div');
+  menuWrap.innerHTML = renderColPickerMenuHtml(toggleable, hiddenCols);
+  const colMenu = menuWrap.firstElementChild;
+  parent.appendChild(colMenu);
+
+  const colToggle = headTr.querySelector('[data-ve-col-toggle]');
+  bindHeaderColumnPicker(colToggle, colMenu, {
+    hiddenCols,
+    onToggle: () => {
+      savePrefs({ hiddenCols: [...hiddenCols] });
       applyPrefs();
-    });
+    },
   });
 
   applyPrefs();

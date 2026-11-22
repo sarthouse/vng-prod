@@ -19,35 +19,11 @@ export async function renderImpuestosView() {
 
     <div class="card">
       <div class="card-header">
-        <h2>Impuestos</h2>
+        <div>
+          <h2>Impuestos</h2>
+          <span class="muted text-sm">Click en una celda para editar · Completá la fila inferior para agregar un nuevo impuesto.</span>
+        </div>
       </div>
-      <form id="form-add-impuesto" class="toolbar sx-410c97">
-        <input type="text" name="nombre" required placeholder="Nombre" class="sx-59af4e" />
-        <input type="text" name="codigo" placeholder="Código" class="w-140" />
-        <select name="tipo" class="w-140">
-          <option value="iva">IVA</option>
-          <option value="percepcion">Percepción</option>
-          <option value="retencion">Retención</option>
-          <option value="otro">Otro</option>
-        </select>
-        <select name="aplica_a" class="w-140">
-          <option value="ambos">Compras y Ventas</option>
-          <option value="compras">Solo Compras</option>
-          <option value="ventas">Solo Ventas</option>
-        </select>
-        <input type="number" step="0.01" min="0" max="100" name="alicuota_defecto" placeholder="% Defecto" value="0" class="sx-1a3055" />
-        <select name="base_calculo" class="w-140">
-          <option value="neto">Sobre Neto</option>
-          <option value="total">Sobre Total</option>
-          <option value="fijo">Monto Fijo</option>
-        </select>
-        <select name="jurisdiccion_codigo" class="sx-39248f">
-          <option value="">Nacional / Sin Jur.</option>
-          ${jurisdicciones.map(j => `<option value="${esc(j.codigo)}">${esc(j.codigo)} · ${esc(j.nombre)}</option>`).join('')}
-        </select>
-        <input type="text" name="codigo_regimen" placeholder="Cód. Rég. (SICORE)" class="w-140" />
-        <button type="submit" class="btn btn-primary">+ Agregar Impuesto</button>
-      </form>
       <div id="impuestos-sheet-host"></div>
     </div>
   `;
@@ -56,8 +32,49 @@ export async function renderImpuestosView() {
     rows: impuestos,
     emptyText: 'Sin impuestos configurados.',
     compact: true,
+    defaultNewRow: () => ({
+      nombre: '',
+      codigo: '',
+      tipo: 'iva',
+      aplica_a: 'ambos',
+      jurisdiccion_codigo: '',
+      codigo_regimen: '',
+      alicuota_defecto: 0,
+      base_calculo: 'neto',
+      activo: 1,
+    }),
+    onCreateRow: async ({ row }) => {
+      if (!String(row.nombre || '').trim()) return false;
+      try {
+        const res = await api('/api/impuestos', {
+          method: 'POST',
+          body: JSON.stringify({
+            nombre: String(row.nombre).trim(),
+            codigo: row.codigo || '',
+            tipo: row.tipo || 'iva',
+            aplica_a: row.aplica_a || 'ambos',
+            alicuota_defecto: Number(row.alicuota_defecto) || 0,
+            base_calculo: row.base_calculo || 'neto',
+            jurisdiccion_codigo: row.jurisdiccion_codigo || '',
+            codigo_regimen: row.codigo_regimen || '',
+          }),
+        });
+        if (res?.id) row.id = res.id;
+        toast('Impuesto agregado');
+        return true;
+      } catch (err) {
+        toast(err.message, true);
+        throw err;
+      }
+    },
     columns: [
-      { key: 'nombre', label: 'Nombre', type: 'text', parse: (v) => String(v || '').trim() },
+      {
+        key: 'nombre',
+        label: 'Nombre',
+        type: 'text',
+        parse: (v) => String(v || '').trim(),
+        render: (imp) => imp.nombre ? esc(imp.nombre) : '<span class="muted">Nuevo impuesto...</span>',
+      },
       { key: 'codigo', label: 'Código', type: 'text', nowrap: true, render: (imp) => `<code>${esc(imp.codigo || '-')}</code>` },
       {
         key: 'tipo',
@@ -77,8 +94,8 @@ export async function renderImpuestosView() {
         type: 'select',
         options: [
           { value: 'ambos', label: 'Ambos' },
-          { value: 'venta', label: 'Ventas' },
-          { value: 'compra', label: 'Compras' },
+          { value: 'ventas', label: 'Ventas' },
+          { value: 'compras', label: 'Compras' },
         ],
       },
       {
@@ -130,42 +147,4 @@ export async function renderImpuestosView() {
       }
     },
   });
-
-  root.querySelector('#form-add-impuesto')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    try {
-      await api('/api/impuestos', {
-        method: 'POST',
-        body: JSON.stringify({
-          nombre: fd.get('nombre'),
-          codigo: fd.get('codigo'),
-          tipo: fd.get('tipo'),
-          aplica_a: fd.get('aplica_a'),
-          alicuota_defecto: Number(fd.get('alicuota_defecto')) || 0,
-          base_calculo: fd.get('base_calculo'),
-          jurisdiccion_codigo: fd.get('jurisdiccion_codigo') || '',
-          codigo_regimen: fd.get('codigo_regimen') || '',
-        }),
-      });
-      toast('Impuesto agregado');
-      await renderImpuestosView();
-    } catch (err) { toast(err.message, true); }
-  });
-
-  root.querySelectorAll('[data-toggle-imp]').forEach(btn => btn.addEventListener('click', async () => {
-    try {
-      await api(`/api/impuestos/${btn.dataset.toggleImp}`, { method: 'PUT', body: JSON.stringify({ activo: btn.dataset.activo !== '1' }) });
-      await renderImpuestosView();
-    } catch (err) { toast(err.message, true); }
-  }));
-
-  root.querySelectorAll('[data-del-imp]').forEach(btn => btn.addEventListener('click', async () => {
-    if (!(await showConfirmModal('¿Eliminar este impuesto?'))) return;
-    try {
-      await api(`/api/impuestos/${btn.dataset.delImp}`, { method: 'DELETE' });
-      toast('Impuesto eliminado');
-      await renderImpuestosView();
-    } catch (err) { toast(err.message, true); }
-  }));
 }

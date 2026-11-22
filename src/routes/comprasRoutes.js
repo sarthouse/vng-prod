@@ -1,4 +1,5 @@
 import * as compraSvc from '../services/comercial/compraService.js';
+import * as ocSvc from '../services/comercial/ordenCompraService.js';
 import * as afipSvc from '../services/afip/afipService.js';
 import { contactoRepo } from '../services/comercial/contactoService.js';
 import { json, parseBody } from './http.js';
@@ -66,6 +67,14 @@ export async function handleComprasRoutes(req, res, pathname, user) {
     } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
+  const cmpNcMatch = pathname.match(/^\/api\/compras\/(\d+)\/nota-credito$/);
+  if (cmpNcMatch && req.method === 'POST') {
+    try {
+      const ncId = compraSvc.generarNotaCreditoDesdeCompra(Number(cmpNcMatch[1]), await parseBody(req).catch(() => ({})), user);
+      json(res, 201, { id: ncId });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
   const cmpMatch = pathname.match(/^\/api\/compras\/(\d+)$/);
   if (cmpMatch && req.method === 'GET') {
     const d = compraSvc.getCompraById(Number(cmpMatch[1]));
@@ -84,6 +93,91 @@ export async function handleComprasRoutes(req, res, pathname, user) {
   if (cmpMatch && req.method === 'DELETE') {
     compraSvc.deleteCompra(Number(cmpMatch[1]));
     json(res, 200, { ok: true });
+    return true;
+  }
+
+  // ── Órdenes de Compra (OC) ──────────────────────────────────────────────────
+  if (pathname === '/api/ordenes-compra' && req.method === 'GET') {
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    json(res, 200, ocSvc.listOrdenesCompra({
+      proveedor_id: qs.get('proveedor_id') || undefined,
+      estado: qs.get('estado') || undefined,
+    }));
+    return true;
+  }
+  if (pathname === '/api/ordenes-compra' && req.method === 'POST') {
+    try { json(res, 201, { id: ocSvc.createOrdenCompra(await parseBody(req), user) }); }
+    catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const ocLineaMatch = pathname.match(/^\/api\/ordenes-compra\/lineas\/(\d+)$/);
+  if (ocLineaMatch && req.method === 'PUT') {
+    try {
+      const ok = ocSvc.updateOrdenCompraLinea(Number(ocLineaMatch[1]), await parseBody(req), user);
+      if (!ok) json(res, 404, { error: 'Línea de OC no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  if (ocLineaMatch && req.method === 'DELETE') {
+    try {
+      const ok = ocSvc.deleteOrdenCompraLinea(Number(ocLineaMatch[1]), user);
+      if (!ok) json(res, 404, { error: 'Línea de OC no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const ocAddLinMatch = pathname.match(/^\/api\/ordenes-compra\/(\d+)\/lineas$/);
+  if (ocAddLinMatch && req.method === 'POST') {
+    try { json(res, 201, { id: ocSvc.addOrdenCompraLinea(Number(ocAddLinMatch[1]), await parseBody(req), user) }); }
+    catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const ocEnvMatch = pathname.match(/^\/api\/ordenes-compra\/(\d+)\/enviar$/);
+  if (ocEnvMatch && req.method === 'POST') {
+    try {
+      const ok = ocSvc.enviarOrdenCompra(Number(ocEnvMatch[1]), user);
+      if (!ok) json(res, 404, { error: 'Orden de Compra no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const ocCanMatch = pathname.match(/^\/api\/ordenes-compra\/(\d+)\/cancelar$/);
+  if (ocCanMatch && req.method === 'POST') {
+    try {
+      const ok = ocSvc.cancelarOrdenCompra(Number(ocCanMatch[1]), user);
+      if (!ok) json(res, 404, { error: 'Orden de Compra no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const ocConvMatch = pathname.match(/^\/api\/ordenes-compra\/(\d+)\/convertir-compra$/);
+  if (ocConvMatch && req.method === 'POST') {
+    try { json(res, 201, ocSvc.convertirOrdenCompraACompra(Number(ocConvMatch[1]), await parseBody(req).catch(() => ({})), user)); }
+    catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  const ocMatch = pathname.match(/^\/api\/ordenes-compra\/(\d+)$/);
+  if (ocMatch && req.method === 'GET') {
+    const det = ocSvc.getOrdenCompraById(Number(ocMatch[1]));
+    if (!det) json(res, 404, { error: 'Orden de Compra no encontrada' });
+    else json(res, 200, det);
+    return true;
+  }
+  if (ocMatch && req.method === 'PUT') {
+    try {
+      const ok = ocSvc.updateOrdenCompra(Number(ocMatch[1]), await parseBody(req), user);
+      if (!ok) json(res, 404, { error: 'Orden de Compra no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
+    return true;
+  }
+  if (ocMatch && req.method === 'DELETE') {
+    try {
+      const ok = ocSvc.deleteOrdenCompra(Number(ocMatch[1]));
+      if (!ok) json(res, 404, { error: 'Orden de Compra no encontrada' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: e.message }); }
     return true;
   }
   return false;

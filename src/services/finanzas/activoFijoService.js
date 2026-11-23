@@ -27,21 +27,12 @@ function ensureCuenta(codigo, def) {
 }
 
 function getDefaultCuentasActivo() {
-  const ctaActivo = ensureCuenta('1.2.01', {
-    nombre: 'Bienes de Uso (Maquinaria y Equipos)',
-    tipo: 'activo',
-    naturaleza: 'deudora',
-  });
-  const ctaAmortAcum = ensureCuenta('1.2.02', {
-    nombre: 'Amortizaciones Acumuladas Bienes de Uso',
-    tipo: 'activo',
-    naturaleza: 'acreedora',
-  });
-  const ctaGasto = ensureCuenta('5.2.09', {
-    nombre: 'Amortizaciones del Ejercicio',
-    tipo: 'egreso',
-    naturaleza: 'deudora',
-  });
+  const ctaActivo = defaultAsientoService.resolveDefaultCuenta('cta_bienes_uso_id', '1.2.01')
+    || ensureCuenta('1.2.01', { nombre: 'Bienes de Uso (Maquinaria y Equipos)', tipo: 'activo', naturaleza: 'deudora' });
+  const ctaAmortAcum = defaultAsientoService.resolveDefaultCuenta('cta_amort_acum_id', '1.2.02')
+    || ensureCuenta('1.2.02', { nombre: 'Amortizaciones Acumuladas Bienes de Uso', tipo: 'activo', naturaleza: 'acreedora' });
+  const ctaGasto = defaultAsientoService.resolveDefaultCuenta('cta_amort_gasto_id', '5.2.09')
+    || ensureCuenta('5.2.09', { nombre: 'Amortizaciones del Ejercicio', tipo: 'egreso', naturaleza: 'deudora' });
   return { ctaActivo, ctaAmortAcum, ctaGasto };
 }
 

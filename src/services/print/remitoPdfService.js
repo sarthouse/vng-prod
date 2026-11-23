@@ -1,15 +1,11 @@
 import { PdfDocument, PAGE_SIZES_MM, fmtDateAr, fmtNumAr, wrapTextMm } from './pdfBuilder.js';
-import { stampUnifiedFooter } from './printLayout.js';
-import { BaseRepository } from '../../core/BaseRepository.js';
-import { MODELS } from '../../db/models.js';
-
-const puntoVentaRepo = new BaseRepository({ model: MODELS.puntos_venta });
-
-const COPY_LABELS = {
-  original: ['ORIGINAL'],
-  duplicado: ['ORIGINAL', 'DUPLICADO'],
-  triplicado: ['ORIGINAL', 'DUPLICADO', 'TRIPLICADO'],
-};
+import {
+  stampUnifiedFooter,
+  resolveCopyLabels,
+  resolvePrintFormat,
+  drawFiscalSheetHeader,
+  drawTicketHeader,
+} from './printLayout.js';
 
 export function resolveRemitoLetter(cai) {
   return String(cai || '').trim() ? 'R' : 'X';
@@ -47,80 +43,27 @@ function renderRemitoSheetPage(doc, data, emp, copyLabel, fmt) {
   // Marco exterior de hoja completa (border-box)
   doc.rect(m, yTop, w, yBottom - yTop, { stroke: borderCol, lineWidth: 0.85 });
 
-  // ── 0. FRANJA SUPERIOR DE COPIA (ESTILO AFIP) ──────────────────────────────
-  const topBarH = isA5 ? 5.5 : 6.5;
-  doc.rect(m, yTop, w, topBarH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
-  doc.text(copyLabel, midX, yTop + (isA5 ? 1.3 : 1.6), {
-    size: isA5 ? 7.5 : 8.5,
-    bold: true,
-    align: 'center',
-  });
-
-  // ── 1. ENCABEZADO (2 COLUMNAS + RECUADRO CENTRAL DE LETRA) ─────────────────
-  const headerTop = yTop + topBarH;
-  const headerH = isA5 ? 36 : 41;
-  const letterW = isA5 ? 15 : 17;
-  const letterH = isA5 ? 14 : 16;
-  const letterX = midX - letterW / 2;
   const letter = resolveRemitoLetter(data.cai);
   const codLetra = resolveRemitoCodigo(letter);
-
-  doc.line(m, headerTop + headerH, m + w, headerTop + headerH, { color: borderCol, lineWidth: 0.8 });
-  doc.line(midX, headerTop + letterH + 5.5, midX, headerTop + headerH, { color: borderCol, lineWidth: 0.6 });
-
-  // Recuadro central de la letra (X - COD. 099 / R - COD. 91)
-  doc.rect(letterX, headerTop, letterW, letterH, { stroke: borderCol, fill: '#FFFFFF', lineWidth: 0.9 });
-  doc.text(letter, midX, headerTop + (isA5 ? 1.8 : 2.2), { size: isA5 ? 16 : 20, bold: true, align: 'center' });
-  doc.text(codLetra, midX, headerTop + letterH - (isA5 ? 3.8 : 4.3), { size: isA5 ? 5.8 : 6.5, bold: true, align: 'center' });
-  doc.text('NO VÁLIDO FACTURA', midX, headerTop + letterH + 1.2, { size: 5.3, bold: true, align: 'center', color: mutedCol });
-
-  // Columna Izquierda: Emisor
-  const emisorBrand = emp.nombre_fantasia || emp.razon_social || 'Vanguard Production';
-  const razonSocial = emp.razon_social || '';
-  const leftMaxW = letterX - m - 4;
-  let ly = headerTop + 2.5;
-  ly = doc.textBlock(emisorBrand, m + 3, ly, leftMaxW, { size: isA5 ? 10.5 : 12.5, bold: true, lineHeight: 1.15 });
-  if (razonSocial && emisorBrand !== razonSocial) {
-    ly = doc.textBlock(`Razón Social: ${razonSocial}`, m + 3, ly + 0.5, leftMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.18 });
-  }
-  if (emp.cuit) {
-    ly = doc.textBlock(`CUIT: ${emp.cuit}${emp.condicion_iva ? ` (${emp.condicion_iva})` : ''}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.18 });
-  }
-  const dirComercial = [
-    emp.direccion,
-    emp.localidad,
-    emp.provincia,
-    emp.codigo_postal ? `(CP ${emp.codigo_postal})` : '',
-  ].filter(Boolean).join(', ');
-  if (dirComercial) {
-    ly = doc.textBlock(`Domicilio Comercial: ${dirComercial}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.7, color: mutedCol, lineHeight: 1.18 });
-  }
-  const telEmailEmp = [emp.telefono ? `Teléfono: ${emp.telefono}` : '', emp.email].filter(Boolean).join(' · ');
-  if (telEmailEmp) {
-    ly = doc.textBlock(telEmailEmp, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.7, color: mutedCol, lineHeight: 1.18 });
-  }
-
-  // Columna Derecha: Datos del Remito (sin fondo negro, Pto Vta y Nro separados)
-  const rightX = letterX + letterW + 4;
-  const rightMaxW = (m + w) - rightX - 3;
   const { ptoVta, cbteNro } = splitComprobanteNumero(data.numero);
-  let ry = headerTop + 3;
-  doc.text((data.tipoDoc || 'REMITO').toUpperCase(), rightX, ry, { size: isA5 ? 10.5 : 12.5, bold: true, color: borderCol });
-  ry += isA5 ? 5.2 : 6.2;
-  ry = doc.textBlock(`Punto de Venta: ${ptoVta}    Remito Nro: ${cbteNro}`, rightX, ry, rightMaxW, { size: baseSz, bold: true, lineHeight: 1.2 });
-  ry = doc.textBlock(`Fecha de Emisión: ${fmtDateAr(data.fecha) || '-'}`, rightX, ry + 0.5, rightMaxW, { size: baseSz, lineHeight: 1.2 });
-  if (emp.iibb) {
-    ry = doc.textBlock(`Ingresos Brutos: ${emp.iibb}`, rightX, ry + 0.5, rightMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.2 });
-  }
-  if (emp.inicio_actividades) {
-    ry = doc.textBlock(`Inicio de Actividades: ${fmtDateAr(emp.inicio_actividades)}`, rightX, ry + 0.5, rightMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.2 });
-  }
-  if (data.cai) {
-    doc.textBlock(`CAI: ${data.cai}${data.caiVto ? ` · Vto: ${fmtDateAr(data.caiVto)}` : ''}`, rightX, ry + 0.5, rightMaxW, { size: baseSz - 0.7, bold: true, color: mutedCol, lineHeight: 1.2 });
-  }
+  const { topBarH, curY: headerEndY } = drawFiscalSheetHeader(doc, {
+    m, w, yTop, isA5, copyLabel,
+    letra: letter,
+    codAfip: codLetra,
+    subLetra: 'NO VÁLIDO FACTURA',
+    titulo: (data.tipoDoc || 'REMITO').toUpperCase(),
+    ptoVta,
+    cbteNro,
+    nroLabel: 'Remito Nro',
+    fecha: data.fecha,
+    extraRightLines: [
+      data.cai ? `CAI: ${data.cai}${data.caiVto ? ` · Vto: ${fmtDateAr(data.caiVto)}` : ''}` : '',
+    ],
+    emp,
+  });
 
   // ── 2. DATOS DE DESTINATARIO Y ENVÍO (2 COLUMNAS) ──────────────────────────
-  let curY = headerTop + headerH;
+  let curY = headerEndY;
   const leftClientRows = [
     data.contraparteNombre ? `${data.contraparteLabel || 'Razón Social / Destinatario'}: ${data.contraparteNombre}` : '',
     data.contraparteCuit ? `DNI / CUIT: ${data.contraparteCuit}${data.contraparteIva ? ` (${data.contraparteIva})` : ''}` : '',
@@ -317,24 +260,24 @@ function renderRemitoTicketPage(doc, data, emp, copyLabel, fmt) {
   const hMm = Math.max(115, 76 + lineas.length * 9 + (data.contraparteNombre ? 18 : 0) + (data.nota ? 10 : 0));
   doc.addPage(wMm, hMm);
 
-  let y = m + 2;
-  const sz = is58 ? 7 : 8;
-  const empNombre = emp.nombre_fantasia || emp.razon_social || 'Vanguard Production';
-  y = doc.textBlock(copyLabel, m, y, cw, { size: sz, bold: true, align: 'center', lineHeight: 1.2 });
-  y = doc.textBlock(empNombre, m, y, cw, { size: sz + 1.5, bold: true, align: 'center', lineHeight: 1.2 });
-  if (emp.cuit) y = doc.textBlock(`CUIT: ${emp.cuit}`, m, y, cw, { size: sz - 0.5, align: 'center', lineHeight: 1.2 });
-  y += 1.5;
-  doc.line(m, y, m + cw, y, { dashed: true, lineWidth: 0.5 });
-  y += 2;
-
-  y = doc.textBlock(`${(data.tipoDoc || 'REMITO').toUpperCase()} [${letter} - ${resolveRemitoCodigo(letter)}]`, m, y, cw, { size: sz, bold: true, align: 'center', lineHeight: 1.2 });
-  y = doc.textBlock(`PV ${ptoVta} N° ${cbteNro} · ${fmtDateAr(data.fecha) || '-'}`, m, y, cw, { size: sz, align: 'center', lineHeight: 1.2 });
+  const { y: hdrY, sz } = drawTicketHeader(doc, {
+    wMm, m, copyLabel,
+    titulo: (data.tipoDoc || 'REMITO').toUpperCase(),
+    letra: letter,
+    codAfip: resolveRemitoCodigo(letter),
+    ptoVta,
+    cbteNro,
+    nroLabel: 'Remito Nro',
+    fecha: data.fecha,
+    emp,
+  });
+  let y = hdrY;
   if (data.cai) {
-    y = doc.textBlock(`CAI: ${data.cai}${data.caiVto ? ` (Vto ${fmtDateAr(data.caiVto)})` : ''}`, m, y, cw, { size: sz - 1, align: 'center', lineHeight: 1.2 });
+    y = doc.textBlock(`CAI: ${data.cai}${data.caiVto ? ` (Vto ${fmtDateAr(data.caiVto)})` : ''}`, m, y, cw, { size: sz - 0.8, align: 'center', lineHeight: 1.2 });
+    y += 1.5;
+    doc.line(m, y, m + cw, y, { dashed: true, lineWidth: 0.4 });
+    y += 2;
   }
-  y += 1.5;
-  doc.line(m, y, m + cw, y, { dashed: true, lineWidth: 0.5 });
-  y += 2;
 
   if (data.contraparteNombre) {
     y = doc.textBlock(`${data.contraparteLabel || 'Cliente'}: ${data.contraparteNombre}`, m, y, cw, { size: sz, bold: true, lineHeight: 1.2 });
@@ -371,26 +314,10 @@ function renderRemitoTicketPage(doc, data, emp, copyLabel, fmt) {
 }
 
 export function generateRemitoPdf(data = {}, emp = {}) {
-  let enrichedData = data;
-  if (!data?.cai) {
-    try {
-      const { ptoVta } = splitComprobanteNumero(data?.numero);
-      const pvNum = parseInt(String(ptoVta || '').replace(/\D/g, ''), 10);
-      const pv = (pvNum ? puntoVentaRepo.where('numero', pvNum).first() : null)
-        || puntoVentaRepo.where('es_default', 1).first();
-      if (pv?.cai) {
-        enrichedData = { ...data, cai: pv.cai, caiVto: data.caiVto || pv.cai_vto || '' };
-      }
-    } catch { /* sin conexión DB activa en tests puros */ }
-  }
+  const enrichedData = data || {};
 
-  const fmt = ['A4', 'A5', 'ticket80', 'ticket58'].includes(enrichedData.formato || emp.print_formato)
-    ? (enrichedData.formato || emp.print_formato)
-    : 'A4';
-  const copiasMode = ['original', 'duplicado', 'triplicado'].includes(enrichedData.copias || emp.print_copias)
-    ? (enrichedData.copias || emp.print_copias)
-    : 'original';
-  const labels = COPY_LABELS[copiasMode] || ['ORIGINAL'];
+  const fmt = resolvePrintFormat(enrichedData.formato, emp.print_formato, ['A4', 'A5', 'ticket80', 'ticket58']);
+  const labels = resolveCopyLabels(enrichedData.copias, emp.print_copias);
 
   const doc = new PdfDocument();
   const isTicket = fmt === 'ticket80' || fmt === 'ticket58';

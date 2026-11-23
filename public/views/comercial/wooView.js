@@ -32,13 +32,13 @@ export async function renderWooView() {
     api('/api/woo/metodos-envio').catch(() => []),
     api('/api/woo/metodos-pago').catch(() => []),
     api('/api/woo/logs').catch(() => []),
-    api('/api/inventario/ubicaciones').catch(() => []),
+    api('/api/ubicaciones').catch(() => []),
     api('/api/listas-precios').catch(() => []),
-    api('/api/contabilidad/diarios').catch(() => []),
+    api('/api/tesoreria/diarios').catch(() => []),
     api('/api/terminos-pago').catch(() => []),
     api('/api/productos').catch(() => []),
     api('/api/metodos-pago').catch(() => []),
-    api('/api/contabilidad/plan-cuentas').catch(() => []),
+    api('/api/tesoreria/cuentas').catch(() => []),
   ]);
 
   const prodOptions = [{ value: '', label: '— Sin mapear —' }].concat(
@@ -48,7 +48,7 @@ export async function renderWooView() {
     (localMetodosPago || []).map(m => ({ value: String(m.id), label: m.nombre }))
   );
   const cuentaOptions = [{ value: '', label: '— Sin mapear —' }].concat(
-    (cuentas || []).filter(c => Number(c.imputable)).map(c => ({ value: String(c.id), label: `${c.codigo} · ${c.nombre}` }))
+    (cuentas || []).map(c => ({ value: String(c.id), label: `${c.nombre}${c.tipo ? ' (' + c.tipo + ')' : ''}` }))
   );
 
   const pedidosHtml = `
@@ -58,7 +58,7 @@ export async function renderWooView() {
           <h2>Pedidos WooCommerce</h2>
           <span class="muted text-sm">Espejo de pedidos recibidos por polling saliente e importación manual, vinculados a Ventas y Cobros.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-secondary" id="woo-btn-polling">Ejecutar Polling Ahora</button>
           <button type="button" class="btn btn-primary" id="woo-btn-sync-pedidos">Sincronizar Pedidos</button>
         </div>
@@ -74,7 +74,7 @@ export async function renderWooView() {
           <h2>Catálogo WooCommerce</h2>
           <span class="muted text-sm">Productos simples, variables y variaciones mapeados por woo_id y SKU.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-secondary" id="woo-btn-sync-stock">Sincronizar Stock → Woo</button>
           <button type="button" class="btn btn-secondary" id="woo-btn-sync-precios">Sincronizar Precios → Woo</button>
           <button type="button" class="btn btn-primary" id="woo-btn-import-productos">Importar Productos</button>
@@ -91,7 +91,7 @@ export async function renderWooView() {
           <h2>Clientes WooCommerce</h2>
           <span class="muted text-sm">Resolución idempotente por woo_id, DNI/CUIT (meta_key_dni) y email, con provincia mapeada a jurisdicciones.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-primary" id="woo-btn-import-clientes">Importar Clientes</button>
         </div>
       </div>
@@ -106,7 +106,7 @@ export async function renderWooView() {
           <h2>Cupones WooCommerce</h2>
           <span class="muted text-sm">Cupones sincronizados desde la tienda.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-primary" id="woo-btn-import-cupones">Importar Cupones</button>
         </div>
       </div>
@@ -130,7 +130,7 @@ export async function renderWooView() {
           <h2>Métodos de Envío</h2>
           <span class="muted text-sm">Mapeá cada método de envío de WooCommerce a un producto/servicio del ERP.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-secondary" id="woo-btn-import-envios">Importar Envíos</button>
         </div>
       </div>
@@ -142,7 +142,7 @@ export async function renderWooView() {
           <h2>Pasarelas de Pago</h2>
           <span class="muted text-sm">Mapeá cada gateway de WooCommerce a un método de pago y cuenta contable para cobros automáticos.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-secondary" id="woo-btn-import-pagos">Importar Pasarelas</button>
         </div>
       </div>
@@ -169,7 +169,7 @@ export async function renderWooView() {
           <h2>Configuración WooCommerce (Cero Exposición)</h2>
           <span class="muted text-sm">Comunicación 100% saliente HTTPS hacia la API REST v3 de WooCommerce mediante Polling Incremental.</span>
         </div>
-        <div class="toolbar-actions">
+        <div class="actions">
           <button type="button" class="btn btn-secondary" id="woo-btn-test">Probar Conexión</button>
         </div>
       </div>
@@ -265,13 +265,13 @@ export async function renderWooView() {
             key: 'venta_id',
             label: 'Venta ERP',
             width: 120,
-            render: r => r.venta_id ? `<a href="#/ventas/${r.venta_id}">${esc(r.venta_numero || ('#' + r.venta_id))}</a>` : '—',
+            render: r => r.venta_id ? `<a href="/ventas/${r.venta_id}" data-link class="link-primary">${esc(r.venta_numero || ('#' + r.venta_id))}</a>` : '—',
           },
           {
             key: 'cobro_id',
             label: 'Cobro ERP',
             width: 120,
-            render: r => r.cobro_id ? `<a href="#/tesoreria">${esc(r.cobro_numero || ('#' + r.cobro_id))}</a>` : '—',
+            render: r => r.cobro_id ? `<a href="/tesoreria" data-link class="link-primary">${esc(r.cobro_numero || ('#' + r.cobro_id))}</a>` : '—',
           },
         ],
       });

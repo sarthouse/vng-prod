@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
-import { initDb, runWithDatabase, closeConnection } from '../src/db.js';
+import { initDb, runWithDatabase, closeConnection, getDbPath } from '../src/db.js';
 import * as activoSvc from '../src/services/finanzas/activoFijoService.js';
 import { getAsientoById } from '../src/services/finanzas/asientoService.js';
 
@@ -12,6 +13,9 @@ function withIsolatedDb(fn) {
     return runWithDatabase(dbName, () => fn());
   } finally {
     closeConnection(dbName);
+    for (const ext of ['', '-shm', '-wal']) {
+      fs.rmSync(`${getDbPath(dbName)}${ext}`, { force: true });
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 import { hasActiveDatabase } from '../db.js';
 import * as authSvc from '../services/auth/authService.js';
 import { json, parseBody } from './http.js';
-import { getConfig } from '../services/config/configService.js';
+import { getConfig, resolveRemitoCaiPayload } from '../services/config/configService.js';
 import { generateRemitoPdf } from '../services/print/remitoPdfService.js';
 import { generateVentaPdf } from '../services/print/ventaPdfService.js';
 import { generatePresupuestoPdf } from '../services/print/presupuestoPdfService.js';
@@ -20,6 +20,7 @@ import { handleVentasRoutes } from './ventasRoutes.js';
 import { handleTesoreriaRoutes } from './tesoreriaRoutes.js';
 import { handleContactosRoutes } from './contactosRoutes.js';
 import { handleFiscalRoutes } from './fiscalRoutes.js';
+import { handleNominaRoutes } from './nominaRoutes.js';
 import { handleTareaRoutes } from './tareaRoutes.js';
 import { handleWooRoutes } from './wooRoutes.js';
 
@@ -55,7 +56,7 @@ export async function handleApi(req, res, pathname) {
   const hasAny = (perms) => perms.some(p => authSvc.hasPermission(user, p));
   const isWrite = req.method !== 'GET';
   if ((pathname.startsWith('/api/permisos') || pathname.startsWith('/api/grupos') || pathname.startsWith('/api/usuarios')) && deny('sistema.usuarios')) return;
-  if (isWrite && (pathname.startsWith('/api/categorias') || pathname.startsWith('/api/unidades') || pathname.startsWith('/api/variantes') || pathname.startsWith('/api/puntos-venta') || pathname.startsWith('/api/empresa') || pathname.startsWith('/api/etapas') || pathname.startsWith('/api/importar') || pathname.startsWith('/api/impuestos') || pathname.startsWith('/api/afip')) && deny('sistema.config')) return;
+  if (isWrite && (pathname.startsWith('/api/categorias') || pathname.startsWith('/api/unidades') || pathname.startsWith('/api/variantes') || pathname.startsWith('/api/puntos-venta') || pathname.startsWith('/api/empresa') || pathname.startsWith('/api/etapas') || pathname.startsWith('/api/importar') || pathname.startsWith('/api/impuestos') || pathname.startsWith('/api/afip') || pathname.startsWith('/api/custom-fields')) && deny('sistema.config')) return;
   if (pathname === '/api/afip/csr/download' && deny('sistema.config')) return;
   if (pathname.startsWith('/api/contactos')) {
     if (isWrite) {
@@ -93,6 +94,11 @@ export async function handleApi(req, res, pathname) {
       ? ['comercial.editar', 'ventas.editar', 'compras.editar', 'configuracion.editar']
       : ['comercial.ver', 'ventas.ver', 'compras.ver', 'inventario.ver', 'configuracion.ver'])) {
       if (deny(isWrite ? 'comercial.editar' : 'comercial.ver')) return;
+    }
+  }
+  if (pathname.startsWith('/api/nomina')) {
+    if (!hasAny(isWrite ? ['rrhh.editar', 'contabilidad.editar'] : ['rrhh.ver', 'contabilidad.ver'])) {
+      if (deny(isWrite ? 'rrhh.editar' : 'rrhh.ver')) return;
     }
   }
   if (pathname.startsWith('/api/contabilidad/')) {
@@ -163,7 +169,7 @@ export async function handleApi(req, res, pathname) {
   };
 
   if (pathname === '/api/print/remito-pdf' && req.method === 'POST') {
-    await handlePdfPrint(generateRemitoPdf, b => `Remito_${b.numero || 'remito'}.pdf`);
+    await handlePdfPrint((b, emp) => generateRemitoPdf(resolveRemitoCaiPayload(b), emp), b => `Remito_${b.numero || 'remito'}.pdf`);
     return;
   }
   if (pathname === '/api/print/venta-pdf' && req.method === 'POST') {
@@ -201,6 +207,7 @@ export async function handleApi(req, res, pathname) {
   if (await handleTesoreriaRoutes(req, res, pathname, user)) return;
   if (await handleContactosRoutes(req, res, pathname)) return;
   if (await handleFiscalRoutes(req, res, pathname)) return;
+  if (await handleNominaRoutes(req, res, pathname, user)) return;
   if (await handleTareaRoutes(req, res, pathname, user)) return;
   if (await handleWooRoutes(req, res, pathname, user)) return;
 

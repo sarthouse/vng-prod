@@ -120,6 +120,14 @@ test('Flujo completo de login, cookie firmada calc_sid, acceso autorizado y logo
     assert.equal(ventasRes.statusCode, 200);
     assert.ok(Array.isArray(ventasRes.jsonBody));
 
+    const wooCfgRes = await callApi({
+      method: 'GET',
+      path: '/api/woo/config',
+      headers: { cookie },
+    });
+    assert.equal(wooCfgRes.statusCode, 200);
+    assert.equal(typeof wooCfgRes.jsonBody?.meta_key_dni, 'string');
+
     const logoutRes = await callApi({
       method: 'POST',
       path: '/api/auth/logout',

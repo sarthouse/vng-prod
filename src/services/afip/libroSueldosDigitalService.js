@@ -1,6 +1,6 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { MODELS } from '../../db/models.js';
-import { getLiquidacionById, listConceptos } from '../finanzas/nominaService.js';
+import { getLiquidacionById, listConceptos } from '../rrhh/nominaService.js';
 
 const empresaRepo = new BaseRepository({ model: MODELS.empresa_config });
 

@@ -2,6 +2,11 @@
   "name": "vng-prod",
   "version": "0.1.0",
   "description": "Vanguard Production (vng-prod) — Gestión de producción, inventario, compras, ventas y tesorería",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sarthouse/vng-prod.git"
+  },
   "type": "module",
   "scripts": {
     "start": "node server.js",

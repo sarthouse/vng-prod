@@ -2,17 +2,14 @@ import { PdfDocument, PAGE_SIZES_MM, fmtDateAr, fmtNumAr, wrapTextMm } from './p
 import { splitComprobanteNumero } from './remitoPdfService.js';
 import { isFacturaAMonotributo } from '../afip/fiscalRules.js';
 import { encodeQrMatrix } from './qrEncoder.js';
-import { stampUnifiedFooter } from './printLayout.js';
-
-const COPY_LABELS = {
-  original: ['ORIGINAL'],
-  duplicado: ['ORIGINAL', 'DUPLICADO'],
-  triplicado: ['ORIGINAL', 'DUPLICADO', 'TRIPLICADO'],
-};
-
-function fmtMoneyAr(n) {
-  return '$' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+import {
+  fmtMoneyAr,
+  stampUnifiedFooter,
+  resolveCopyLabels,
+  resolvePrintFormat,
+  drawFiscalSheetHeader,
+  drawTicketHeader,
+} from './printLayout.js';
 
 function resolveLetraAndTitulo(venta = {}) {
   const caracter = venta.caracter || 'fiscal';
@@ -67,67 +64,20 @@ function renderVentaSheetPage(doc, { venta = {}, lineas = [] }, emp, copyLabel, 
   // Marco exterior de hoja completa
   doc.rect(m, yTop, w, yBottom - yTop, { stroke: borderCol, lineWidth: 0.85 });
 
-  // ── 0. FRANJA SUPERIOR DE COPIA ────────────────────────────────────────────
-  const topBarH = isA5 ? 5.5 : 6.5;
-  doc.rect(m, yTop, w, topBarH, { stroke: borderCol, fill: fillHeader, lineWidth: 0.6 });
-  doc.text(copyLabel, midX, yTop + (isA5 ? 1.3 : 1.6), { size: isA5 ? 7.5 : 8.5, bold: true, align: 'center' });
-
-  // ── 1. ENCABEZADO ──────────────────────────────────────────────────────────
-  const headerTop = yTop + topBarH;
-  const headerH = isA5 ? 36 : 41;
-  const letterW = isA5 ? 15 : 17;
-  const letterH = isA5 ? 14 : 16;
-  const letterX = midX - letterW / 2;
-
-  doc.line(m, headerTop + headerH, m + w, headerTop + headerH, { color: borderCol, lineWidth: 0.8 });
-  doc.line(midX, headerTop + letterH + 5.5, midX, headerTop + headerH, { color: borderCol, lineWidth: 0.6 });
-
-  doc.rect(letterX, headerTop, letterW, letterH, { stroke: borderCol, fill: '#FFFFFF', lineWidth: 0.9 });
-  doc.text(letra, midX, headerTop + (isA5 ? 1.8 : 2.2), { size: isA5 ? 16 : 20, bold: true, align: 'center' });
-  doc.text(codAfip, midX, headerTop + letterH - (isA5 ? 3.8 : 4.3), { size: isA5 ? 5.8 : 6.5, bold: true, align: 'center' });
-  doc.text(subLetra, midX, headerTop + letterH + 1.2, { size: 5.2, bold: true, align: 'center', color: mutedCol });
-
-  // Columna Izquierda: Emisor
-  const emisorBrand = emp.nombre_fantasia || emp.razon_social || 'Vanguard Production';
-  const razonSocial = emp.razon_social || '';
-  const leftMaxW = letterX - m - 4;
-  let ly = headerTop + 2.5;
-  ly = doc.textBlock(emisorBrand, m + 3, ly, leftMaxW, { size: isA5 ? 10.5 : 12.5, bold: true, lineHeight: 1.15 });
-  if (razonSocial && emisorBrand !== razonSocial) {
-    ly = doc.textBlock(`Razón Social: ${razonSocial}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.18 });
-  }
-  const dirComercial = [emp.direccion, emp.localidad, emp.provincia, emp.codigo_postal ? `(CP ${emp.codigo_postal})` : ''].filter(Boolean).join(', ');
-  if (dirComercial) {
-    ly = doc.textBlock(`Domicilio Comercial: ${dirComercial}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.7, color: mutedCol, lineHeight: 1.18 });
-  }
-  if (emp.condicion_iva) {
-    ly = doc.textBlock(`Condición frente al IVA: ${emp.condicion_iva}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.6, color: mutedCol, lineHeight: 1.18 });
-  }
-  const telEmailEmp = [emp.telefono ? `Teléfono: ${emp.telefono}` : '', emp.email].filter(Boolean).join(' · ');
-  if (telEmailEmp) {
-    doc.textBlock(telEmailEmp, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.7, color: mutedCol, lineHeight: 1.18 });
-  }
-
-  // Columna Derecha: Datos del Comprobante (incluye CUIT, IIBB, Inicio Act.)
-  const rightX = letterX + letterW + 4;
-  const rightMaxW = (m + w) - rightX - 3;
-  let ry = headerTop + 3;
-  doc.text(titulo, rightX, ry, { size: isA5 ? 10 : 12, bold: true, color: borderCol });
-  ry += isA5 ? 5.2 : 6.2;
-  ry = doc.textBlock(`Punto de Venta: ${ptoVta}    Comp. Nro: ${cbteNro}`, rightX, ry, rightMaxW, { size: baseSz, bold: true, lineHeight: 1.2 });
-  ry = doc.textBlock(`Fecha de Emisión: ${fmtDateAr(venta.fecha) || '-'}`, rightX, ry + 0.4, rightMaxW, { size: baseSz, lineHeight: 1.2 });
-  if (emp.cuit) {
-    ry = doc.textBlock(`CUIT: ${emp.cuit}`, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.2 });
-  }
-  if (emp.iibb) {
-    ry = doc.textBlock(`Ingresos Brutos: ${emp.iibb}`, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.2 });
-  }
-  if (emp.inicio_actividades) {
-    doc.textBlock(`Inicio de Actividades: ${fmtDateAr(emp.inicio_actividades)}`, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: mutedCol, lineHeight: 1.2 });
-  }
+  const { topBarH, curY: headerEndY } = drawFiscalSheetHeader(doc, {
+    m, w, yTop, isA5, copyLabel,
+    letra,
+    codAfip,
+    subLetra,
+    titulo,
+    ptoVta,
+    cbteNro,
+    fecha: venta.fecha,
+    emp,
+  });
 
   // ── 2. DATOS DEL CLIENTE (2 COLUMNAS) ──────────────────────────────────────
-  let curY = headerTop + headerH;
+  let curY = headerEndY;
   const cliNombre = venta.cliente_razon_social || venta.cliente_nombre || '-';
   const leftClientRows = [
     `Razón Social / Cliente: ${cliNombre}`,
@@ -381,20 +331,135 @@ function renderVentaSheetPage(doc, { venta = {}, lineas = [] }, emp, copyLabel, 
   }
 }
 
+function renderVentaTicketPage(doc, { venta = {}, lineas = [] }, emp, copyLabel, fmt) {
+  const is58 = fmt === 'ticket58';
+  const wMm = is58 ? 58 : 80;
+  const m = is58 ? 2.5 : 3;
+  const cw = wMm - m * 2;
+  const { letra, codAfip, titulo, discriminaIva } = resolveLetraAndTitulo(venta);
+  const numero = venta.numero || `#${venta.id || ''}`;
+  const { ptoVta, cbteNro } = splitComprobanteNumero(numero);
+  const esRg5003 = isFacturaAMonotributo(emp.condicion_iva, venta.cliente_condicion_iva, letra);
+  const pie = String(emp.print_pie_comprobante || '').trim();
+  const hMm = Math.max(135, 95 + lineas.length * 9 + (venta.cae ? 28 : 0) + (esRg5003 ? 12 : 0) + (pie ? 10 : 0));
+  doc.addPage(wMm, hMm);
+
+  const { y: hdrY, sz } = drawTicketHeader(doc, {
+    wMm, m, copyLabel, titulo, letra, codAfip, ptoVta, cbteNro, fecha: venta.fecha, emp,
+  });
+  let y = hdrY;
+
+  const cliNombre = venta.cliente_razon_social || venta.cliente_nombre || 'Consumidor Final';
+  y = doc.textBlock(`Cliente: ${cliNombre}`, m, y, cw, { size: sz, bold: true, lineHeight: 1.2 });
+  if (venta.cliente_cuit) y = doc.textBlock(`${venta.cliente_tipo_documento || 'CUIT'}: ${venta.cliente_cuit}`, m, y, cw, { size: sz - 0.5, lineHeight: 1.2 });
+  y = doc.textBlock(`IVA: ${venta.cliente_condicion_iva || 'Consumidor Final'}`, m, y, cw, { size: sz - 0.5, lineHeight: 1.2 });
+  y += 1.2;
+  doc.line(m, y, m + cw, y, { dashed: true, lineWidth: 0.4 });
+  y += 2;
+
+  let netoCalc = 0;
+  let ivaCalc = 0;
+  for (const l of lineas) {
+    const desc = l.descripcion || l.producto_nombre || '-';
+    const cant = Number(l.cantidad || 0);
+    const pu = Number(l.precio_unitario || 0);
+    const alic = Number(l.alicuota_iva ?? 21);
+    const sub = Number(l.subtotal || cant * pu);
+    netoCalc += sub;
+    ivaCalc += sub * (alic / 100);
+
+    y = doc.textBlock(desc, m, y, cw, { size: sz - 0.2, bold: true, lineHeight: 1.15 });
+    doc.text(`${fmtNumAr(cant)} x ${fmtMoneyAr(pu)}`, m, y, { size: sz - 0.6, color: '#475569' });
+    doc.text(fmtMoneyAr(sub), m + cw, y, { size: sz - 0.3, bold: true, align: 'right' });
+    y += 3.6;
+  }
+
+  const netoFinal = Number(venta.neto ?? netoCalc);
+  const ivaFinal = discriminaIva ? Number(venta.iva ?? ivaCalc) : 0;
+  const totalFinal = Number(venta.total || (netoFinal + ivaFinal));
+
+  y += 0.8;
+  doc.line(m, y, m + cw, y, { dashed: true, lineWidth: 0.4 });
+  y += 2;
+
+  if (discriminaIva) {
+    doc.text('Neto Gravado:', m, y, { size: sz - 0.3 });
+    doc.text(fmtMoneyAr(netoFinal), m + cw, y, { size: sz - 0.3, align: 'right' });
+    y += 3.4;
+    doc.text('IVA:', m, y, { size: sz - 0.3 });
+    doc.text(fmtMoneyAr(ivaFinal), m + cw, y, { size: sz - 0.3, align: 'right' });
+    y += 3.6;
+  }
+  doc.text('TOTAL:', m, y, { size: sz + 1.2, bold: true });
+  doc.text(fmtMoneyAr(totalFinal), m + cw, y, { size: sz + 1.2, bold: true, align: 'right' });
+  y += 4.5;
+
+  if (esRg5003) {
+    y = doc.textBlock(
+      'El crédito fiscal discriminado en el presente comprobante, sólo podrá ser computado a efectos del Régimen de Sostenimiento e Inclusión Fiscal para Pequeños Contribuyentes de la Ley N° 27.618.',
+      m, y, cw, { size: sz - 1.5, color: '#475569', lineHeight: 1.15 },
+    );
+    y += 1.5;
+  }
+
+  if (venta.cae) {
+    doc.line(m, y, m + cw, y, { dashed: true, lineWidth: 0.4 });
+    y += 2;
+    doc.text(`CAE: ${venta.cae}`, m, y, { size: sz - 0.3, bold: true });
+    y += 3.3;
+    doc.text(`Vto CAE: ${fmtDateAr(venta.cae_vencimiento) || '-'}`, m, y, { size: sz - 0.3 });
+    y += 4;
+
+    const cCmp = Number(String(codAfip).replace(/\D/g, '')) || 1;
+    const recDigits = String(venta.cliente_cuit || '').replace(/\D/g, '');
+    const qrPayload = {
+      ver: 1,
+      fecha: String(venta.fecha || '').slice(0, 10),
+      cuit: Number(String(emp.cuit || '').replace(/\D/g, '')) || 0,
+      ptoVta: Number(ptoVta) || 1,
+      tipoCmp: cCmp,
+      nroCmp: Number(cbteNro) || 1,
+      importe: Number(totalFinal.toFixed(2)),
+      moneda: 'PES',
+      ctz: 1,
+      tipoDocRec: recDigits.length === 11 ? 80 : (recDigits.length >= 7 ? 96 : 99),
+      nroDocRec: Number(recDigits) || 0,
+      tipoCodAut: 'E',
+      codAut: Number(venta.cae) || 0,
+    };
+    const qrUrl = `https://www.afip.gob.ar/fe/qr/?p=${Buffer.from(JSON.stringify(qrPayload), 'utf8').toString('base64')}`;
+    const qrMatrix = encodeQrMatrix(qrUrl);
+    if (qrMatrix && qrMatrix.length > 0) {
+      const qrMm = is58 ? 16 : 20;
+      const qrX = (wMm - qrMm) / 2;
+      const cell = qrMm / qrMatrix.length;
+      for (let r = 0; r < qrMatrix.length; r++) {
+        for (let c = 0; c < qrMatrix.length; c++) {
+          if (qrMatrix[r][c]) doc.rect(qrX + c * cell, y + r * cell, cell, cell, { fill: '#0F1F2A' });
+        }
+      }
+      y += qrMm + 2;
+    }
+  }
+
+  if (pie) {
+    doc.textBlock(pie, m, y, cw, { size: sz - 1, align: 'center', color: '#475569', lineHeight: 1.2 });
+  }
+}
+
 export function generateVentaPdf(payload = {}, emp = {}) {
-  const fmt = ['A4', 'A5'].includes(payload.formato || emp.print_formato)
-    ? (payload.formato || emp.print_formato)
-    : 'A4';
-  const copiasMode = ['original', 'duplicado', 'triplicado'].includes(payload.copias || emp.print_copias)
-    ? (payload.copias || emp.print_copias)
-    : 'original';
-  const labels = COPY_LABELS[copiasMode] || ['ORIGINAL'];
+  const fmt = resolvePrintFormat(payload.formato, emp.print_formato, ['A4', 'A5', 'ticket80', 'ticket58']);
+  const labels = resolveCopyLabels(payload.copias, emp.print_copias);
+  const isTicket = fmt === 'ticket80' || fmt === 'ticket58';
 
   const doc = new PdfDocument();
   for (const copyLabel of labels) {
-    renderVentaSheetPage(doc, payload, emp, copyLabel, fmt);
+    if (isTicket) renderVentaTicketPage(doc, payload, emp, copyLabel, fmt);
+    else renderVentaSheetPage(doc, payload, emp, copyLabel, fmt);
   }
-  const spec = PAGE_SIZES_MM[fmt] || PAGE_SIZES_MM.A4;
-  stampUnifiedFooter(doc, emp, { margin: spec.margin });
+  if (!isTicket) {
+    const spec = PAGE_SIZES_MM[fmt] || PAGE_SIZES_MM.A4;
+    stampUnifiedFooter(doc, emp, { margin: spec.margin });
+  }
   return doc.toBuffer();
 }

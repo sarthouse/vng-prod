@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 import { MODELS } from '../src/db/models.js';
 import { BaseRepository } from '../src/core/BaseRepository.js';
 import { QueryBuilder } from '../src/core/QueryBuilder.js';
 import { sanitizeRichHtml } from '../src/core/sanitize.js';
-import { initDb, runWithDatabase, closeConnection } from '../src/db.js';
+import { initDb, runWithDatabase, closeConnection, getDbPath } from '../src/db.js';
 import * as importSvc from '../src/services/config/importService.js';
 import * as jsonExSvc from '../src/services/config/jsonExchangeService.js';
 
@@ -23,6 +24,9 @@ function withIsolatedDb(fn) {
     return runWithDatabase(dbName, () => fn());
   } finally {
     closeConnection(dbName);
+    for (const ext of ['', '-shm', '-wal']) {
+      fs.rmSync(`${getDbPath(dbName)}${ext}`, { force: true });
+    }
   }
 }
 

@@ -41,11 +41,56 @@ export async function renderOrdenesCompraView() {
       .filter(o => !['Facturada', 'Cancelada'].includes(o.estado))
       .reduce((s, o) => s + Number(o.total_estimado || 0), 0);
 
+    const openNuevaOcModal = () => {
+      showFormModal({
+        title: 'Nueva Orden de Compra',
+        submitText: 'Crear Orden de Compra',
+        initialState: {
+          proveedor_id: proveedores[0]?.id ? String(proveedores[0].id) : '',
+          fecha: new Date().toISOString().slice(0, 10),
+          fecha_entrega_est: '',
+          observaciones: '',
+        },
+        fields: [
+          {
+            name: 'proveedor_id',
+            label: 'Proveedor *',
+            type: 'select',
+            required: true,
+            options: proveedores.map(p => ({ value: String(p.id), label: p.nombre })),
+          },
+          { name: 'fecha', label: 'Fecha *', type: 'date', required: true },
+          { name: 'fecha_entrega_est', label: 'Entrega Estimada', type: 'date' },
+          { name: 'observaciones', label: 'Observaciones', type: 'text', full: true },
+        ],
+        onSubmit: async (data) => {
+          try {
+            const res = await api('/api/ordenes-compra', {
+              method: 'POST',
+              body: JSON.stringify(data),
+            });
+            selectedOcId = res.id;
+            toast('Orden de Compra creada');
+            await draw();
+            return true;
+          } catch (err) {
+            toast(err.message, true);
+            throw err;
+          }
+        },
+      });
+    };
+
     mountPageView(root, {
       title: 'Órdenes de Compra',
       subtitle: 'Pedidos internos a proveedores sin impacto fiscal ni contable hasta registrar la Factura de Compra.',
-      actionsHtml: '<button type="button" class="btn btn-primary" id="btn-nueva-oc">+ Nueva Orden de Compra</button>',
-      kpisHtml: '<div id="oc-kpis"></div>',
+      actions: [{ label: '+ Nueva Orden de Compra', primary: true, onClick: openNuevaOcModal }],
+      kpis: [
+        { label: 'Total OC', value: String(ordenes.length) },
+        { label: 'Borradores', value: String(borradores) },
+        { label: 'Enviadas / En Curso', value: String(enviadas), tone: 'success' },
+        { label: 'Monto Estimado Pendiente', value: fmtMoney(totalPendiente), tone: 'accent' },
+      ],
       tabs: [
         {
           id: 'listado',
@@ -72,13 +117,6 @@ export async function renderOrdenesCompraView() {
         },
       ],
       onAfterMount: () => {
-        renderKpiStrip(root.querySelector('#oc-kpis'), [
-          { label: 'Total OC', value: String(ordenes.length) },
-          { label: 'Borradores', value: String(borradores) },
-          { label: 'Enviadas / En Curso', value: String(enviadas), tone: 'success' },
-          { label: 'Monto Estimado Pendiente', value: fmtMoney(totalPendiente), tone: 'accent' },
-        ]);
-
         renderDataTable(root.querySelector('#oc-list-table'), {
           emptyText: 'No hay órdenes de compra registradas.',
           rows: ordenes,
@@ -228,48 +266,8 @@ export async function renderOrdenesCompraView() {
             },
           });
         } else if (sheetHost) {
-          sheetHost.innerHTML = '<p class="muted">Seleccioná o creá una Orden de Compra para ver sus ítems.</p>';
+          sheetHost.innerHTML = '<div class="empty-state">Seleccioná o creá una Orden de Compra para ver sus ítems.</div>';
         }
-
-        root.querySelector('#btn-nueva-oc')?.addEventListener('click', () => {
-          showFormModal({
-            title: 'Nueva Orden de Compra',
-            submitText: 'Crear Orden de Compra',
-            initialState: {
-              proveedor_id: proveedores[0]?.id ? String(proveedores[0].id) : '',
-              fecha: new Date().toISOString().slice(0, 10),
-              fecha_entrega_est: '',
-              observaciones: '',
-            },
-            fields: [
-              {
-                name: 'proveedor_id',
-                label: 'Proveedor *',
-                type: 'select',
-                required: true,
-                options: proveedores.map(p => ({ value: String(p.id), label: p.nombre })),
-              },
-              { name: 'fecha', label: 'Fecha *', type: 'date', required: true },
-              { name: 'fecha_entrega_est', label: 'Entrega Estimada', type: 'date' },
-              { name: 'observaciones', label: 'Observaciones', type: 'text', full: true },
-            ],
-            onSubmit: async (data) => {
-              try {
-                const res = await api('/api/ordenes-compra', {
-                  method: 'POST',
-                  body: JSON.stringify(data),
-                });
-                selectedOcId = res.id;
-                toast('Orden de Compra creada');
-                await draw();
-                return true;
-              } catch (err) {
-                toast(err.message, true);
-                throw err;
-              }
-            },
-          });
-        });
 
         root.querySelectorAll('[data-sel-oc]').forEach(btn => {
           btn.addEventListener('click', async () => {

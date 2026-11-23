@@ -17,6 +17,11 @@
     - Filtros seguros (operadores whitelisteados `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`, `NOT LIKE`, `IS`, `IS NOT`): `where(...)`, `orWhere(...)`, `whereIn(...)`, `whereNotIn(...)`, `whereNull(...)`, `whereNotNull(...)`, `whereBetween(col, [min, max])`.
     - Terminadores: `all()`, `get()` / `first()` (`LIMIT 1`, retorna objeto o `null`), `count(col?)`, `sum(col)`, `pluck(col)`, `exists()`, `insert(data)`, `update(data)`, `delete()`.
 - Si un query necesita un operador o cláusula que `QueryBuilder` no soporta, extender `QueryBuilder.js` (con validación de identificadores) antes que escribir SQL crudo en un servicio.
+- **Propiedades ACID obligatorias en Base de Datos (`node:sqlite`)**:
+  - **Atomicidad:** Toda operación compuesta (documento + líneas + stock + asiento contable + `domainBus`) debe ejecutarse dentro de un único `repo.transaction(...)` (con `SAVEPOINT`s re-entrantes); si falla cualquier paso, se revierte todo.
+  - **Consistencia:** Validar siempre con `BaseRepository.validate()` contra `MODELS`, partida doble estricta (`Debe === Haber`), reglas de `stateMachine.js`, claves foráneas activas (`PRAGMA foreign_keys = ON`) e invariantes de stock/saldos antes de commitear.
+  - **Aislamiento:** Toda escritura transaccional corre bajo `BEGIN IMMEDIATE` en `BaseRepository.transaction()` para serializar escrituras concurrentes en SQLite y evitar condiciones de carrera entre lectura y escritura.
+  - **Durabilidad:** Persistir siempre en SQLite (`WAL`) antes de dar por confirmada la operación y nunca acoplar rollbacks locales a fallos post-commit de integraciones externas (ej. sync saliente a WooCommerce); las migraciones/seeds deben ser idempotentes y atómicas.
 
 ## 3. SOLID y DRY
 - **SRP (Single Responsibility)**:
@@ -39,7 +44,7 @@
 - **Backend**:
   - `src/core/`: ORM, logger, schemaBuilder.
   - `src/db/`: conexión, `models.js` (SSOT), `schema.js` (migraciones), `seed.js`.
-  - `src/services/{afip,auth,comercial,config,finanzas,inventario,print,produccion,tareas}/`: servicios Facade + sub-servicios y `*Helper.js` especializados por dominio.
+  - `src/services/{afip,auth,comercial,config,finanzas,inventario,print,produccion,rrhh,tareas}/`: servicios Facade + sub-servicios y `*Helper.js` especializados por dominio.
   - `src/routes/`: enrutadores por módulo.
 - **Frontend (`public/`)**:
   - `public/lib/engine/`: motores reutilizables (`pageEngine.js`, `detailEngine.js`, `tableEngine.js`, `formEngine.js`, `modalEngine.js`, `ganttEngine.js`). **Prohibido** crear modales ad-hoc o `alert`/`confirm` nativos fuera de `modalEngine.js`.

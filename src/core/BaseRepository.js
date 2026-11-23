@@ -1,6 +1,7 @@
 import { db as defaultDb } from '../db.js';
 import { getWritableColumns, validateAgainstModel } from './schemaBuilder.js';
 import { QueryBuilder } from './QueryBuilder.js';
+import { parseCustomFields, validateAndMergeCustomFieldsForDb } from './customFields.js';
 
 /**
  * BaseRepository: Clase base OOP para operaciones CRUD estandarizadas sobre SQLite.
@@ -45,17 +46,27 @@ export class BaseRepository {
     return qb.all();
   }
 
+  _hydrateRow(row) {
+    if (!row || !this.model?.fields?.custom_fields_json) return row;
+    if (row.custom_fields_json !== undefined && row.custom_fields === undefined) {
+      row.custom_fields = parseCustomFields(row.custom_fields_json);
+    }
+    return row;
+  }
+
   findAll({ where = '1=1', params = [], orderBy = this.defaultOrder, limit = null } = {}) {
     const limitSql = limit ? ` LIMIT ${Number(limit)}` : '';
-    return this.db
+    const rows = this.db
       .prepare(`SELECT * FROM ${this.table} WHERE ${where} ORDER BY ${orderBy}${limitSql}`)
       .all(...params);
+    return this.model?.fields?.custom_fields_json ? rows.map(r => this._hydrateRow(r)) : rows;
   }
 
   findById(id) {
-    return this.db
+    const row = this.db
       .prepare(`SELECT * FROM ${this.table} WHERE ${this.primaryKey} = ?`)
       .get(Number(id)) ?? null;
+    return this._hydrateRow(row);
   }
 
   find(id) {
@@ -158,6 +169,16 @@ export class BaseRepository {
 
   create(data, actor = null) {
     const payload = this._filterPayload(data);
+    if (this.model?.fields?.custom_fields_json) {
+      const cfInput = data?.custom_fields !== undefined ? data.custom_fields : payload.custom_fields_json;
+      payload.custom_fields_json = validateAndMergeCustomFieldsForDb(
+        this.db,
+        this.table,
+        '{}',
+        cfInput ?? {},
+        { partial: false },
+      );
+    }
     if (this.audit && actor) {
       payload.autor_id = actor.id || null;
       payload.autor_nombre = actor.nombre || actor.username || '';
@@ -177,6 +198,16 @@ export class BaseRepository {
     const existing = this.findById(id);
     if (!existing) return false;
     const payload = this._filterPayload(data);
+    if (this.model?.fields?.custom_fields_json && (data?.custom_fields !== undefined || data?.custom_fields_json !== undefined)) {
+      const cfInput = data.custom_fields !== undefined ? data.custom_fields : data.custom_fields_json;
+      payload.custom_fields_json = validateAndMergeCustomFieldsForDb(
+        this.db,
+        this.table,
+        existing.custom_fields_json,
+        cfInput,
+        { partial: true },
+      );
+    }
     if (this.audit) {
       if (actor) {
         payload.actualizado_por_id = actor.id || null;

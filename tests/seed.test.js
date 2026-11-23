@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
-import { initDb, runWithDatabase, closeConnection, getConnection } from '../src/db.js';
+import { initDb, runWithDatabase, closeConnection, getConnection, getDbPath } from '../src/db.js';
 import { MODELS } from '../src/db/models.js';
 import { BaseRepository } from '../src/core/BaseRepository.js';
 import { runSeeds } from '../src/db/seed.js';
@@ -13,6 +14,9 @@ function withIsolatedDb(fn) {
     return runWithDatabase(dbName, () => fn(getConnection(dbName)));
   } finally {
     closeConnection(dbName);
+    for (const ext of ['', '-shm', '-wal']) {
+      fs.rmSync(`${getDbPath(dbName)}${ext}`, { force: true });
+    }
   }
 }
 

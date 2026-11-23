@@ -2,6 +2,12 @@ import { api, toast } from '../../lib/api.js';
 import { esc, fmtMoney, fmtDate } from '../../lib/format.js';
 import { openPdfFromEndpoint } from '../../lib/print/index.js';
 import {
+  fetchCustomFieldDefs,
+  withCustomFieldColumns,
+  isCustomFieldKey,
+  extractCustomFieldPatch,
+} from '../../lib/customFieldsHelper.js';
+import {
   mountPageView,
   renderKpiStrip,
   renderSpreadsheetTable,
@@ -17,17 +23,19 @@ function liqEstadoBadge(estado) {
   return '<span class="badge badge-parcial">Borrador</span>';
 }
 
-export async function renderNominaView() {
+export async function renderNominaView({ defaultTab = 'liquidaciones' } = {}) {
   const root = document.getElementById('app-view');
   let selectedLiqId = null;
 
   const draw = async () => {
-    const [liquidaciones, empleados, conceptos, params, planCuentas] = await Promise.all([
+    const [liquidaciones, empleados, conceptos, params, planCuentas, licencias, empCfDefs] = await Promise.all([
       api('/api/nomina/liquidaciones').catch(() => []),
       api('/api/nomina/empleados').catch(() => []),
       api('/api/nomina/conceptos').catch(() => []),
       api('/api/nomina/parametros').catch(() => ({})),
       api('/api/tesoreria/plan-cuentas').catch(() => []),
+      api('/api/nomina/licencias').catch(() => []),
+      fetchCustomFieldDefs('empleados'),
     ]);
 
     if (!selectedLiqId && liquidaciones.length > 0) {
@@ -43,34 +51,28 @@ export async function renderNominaView() {
       .reduce((s, e) => s + Number(e.sueldo_basico || 0), 0);
     const cuentasEgreso = (planCuentas || []).filter(c => Number(c.activo) !== 0 && Number(c.imputable) !== 0 && c.tipo === 'egreso');
 
+    const activosList = empleados.filter(e => Number(e.activo) !== 0);
+
     mountPageView(root, {
-      title: 'Nómina Argentina (ARCA / LSD / F.931)',
-      subtitle: 'Liquidación de haberes con topes previsionales, exportación Libro de Sueldos Digital, Papel de Trabajo F.931 y Recibos LCT Art. 140.',
-      actionsHtml: '<button type="button" class="btn btn-primary" id="btn-nueva-liq">+ Nueva Liquidación</button>',
-      kpisHtml: '<div id="nomina-kpis"></div>',
+      title: 'RRHH y Nómina Argentina (ARCA / LSD / F.931)',
+      subtitle: 'Liquidación masiva o individual de haberes, legajos de empleados, vacaciones, ausencias, Libro de Sueldos Digital y Recibos LCT Art. 140.',
+      defaultTab,
+      actions: [{ label: '+ Nueva Liquidación', primary: true, href: '/rrhh/liquidaciones/nueva' }],
+      kpis: [
+        { label: 'Empleados Activos', value: String(activosCount), tone: 'success' },
+        { label: 'Masa Básica Mensual', value: fmtMoney(masaSalarial) },
+        { label: 'Tope Máx. Previsional', value: fmtMoney(params.nomina_base_max || 0) },
+        { label: 'Último Neto Liquidado', value: fmtMoney(liquidaciones[0]?.total_neto || 0), tone: 'accent' },
+      ],
       tabs: [
         {
           id: 'liquidaciones',
           label: 'Liquidaciones',
           badge: liquidaciones.length,
           html: `
-            <div class="card mb-md">
+            <div class="card">
               <div class="card-header"><h2>Historial de Liquidaciones</h2></div>
               <div id="nomina-liq-table"></div>
-            </div>
-            <div class="card">
-              <div class="card-header">
-                <div>
-                  <h2>Recibos de la Liquidación ${detalle ? `— ${esc(detalle.liquidacion.numero || detalle.liquidacion.periodo)}` : ''}</h2>
-                  <span class="muted text-sm">${detalle?.liquidacion.estado === 'Borrador' ? 'Editá días trabajados / forma de pago inline o cargá novedades por recibo antes de confirmar.' : 'Liquidación cerrada (solo lectura).'}</span>
-                </div>
-                <div class="actions">
-                  ${detalle ? `<button type="button" class="btn btn-sm" id="btn-lsd-liq">Descargar TXT LSD (ARCA)</button>` : ''}
-                  ${detalle ? `<button type="button" class="btn btn-sm" id="btn-f931-liq">Papel de Trabajo F.931</button>` : ''}
-                  ${detalle ? `<button type="button" class="btn btn-sm btn-primary" id="btn-recibos-lote">Imprimir Recibos LCT (Lote)</button>` : ''}
-                </div>
-              </div>
-              <div id="nomina-det-sheet"></div>
             </div>
           `,
         },
@@ -87,6 +89,22 @@ export async function renderNominaView() {
                 </div>
               </div>
               <div id="nomina-emp-sheet"></div>
+            </div>
+          `,
+        },
+        {
+          id: 'licencias',
+          label: 'Vacaciones y Ausencias',
+          badge: licencias.length,
+          html: `
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h2>Vacaciones, Ausencias y Licencias del Personal</h2>
+                  <span class="muted text-sm">Las ausencias aprobadas sin goce se descuentan automáticamente en las liquidaciones del período.</span>
+                </div>
+              </div>
+              <div id="nomina-lic-sheet"></div>
             </div>
           `,
         },
@@ -128,18 +146,11 @@ export async function renderNominaView() {
         },
       ],
       onAfterMount: () => {
-        renderKpiStrip(root.querySelector('#nomina-kpis'), [
-          { label: 'Empleados Activos', value: String(activosCount), tone: 'success' },
-          { label: 'Masa Básica Mensual', value: fmtMoney(masaSalarial) },
-          { label: 'Tope Máx. Previsional', value: fmtMoney(params.nomina_base_max || 0) },
-          { label: 'Último Neto Liquidado', value: fmtMoney(liquidaciones[0]?.total_neto || 0), tone: 'accent' },
-        ]);
-
         renderDataTable(root.querySelector('#nomina-liq-table'), {
           emptyText: 'No hay liquidaciones registradas.',
           rows: liquidaciones,
           columns: [
-            { label: 'Número / Período', render: l => `<strong>${esc(l.numero || '')}</strong> <span class="muted">${esc(l.periodo)}</span>` },
+            { label: 'Número / Período', render: l => `<a href="/rrhh/liquidaciones/${l.id}" data-link class="link-primary">${esc(l.numero || '')}</a> <span class="muted">${esc(l.periodo)}</span>` },
             { label: 'Tipo', render: l => esc(l.tipo_liquidacion || 'Mensual') },
             { label: 'Fecha', render: l => fmtDate(l.fecha_liquidacion) },
             { label: 'Estado', render: l => liqEstadoBadge(l.estado) },
@@ -158,7 +169,7 @@ export async function renderNominaView() {
               align: 'right',
               render: l => `
                 <div class="actions justify-end">
-                  <button type="button" class="btn btn-sm" data-sel-liq="${l.id}">Recibos</button>
+                  <a href="/rrhh/liquidaciones/${l.id}" data-link class="btn btn-sm">Abrir</a>
                   ${l.estado === 'Borrador' ? `<button type="button" class="btn btn-sm btn-primary" data-conf-liq="${l.id}">Confirmar</button>` : ''}
                   ${l.estado === 'Borrador' ? `<button type="button" class="btn btn-sm btn-danger" data-del-liq="${l.id}">Eliminar</button>` : ''}
                   ${l.estado === 'Confirmada' ? `<button type="button" class="btn btn-sm btn-danger" data-anul-liq="${l.id}">Anular</button>` : ''}
@@ -225,7 +236,7 @@ export async function renderNominaView() {
             },
           });
         } else if (detHost) {
-          detHost.innerHTML = '<p class="muted">Seleccioná o creá una liquidación para ver sus recibos.</p>';
+          detHost.innerHTML = '<div class="empty-state">Seleccioná o creá una liquidación para ver sus recibos.</div>';
         }
 
         renderSpreadsheetTable(root.querySelector('#nomina-emp-sheet'), {
@@ -265,10 +276,10 @@ export async function renderNominaView() {
               throw err;
             }
           },
-          columns: [
+          columns: withCustomFieldColumns('empleados', [
             { key: 'legajo', label: 'Legajo', type: 'text', nowrap: true, render: e => (e.legajo ? `<code>${esc(e.legajo)}</code>` : '<span class="muted">Auto</span>') },
             { key: 'apellido', label: 'Apellido', type: 'text' },
-            { key: 'nombre', label: 'Nombre', type: 'text', render: e => (e.nombre ? `<strong>${esc(e.nombre)}</strong>` : '<span class="muted">Nuevo...</span>') },
+            { key: 'nombre', label: 'Nombre', type: 'text', render: e => (e.nombre ? `<a href="/rrhh/empleados/${e.id}" data-link class="link-primary">${esc(e.nombre)}</a>` : '<span class="muted">Nuevo...</span>') },
             { key: 'cuil', label: 'CUIL', type: 'text', nowrap: true },
             { key: 'fecha_ingreso', label: 'Ingreso', type: 'date', render: e => fmtDate(e.fecha_ingreso) },
             { key: 'convenio_cct', label: 'CCT', type: 'text' },
@@ -295,12 +306,21 @@ export async function renderNominaView() {
               render: e => (e.cuenta_nombre ? esc(e.cuenta_nombre) : '<span class="muted">Según sector</span>'),
             },
             { key: 'activo', label: 'Activo', type: 'checkbox', align: 'center', getValue: e => (Number(e.activo) !== 0 ? 1 : 0) },
-          ],
+            {
+              key: '_ficha',
+              label: 'Ficha',
+              readOnly: true,
+              render: e => (e.id ? `<a href="/rrhh/empleados/${e.id}" data-link class="btn btn-sm">Abrir</a>` : ''),
+            },
+          ], empCfDefs, () => {}),
           onCellChange: async ({ row, key, value }) => {
             try {
+              const body = isCustomFieldKey(key)
+                ? { custom_fields: extractCustomFieldPatch(key, value) }
+                : { [key]: value };
               await api(`/api/nomina/empleados/${row.id}`, {
                 method: 'PUT',
-                body: JSON.stringify({ [key]: value }),
+                body: JSON.stringify(body),
               });
               toast('Empleado actualizado');
             } catch (err) {
@@ -316,6 +336,86 @@ export async function renderNominaView() {
               await draw();
             } catch (err) { toast(err.message, true); }
           },
+        });
+
+        renderSpreadsheetTable(root.querySelector('#nomina-lic-sheet'), {
+          rows: licencias,
+          emptyText: 'No hay vacaciones, ausencias ni licencias registradas.',
+          compact: true,
+          defaultNewRow: () => ({
+            empleado_id: activosList[0]?.id ? String(activosList[0].id) : '',
+            tipo: 'Vacaciones',
+            fecha_desde: new Date().toISOString().slice(0, 10),
+            fecha_hasta: new Date().toISOString().slice(0, 10),
+            dias: 1,
+            con_goce: 1,
+            estado: 'Aprobada',
+            observaciones: '',
+          }),
+          onCreateRow: async ({ row }) => {
+            if (!row.empleado_id || !row.fecha_desde) return false;
+            try {
+              await api('/api/nomina/licencias', {
+                method: 'POST',
+                body: JSON.stringify({
+                  ...row,
+                  empleado_id: Number(row.empleado_id),
+                  dias: Number(row.dias || 0),
+                  con_goce: Number(row.con_goce) ? 1 : 0,
+                }),
+              });
+              toast('Licencia registrada');
+              await draw();
+              return false;
+            } catch (err) {
+              toast(err.message, true);
+              throw err;
+            }
+          },
+          onCellChange: async ({ row, key, value }) => {
+            try {
+              await api(`/api/nomina/licencias/${row.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                  [key]: ['con_goce'].includes(key) ? (Number(value) ? 1 : 0) : (key === 'dias' ? Number(value) : value),
+                }),
+              });
+              toast('Licencia actualizada');
+              await draw();
+            } catch (err) {
+              toast(err.message, true);
+              throw err;
+            }
+          },
+          onDeleteRow: async (row) => {
+            try {
+              await api(`/api/nomina/licencias/${row.id}`, { method: 'DELETE' });
+              toast('Licencia eliminada');
+              await draw();
+            } catch (err) { toast(err.message, true); }
+          },
+          columns: [
+            {
+              key: 'empleado_id',
+              label: 'Empleado',
+              type: 'select',
+              options: activosList.map(e => ({ value: String(e.id), label: `${e.legajo ? e.legajo + ' · ' : ''}${e.apellido || ''} ${e.nombre || ''}`.trim() })),
+              render: r => (r.empleado_id ? `<a href="/rrhh/empleados/${r.empleado_id}" data-link class="link-primary">${esc(r.empleado_nombre_completo || '')}</a>` : '<span class="muted">Seleccionar...</span>'),
+            },
+            {
+              key: 'tipo',
+              label: 'Tipo',
+              type: 'select',
+              options: ['Vacaciones', 'Ausencia Injustificada', 'Ausencia Justificada', 'Licencia Médica', 'Licencia Maternidad', 'Permiso Especial', 'Otro'].map(v => ({ value: v, label: v })),
+            },
+            { key: 'periodo', label: 'Período', type: 'text', readOnly: true },
+            { key: 'fecha_desde', label: 'Desde', type: 'date', render: r => fmtDate(r.fecha_desde) },
+            { key: 'fecha_hasta', label: 'Hasta', type: 'date', render: r => fmtDate(r.fecha_hasta) },
+            { key: 'dias', label: 'Días', type: 'number', align: 'right' },
+            { key: 'con_goce', label: 'Con Goce', type: 'checkbox', align: 'center', getValue: r => (Number(r.con_goce) ? 1 : 0) },
+            { key: 'estado', label: 'Estado', type: 'select', options: ['Pendiente', 'Aprobada', 'Rechazada', 'Liquidada'].map(v => ({ value: v, label: v })) },
+            { key: 'observaciones', label: 'Observaciones', type: 'text' },
+          ],
         });
 
         renderSpreadsheetTable(root.querySelector('#nomina-conc-sheet'), {
@@ -403,42 +503,6 @@ export async function renderNominaView() {
             toast('Parámetros previsionales guardados');
             await draw();
           } catch (err) { toast(err.message, true); }
-        });
-
-        root.querySelector('#btn-nueva-liq')?.addEventListener('click', () => {
-          showFormModal({
-            title: 'Nueva Liquidación de Haberes',
-            submitText: 'Generar Liquidación (Borrador)',
-            initialState: {
-              periodo: new Date().toISOString().slice(0, 7),
-              tipo_liquidacion: 'Mensual',
-              fecha_liquidacion: new Date().toISOString().slice(0, 10),
-              fecha_pago: new Date().toISOString().slice(0, 10),
-            },
-            fields: [
-              { name: 'periodo', label: 'Período (YYYY-MM) *', type: 'text', required: true },
-              {
-                name: 'tipo_liquidacion',
-                label: 'Tipo de Liquidación',
-                type: 'select',
-                options: ['Mensual', 'Primera Quincena', 'Segunda Quincena', 'SAC / Aguinaldo', 'Vacaciones', 'Liquidación Final'].map(v => ({ value: v, label: v })),
-              },
-              { name: 'fecha_liquidacion', label: 'Fecha Liquidación *', type: 'date', required: true },
-              { name: 'fecha_pago', label: 'Fecha Pago *', type: 'date', required: true },
-            ],
-            onSubmit: async (data) => {
-              try {
-                const res = await api('/api/nomina/liquidaciones', { method: 'POST', body: JSON.stringify(data) });
-                selectedLiqId = res.id;
-                toast('Liquidación generada con cálculos previsionales');
-                await draw();
-                return true;
-              } catch (err) {
-                toast(err.message, true);
-                throw err;
-              }
-            },
-          });
         });
 
         root.querySelector('#btn-lsd-liq')?.addEventListener('click', () => {

@@ -296,6 +296,7 @@ export function createOrden(b, user = null) {
       fecha_inicio: fechaInicio,
       fecha_objetivo: fechaObjetivo,
       notas: (b.notas || '').trim(),
+      ...(b.custom_fields !== undefined ? { custom_fields: b.custom_fields } : {}),
     }, user);
 
     for (const l of lineas) ordenLineaRepo.create({ orden_id: ordenId, producto_id: l.producto_id, cantidad: l.cantidad });

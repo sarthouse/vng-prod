@@ -1,5 +1,23 @@
 import { fmtDateAr } from './pdfBuilder.js';
 
+export const COPY_LABELS = {
+  original: ['ORIGINAL'],
+  duplicado: ['ORIGINAL', 'DUPLICADO'],
+  triplicado: ['ORIGINAL', 'DUPLICADO', 'TRIPLICADO'],
+};
+
+export function resolveCopyLabels(reqCopias, empCopias) {
+  const mode = ['original', 'duplicado', 'triplicado'].includes(reqCopias || empCopias)
+    ? (reqCopias || empCopias)
+    : 'original';
+  return COPY_LABELS[mode] || ['ORIGINAL'];
+}
+
+export function resolvePrintFormat(reqFmt, empFmt, allowed = ['A4', 'A5', 'ticket80', 'ticket58']) {
+  const candidate = reqFmt || empFmt;
+  return allowed.includes(candidate) ? candidate : 'A4';
+}
+
 export function fmtMoneyAr(n) {
   return '$' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -79,4 +97,102 @@ export function stampUnifiedFooter(doc, emp = {}, { margin = 10, extraText = '' 
       color: theme.mutedCol,
     });
   });
+}
+
+export function drawFiscalSheetHeader(doc, {
+  m, w, yTop, isA5, copyLabel,
+  letra, codAfip, subLetra, titulo, ptoVta, cbteNro, nroLabel = 'Comp. Nro', fecha,
+  extraRightLines = [], emp = {},
+}) {
+  const theme = getPrintTheme(emp);
+  const midX = m + w / 2;
+  const baseSz = isA5 ? 7.2 : 8.2;
+  const topBarH = isA5 ? 5.5 : 6.5;
+
+  doc.rect(m, yTop, w, topBarH, { stroke: theme.borderCol, fill: theme.fillHeader, lineWidth: 0.6 });
+  doc.text(copyLabel, midX, yTop + (isA5 ? 1.3 : 1.6), { size: isA5 ? 7.5 : 8.5, bold: true, align: 'center' });
+
+  const headerTop = yTop + topBarH;
+  const headerH = isA5 ? 36 : 41;
+  const letterW = isA5 ? 15 : 17;
+  const letterH = isA5 ? 14 : 16;
+  const letterX = midX - letterW / 2;
+
+  doc.line(m, headerTop + headerH, m + w, headerTop + headerH, { color: theme.borderCol, lineWidth: 0.8 });
+  doc.line(midX, headerTop + letterH + 5.5, midX, headerTop + headerH, { color: theme.borderCol, lineWidth: 0.6 });
+
+  doc.rect(letterX, headerTop, letterW, letterH, { stroke: theme.borderCol, fill: '#FFFFFF', lineWidth: 0.9 });
+  doc.text(letra, midX, headerTop + (isA5 ? 1.8 : 2.2), { size: isA5 ? 16 : 20, bold: true, align: 'center' });
+  doc.text(codAfip, midX, headerTop + letterH - (isA5 ? 3.8 : 4.3), { size: isA5 ? 5.8 : 6.5, bold: true, align: 'center' });
+  doc.text(subLetra, midX, headerTop + letterH + 1.2, { size: 5.2, bold: true, align: 'center', color: theme.mutedCol });
+
+  // Columna Izquierda: Emisor
+  const emisorBrand = emp.nombre_fantasia || emp.razon_social || 'Vanguard Production';
+  const razonSocial = emp.razon_social || '';
+  const leftMaxW = letterX - m - 4;
+  let ly = headerTop + 2.5;
+  ly = doc.textBlock(emisorBrand, m + 3, ly, leftMaxW, { size: isA5 ? 10.5 : 12.5, bold: true, lineHeight: 1.15 });
+  if (razonSocial && emisorBrand !== razonSocial) {
+    ly = doc.textBlock(`Razón Social: ${razonSocial}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.5, color: theme.mutedCol, lineHeight: 1.18 });
+  }
+  const dirComercial = [emp.direccion, emp.localidad, emp.provincia, emp.codigo_postal ? `(CP ${emp.codigo_postal})` : ''].filter(Boolean).join(', ');
+  if (dirComercial) {
+    ly = doc.textBlock(`Domicilio Comercial: ${dirComercial}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.7, color: theme.mutedCol, lineHeight: 1.18 });
+  }
+  if (emp.condicion_iva) {
+    ly = doc.textBlock(`Condición frente al IVA: ${emp.condicion_iva}`, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.6, color: theme.mutedCol, lineHeight: 1.18 });
+  }
+  const telEmailEmp = [emp.telefono ? `Teléfono: ${emp.telefono}` : '', emp.email].filter(Boolean).join(' · ');
+  if (telEmailEmp) {
+    doc.textBlock(telEmailEmp, m + 3, ly + 0.4, leftMaxW, { size: baseSz - 0.7, color: theme.mutedCol, lineHeight: 1.18 });
+  }
+
+  // Columna Derecha: Datos del Comprobante + CUIT / IIBB / Inicio Act.
+  const rightX = letterX + letterW + 4;
+  const rightMaxW = (m + w) - rightX - 3;
+  let ry = headerTop + 3;
+  doc.text(titulo, rightX, ry, { size: isA5 ? 10 : 12, bold: true, color: theme.borderCol });
+  ry += isA5 ? 5.2 : 6.2;
+  ry = doc.textBlock(`Punto de Venta: ${ptoVta}    ${nroLabel}: ${cbteNro}`, rightX, ry, rightMaxW, { size: baseSz, bold: true, lineHeight: 1.2 });
+  ry = doc.textBlock(`Fecha de Emisión: ${fmtDateAr(fecha) || '-'}`, rightX, ry + 0.4, rightMaxW, { size: baseSz, lineHeight: 1.2 });
+  for (const line of extraRightLines) {
+    if (line) ry = doc.textBlock(line, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: theme.mutedCol, lineHeight: 1.2 });
+  }
+  if (emp.cuit) ry = doc.textBlock(`CUIT: ${emp.cuit}`, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: theme.mutedCol, lineHeight: 1.2 });
+  if (emp.iibb) ry = doc.textBlock(`Ingresos Brutos: ${emp.iibb}`, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: theme.mutedCol, lineHeight: 1.2 });
+  if (emp.inicio_actividades) doc.textBlock(`Inicio de Actividades: ${fmtDateAr(emp.inicio_actividades)}`, rightX, ry + 0.4, rightMaxW, { size: baseSz - 0.5, color: theme.mutedCol, lineHeight: 1.2 });
+
+  return { headerTop, headerH, topBarH, curY: headerTop + headerH };
+}
+
+export function drawTicketHeader(doc, { wMm, m, copyLabel, titulo, letra, codAfip, ptoVta, cbteNro, fecha, emp = {} }) {
+  const is58 = wMm <= 60;
+  const sz = is58 ? 6.8 : 7.8;
+  const w = wMm - m * 2;
+  const cx = wMm / 2;
+  const theme = getPrintTheme(emp);
+  let y = m + 1;
+
+  doc.text(copyLabel, cx, y, { size: sz, bold: true, align: 'center' });
+  y += 3.8;
+  doc.text(theme.empresaNombre, cx, y, { size: sz + 1.2, bold: true, align: 'center', maxWidth: w });
+  y += 3.8;
+  if (emp.cuit) { doc.text(`CUIT: ${emp.cuit}`, cx, y, { size: sz - 0.6, align: 'center' }); y += 3.2; }
+  if (emp.condicion_iva) { doc.text(emp.condicion_iva, cx, y, { size: sz - 0.6, align: 'center' }); y += 3.2; }
+  const regLine = [emp.iibb ? `IIBB: ${emp.iibb}` : '', emp.inicio_actividades ? `Ini: ${fmtDateAr(emp.inicio_actividades)}` : ''].filter(Boolean).join(' · ');
+  if (regLine) { doc.text(regLine, cx, y, { size: sz - 0.8, align: 'center', maxWidth: w }); y += 3.2; }
+  if (theme.direccionFull) {
+    y = doc.textBlock(theme.direccionFull, m, y, w, { size: sz - 0.8, align: 'center', lineHeight: 1.15 });
+  }
+
+  doc.line(m, y + 0.5, wMm - m, y + 0.5, { color: '#0F1F2A', lineWidth: 0.5 });
+  y += 2.4;
+  doc.text(`${titulo} [${letra}] (${codAfip})`, cx, y, { size: sz + 0.2, bold: true, align: 'center' });
+  y += 3.8;
+  doc.text(`PV: ${ptoVta} · N°: ${cbteNro}`, cx, y, { size: sz, bold: true, align: 'center' });
+  y += 3.5;
+  doc.text(`Fecha: ${fmtDateAr(fecha) || '-'}`, cx, y, { size: sz - 0.3, align: 'center' });
+  y += 3.5;
+  doc.line(m, y, wMm - m, y, { color: '#0F1F2A', lineWidth: 0.4 });
+  return { y: y + 2.2, sz, w };
 }

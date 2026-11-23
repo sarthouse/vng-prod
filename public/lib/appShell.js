@@ -59,8 +59,17 @@ export const NAV_GROUPS = [
       { href: '/contabilidad/libros-fiscales', label: 'Libros IVA', perm: 'contabilidad.ver' },
       { href: '/contabilidad/posicion-iva', label: 'Posición IVA', perm: 'contabilidad.ver' },
       { href: '/contabilidad/activos-fijos', label: 'Activos Fijos', perm: 'contabilidad.ver' },
-      { href: '/contabilidad/nomina', label: 'Nómina / Sueldos', perm: 'contabilidad.ver' },
       { href: '/contabilidad/cierres', label: 'Cierres', perm: 'contabilidad.ver' },
+    ],
+  },
+  {
+    key: 'rrhh',
+    title: 'RRHH / Nómina',
+    items: [
+      { href: '/rrhh/liquidaciones', label: 'Liquidaciones', perm: 'rrhh.ver' },
+      { href: '/rrhh/empleados', label: 'Empleados', perm: 'rrhh.ver' },
+      { href: '/rrhh/licencias', label: 'Vacaciones y Ausencias', perm: 'rrhh.ver' },
+      { href: '/rrhh/conceptos', label: 'Conceptos y Topes', perm: 'rrhh.ver' },
     ],
   },
   {

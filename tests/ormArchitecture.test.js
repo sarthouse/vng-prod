@@ -49,6 +49,21 @@ test('Cumplimiento arquitectónico: cero db.prepare() o db.exec() en src/service
   assert.deepEqual(violations, [], `Se detectó SQL crudo prohibido:\n${violations.join('\n')}`);
 });
 
+test('Cumplimiento SRP en src/services/print/: cero acceso a BaseRepository, MODELS o repositorios', () => {
+  const printFiles = walkJsFiles(path.resolve('src/services/print'));
+  const violations = [];
+  for (const file of printFiles) {
+    const content = fs.readFileSync(file, 'utf8');
+    const lines = content.split(/\r?\n/);
+    lines.forEach((line, idx) => {
+      if (/\bBaseRepository\b|db\/models\.js|\bnew\s+\w*Repo/.test(line)) {
+        violations.push(`${path.relative(process.cwd(), file)}:${idx + 1}: ${line.trim()}`);
+      }
+    });
+  }
+  assert.deepEqual(violations, [], `Se detectó acceso a repositorios en src/services/print/:\n${violations.join('\n')}`);
+});
+
 test('BaseRepository.validate() rechaza campos faltantes, tipos inválidos y enums incorrectos contra MODELS', () => {
   const contactoRepo = new BaseRepository({ model: MODELS.contactos });
   const tareaRepo = new BaseRepository({ model: MODELS.tareas });

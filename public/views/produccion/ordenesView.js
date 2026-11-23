@@ -2,6 +2,7 @@ import { api, toast } from '../../lib/api.js';
 import { esc, exportRowsToCSV, filterVisibleDocs, renderDocEstadoBadges, buildArchivarBulkActions } from '../../lib/format.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { renderKpiStrip, renderDataTable, renderGroupedList, renderKanbanBoard, renderGanttChart, renderViewSwitcher, renderSpreadsheetTable } from '../../lib/engine/index.js';
+import { fetchCustomFieldDefs, renderCustomFieldsSection } from '../../lib/customFieldsHelper.js';
 import { navigate } from '../../router.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
 
@@ -277,11 +278,12 @@ export async function renderOrdenesView() {
 
 export async function renderOrdenNuevaView() {
   const root = document.getElementById('app-view');
-  const [plantillas, recetas, pedidos, productos] = await Promise.all([
+  const [plantillas, recetas, pedidos, productos, ordenCfDefs] = await Promise.all([
     api('/api/plantillas?se_fabrica=1'),
     api('/api/recetas'),
     api('/api/pedidos'),
     api('/api/productos'),
+    fetchCustomFieldDefs('ordenes_produccion'),
   ]);
 
   let selectedPlantillaId = plantillas[0]?.id ? String(plantillas[0].id) : '';
@@ -355,6 +357,7 @@ export async function renderOrdenNuevaView() {
             <span>Notas</span>
             <input type="text" name="notas" placeholder="Observaciones de producción..." />
           </label>
+          <div id="orden-custom-fields-host" class="full"></div>
 
           <div class="full form-footer">
             <a href="/ordenes" data-link class="btn">Cancelar</a>
@@ -399,6 +402,12 @@ export async function renderOrdenNuevaView() {
       render();
     });
 
+    const getOrdenCustomFields = renderCustomFieldsSection(
+      root.querySelector('#orden-custom-fields-host'),
+      ordenCfDefs,
+      {},
+    );
+
     root.querySelector('#form-nueva-orden').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -415,6 +424,7 @@ export async function renderOrdenNuevaView() {
         estado: fd.get('estado') || 'Borrador',
         notas: fd.get('notas') || '',
         lineas,
+        custom_fields: getOrdenCustomFields(),
       };
 
       try {

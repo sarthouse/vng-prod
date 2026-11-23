@@ -12,7 +12,7 @@ import * as ocSvc from '../src/services/comercial/ordenCompraService.js';
 import * as ventaSvc from '../src/services/comercial/ventaService.js';
 import * as tesSvc from '../src/services/finanzas/tesoreriaService.js';
 import * as opStockSvc from '../src/services/inventario/operacionStockService.js';
-import * as nominaSvc from '../src/services/finanzas/nominaService.js';
+import * as nominaSvc from '../src/services/rrhh/nominaService.js';
 import * as recetaSvc from '../src/services/produccion/recetaService.js';
 import * as produccionSvc from '../src/services/produccion/produccionService.js';
 

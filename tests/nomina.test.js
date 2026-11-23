@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
-import { initDb, runWithDatabase, closeConnection } from '../src/db.js';
-import * as nominaSvc from '../src/services/finanzas/nominaService.js';
+import { initDb, runWithDatabase, closeConnection, getDbPath } from '../src/db.js';
+import * as nominaSvc from '../src/services/rrhh/nominaService.js';
 import * as lsdSvc from '../src/services/afip/libroSueldosDigitalService.js';
 import { getAsientoById } from '../src/services/finanzas/asientoService.js';
 import { generateRecibosSueldoPdf, numeroALetrasPesos } from '../src/services/print/reciboSueldoPdfService.js';
@@ -14,6 +15,9 @@ function withIsolatedDb(fn) {
     return runWithDatabase(dbName, () => fn());
   } finally {
     closeConnection(dbName);
+    for (const ext of ['', '-shm', '-wal']) {
+      fs.rmSync(`${getDbPath(dbName)}${ext}`, { force: true });
+    }
   }
 }
 
@@ -121,10 +125,14 @@ test('Nómina Argentina: topes previsionales, devengamiento por sector, TXT LSD 
     assert.ok(f931.total_f931_arca > 0);
     assert.ok(f931.total_sindicato > 0);
 
-    // Recibos PDF LCT Art. 140 Duplicado y conversión a letras
+    // Recibos PDF LCT Art. 140: Hoja 1 ORIGINAL, Hoja 2 DUPLICADO
     assert.ok(numeroALetrasPesos(1250.5).includes('mil doscientos cincuenta con 50/100'));
-    const pdfBuf = generateRecibosSueldoPdf(det, { razon_social: 'Vanguard SRL', cuit: '30-71111111-9' }, { params: nominaSvc.getParametrosPrevisionales() });
+    const pdfBuf = generateRecibosSueldoPdf(det, { razon_social: 'Vanguard SRL', cuit: '30-71111111-9' }, { reciboId: det.recibos[0].id, params: nominaSvc.getParametrosPrevisionales() });
     assert.ok(Buffer.isBuffer(pdfBuf) && pdfBuf.subarray(0, 5).toString('utf8') === '%PDF-');
+    const pdfStr = pdfBuf.toString('latin1');
+    assert.ok(pdfStr.includes('(ORIGINAL) Tj') && pdfStr.includes('(DUPLICADO) Tj'), 'Debe incluir ORIGINAL en hoja 1 y DUPLICADO en hoja 2');
+    assert.ok(pdfStr.includes('COSTO TOTAL EMPLEADOR'), 'Debe incluir sección Costo Total Empleador');
+    assert.ok(pdfStr.includes('de 2'), 'Un recibo debe generar 2 páginas (Original + Duplicado)');
 
     // Anulación con contra-asiento y bloqueo de borrado en Anulada
     nominaSvc.anularLiquidacion(liqId);
@@ -132,5 +140,77 @@ test('Nómina Argentina: topes previsionales, devengamiento por sector, TXT LSD 
     const asientoAfter = getAsientoById(det.liquidacion.asiento_id);
     assert.equal(asientoAfter.asiento.estado, 'Revertido');
     assert.throws(() => nominaSvc.deleteLiquidacion(liqId), /No se puede eliminar físicamente/);
+  });
+});
+
+test('RRHH: detalle de empleado, ausencias sin goce descontadas automáticamente y liquidación individual vs masiva', () => {
+  withIsolatedDb(() => {
+    const e1 = nominaSvc.createEmpleado({
+      legajo: 'RRHH-1',
+      nombre: 'Laura',
+      apellido: 'Méndez',
+      cuil: '27-30111222-4',
+      sueldo_basico: 600000,
+      observaciones: 'Turno mañana',
+      notas: 'Excelente asistencia previa',
+      activo: 1,
+    });
+    const e2 = nominaSvc.createEmpleado({
+      legajo: 'RRHH-2',
+      nombre: 'Pedro',
+      apellido: 'Sosa',
+      cuil: '20-31222333-5',
+      sueldo_basico: 500000,
+      activo: 1,
+    });
+
+    // Registrar vacaciones (con goce) y ausencia injustificada (sin goce, 3 días) para e1 en 2026-11
+    nominaSvc.createLicencia({
+      empleado_id: e1,
+      tipo: 'Vacaciones',
+      fecha_desde: '2026-11-02',
+      fecha_hasta: '2026-11-06',
+      dias: 5,
+      con_goce: 1,
+      estado: 'Aprobada',
+    });
+    nominaSvc.createLicencia({
+      empleado_id: e1,
+      tipo: 'Ausencia Injustificada',
+      fecha_desde: '2026-11-10',
+      fecha_hasta: '2026-11-12',
+      dias: 3,
+      con_goce: 0,
+      estado: 'Aprobada',
+    });
+
+    // Liquidación individual solo para e1: debe descontar los 3 días sin goce (27 días trabajados) y guardar fecha
+    const liqIndId = nominaSvc.createLiquidacion({
+      periodo: '2026-11',
+      tipo_liquidacion: 'Mensual',
+      fecha_liquidacion: '2026-11-30',
+      empleado_ids: [e1],
+    });
+    const detInd = nominaSvc.getLiquidacionById(liqIndId);
+    assert.equal(detInd.liquidacion.fecha, '2026-11-30');
+    assert.equal(detInd.recibos.length, 1);
+    assert.equal(detInd.recibos[0].empleado_id, e1);
+    assert.equal(detInd.recibos[0].dias_trabajados, 27);
+
+    // Liquidación masiva (sin empleado_ids): incluye ambos empleados activos
+    const liqMasId = nominaSvc.createLiquidacion({
+      periodo: '2026-11',
+      tipo_liquidacion: 'Vacaciones',
+      fecha_liquidacion: '2026-11-30',
+    });
+    const detMas = nominaSvc.getLiquidacionById(liqMasId);
+    assert.equal(detMas.recibos.length, 2);
+
+    // Detalle del empleado e1 incluye licencias, recibos y notas
+    const empDet = nominaSvc.getEmpleadoDetalle(e1);
+    assert.equal(empDet.empleado.observaciones, 'Turno mañana');
+    assert.equal(empDet.empleado.notas, 'Excelente asistencia previa');
+    assert.equal(empDet.licencias.length, 2);
+    assert.equal(empDet.recibos.length, 2);
   });
 });

@@ -164,3 +164,45 @@ test('Remito PDF: letra X sin CAI, letra R con CAI, fechas dd/mm/aaaa, datos cli
   assert.ok(strMultiVenta.includes('de 2'), 'Debe generar más de 1 página e indicar Página X de Y');
   assert.ok(strMultiVenta.includes('Gracias por su compra'), 'Debe respetar print_pie_comprobante');
 });
+
+test('Venta PDF soporta ticket80 y ticket58 con CAE, QR fiscal y leyenda RG 5003/21', () => {
+  const emp = {
+    razon_social: 'Vanguard Production SRL',
+    cuit: '30712345679',
+    condicion_iva: 'Responsable Inscripto',
+    iibb: '901-123456-7',
+    inicio_actividades: '2024-01-01',
+    direccion: 'Av. Industrial 123',
+    print_pie_comprobante: 'Conserve su ticket',
+  };
+  const payload = {
+    venta: {
+      id: 10,
+      numero: 'FA 0001-00000123',
+      fecha: '2026-11-23',
+      caracter: 'fiscal',
+      tipo_comprobante: 'FA-A',
+      cliente_nombre: 'Comercio Monotributo',
+      cliente_cuit: '20301112223',
+      cliente_condicion_iva: 'Monotributo',
+      neto: 10000,
+      iva: 2100,
+      total: 12100,
+      cae: '74445556667778',
+      cae_vencimiento: '2026-12-03',
+    },
+    lineas: [
+      { descripcion: 'Zapatilla Urbana T40', cantidad: 2, precio_unitario: 5000, subtotal: 10000, alicuota_iva: 21 },
+    ],
+  };
+
+  for (const formato of ['ticket80', 'ticket58']) {
+    const buf = generateVentaPdf({ ...payload, formato }, emp);
+    const str = buf.toString('latin1');
+    assert.ok(str.startsWith('%PDF-1.4') && str.includes('%%EOF'), `${formato} debe generar PDF válido`);
+    assert.ok(str.includes('74445556667778'), `${formato} debe incluir CAE`);
+    assert.ok(str.includes('Vto CAE: 03/12/2026'), `${formato} debe incluir Vto CAE`);
+    assert.ok(str.includes('Conserve su ticket'), `${formato} debe incluir print_pie_comprobante`);
+    assert.ok(str.includes('27.618'), `${formato} debe incluir leyenda RG 5003/21 para Factura A a Monotributo`);
+  }
+});

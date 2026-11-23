@@ -8,7 +8,7 @@ Documento de referencia para cualquier persona o agente IA que lea el proyecto p
 
 ## 1. Qué es el proyecto
 
-ERP web para una operación de **manufactura (calzado) + comercio**, orientado a Argentina (ARCA/AFIP, IIBB, SIFERE). Cubre: catálogo con variantes, recetas y producción por etapas con talleres externos, inventario multi-ubicación con lotes, compras, ventas, tesorería, contabilidad de partida doble, libros fiscales, tareas y multi-base de datos.
+ERP web para una operación de **manufactura + comercio**, orientado a Argentina (ARCA/AFIP, IIBB, SIFERE). Cubre: catálogo con variantes, recetas y producción por etapas con talleres externos, inventario multi-ubicación con lotes, compras, ventas, tesorería, contabilidad de partida doble, libros fiscales, tareas y multi-base de datos.
 
 | Aspecto | Detalle |
 |---|---|
@@ -22,7 +22,7 @@ ERP web para una operación de **manufactura (calzado) + comercio**, orientado a
 ### Comandos
 ```powershell
 npm start                      # node server.js  (PORT por .env, default 3000)
-node --test                    # suite completa (27 tests, deben pasar siempre)
+node --test                    # suite completa (deben pasar todos los tests)
 node --check <archivo.js>      # validación de sintaxis de todo JS modificado
 ```
 > En PowerShell no hay `rg`; usar `Select-String`. `npm test` puede estar bloqueado por política: usar `node --test`.
@@ -55,7 +55,8 @@ src/
   routes/                      Capa HTTP (solo parseo, permisos y respuesta)
     api.js                     Despachador + chequeo de permisos por prefijo + helper `handlePdfPrint`
     authRoutes / dbRoutes / metaRoutes / configRoutes / inventarioRoutes / produccionRoutes /
-    comprasRoutes / ventasRoutes / tesoreriaRoutes / contactosRoutes / fiscalRoutes / tareaRoutes
+    comprasRoutes / ventasRoutes / tesoreriaRoutes / contactosRoutes / fiscalRoutes /
+    nominaRoutes / tareaRoutes / wooRoutes
   services/                    Reglas de negocio por dominio (ver sección 6)
 public/
   index.html, app.js, router.js  Shell SPA, definición de rutas (`addRoute`), router
@@ -64,7 +65,7 @@ public/
     engine/                    ★ Motores visuales reutilizables
   views/<modulo>/              Pantallas por dominio
 tests/                         Suite `node:test` (dominio, fiscal, contabilidad, cheques, SOLID, PDF, logger)
-utils/                         Este documento y planillas auxiliares
+utils/                         Documentación interna y planillas auxiliares (ignorado por Git)
 uploads/<db>/                  Adjuntos en disco por base (gestionado por metaService)
 logs/                          Logs de aplicación
 ```
@@ -267,7 +268,7 @@ Estados `Pendiente`/`En Proceso`/`En Revisión`/`Completada`/`Cancelada`, priori
 ---
 
 ## 10. Testing
-`tests/` (`node --test`, 27 tests): dominio integral y partida doble, fiscal AR (jurisdicciones, Libro IVA, retenciones, QR), `fiscalRules`, cheques, tesorería de cuentas, contabilidad y contabilidad avanzada (imputaciones, multimoneda, conciliación, cierre), condiciones comerciales, reglas comerciales (envíos/cupones/recargos), remito PDF, logger, y **tests SOLID** con repositorios en memoria (DIP/LSP/SRP). Cada tarea se cierra con `node --check` + `node --test` en verde.
+`tests/` (`node --test`): dominio integral y partida doble, fiscal AR (jurisdicciones, Libro IVA, retenciones, QR), `fiscalRules`, cheques, tesorería de cuentas, contabilidad y contabilidad avanzada (imputaciones, multimoneda, conciliación, cierre), condiciones comerciales, reglas comerciales (envíos/cupones/recargos), remito PDF, logger, y **tests SOLID** con repositorios en memoria (DIP/LSP/SRP). Cada tarea se cierra con `node --check` + `node --test` en verde.
 
 ---
 

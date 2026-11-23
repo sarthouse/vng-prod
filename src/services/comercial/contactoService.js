@@ -157,6 +157,7 @@ export class ContactoService {
     const nombre = (b.nombre || '').trim();
     if (!nombre) throw new Error('El nombre del contacto es obligatorio');
     const payload = normalizeContactoPayload({ ...b, nombre });
+    if (b.custom_fields !== undefined) payload.custom_fields = b.custom_fields;
     if (typeof this.contactoRepo.validate === 'function') {
       this.contactoRepo.validate(payload);
     }
@@ -167,6 +168,7 @@ export class ContactoService {
     const ex = this.contactoRepo.findById(id);
     if (!ex) return false;
     const payload = normalizeContactoPayload(b, ex);
+    if (b.custom_fields !== undefined) payload.custom_fields = b.custom_fields;
     if (!payload.nombre) throw new Error('El nombre del contacto es obligatorio');
     if (typeof this.contactoRepo.validate === 'function') {
       this.contactoRepo.validate(payload, { partial: true });

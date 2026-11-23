@@ -22,6 +22,32 @@ function normCompact(s) {
   return normText(s).replace(/[-.\s/]+/g, '');
 }
 
+function positionFloatingMenu(anchorEl, menuEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const menuW = Math.max(rect.width, 220);
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuW - 8));
+  menuEl.style.left = `${left}px`;
+  menuEl.style.width = `${menuW}px`;
+  menuEl.style.maxHeight = '260px';
+
+  const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - 8);
+  const spaceAbove = Math.max(0, rect.top - 8);
+  const naturalH = Math.min(menuEl.scrollHeight || 220, 260);
+
+  if (spaceBelow < naturalH && spaceAbove > spaceBelow) {
+    const maxH = Math.max(80, Math.min(260, spaceAbove));
+    menuEl.style.maxHeight = `${maxH}px`;
+    const actualH = Math.min(menuEl.scrollHeight || naturalH, maxH);
+    menuEl.style.top = `${Math.max(8, rect.top - actualH - 4)}px`;
+    menuEl.dataset.placement = 'top';
+  } else {
+    const maxH = Math.max(80, Math.min(260, spaceBelow));
+    menuEl.style.maxHeight = `${maxH}px`;
+    menuEl.style.top = `${rect.bottom + 4}px`;
+    menuEl.dataset.placement = 'bottom';
+  }
+}
+
 function matchItemQuery(item, q, qCompact) {
   if (!q) return true;
   if (normText(item.label).includes(q)) return true;
@@ -85,12 +111,7 @@ export function mountCombobox(container, opts) {
   let isOpen = false;
   let creating = false;
 
-  const positionMenu = () => {
-    const rect = inputEl.getBoundingClientRect();
-    menuEl.style.left = `${rect.left}px`;
-    menuEl.style.top = `${rect.bottom + 4}px`;
-    menuEl.style.width = `${Math.max(rect.width, 220)}px`;
-  };
+  const positionMenu = () => positionFloatingMenu(inputEl, menuEl);
 
   const close = () => {
     if (!isOpen) return;
@@ -190,9 +211,9 @@ export function mountCombobox(container, opts) {
     }
     isOpen = true;
     activeIdx = 0;
-    positionMenu();
     renderMenu(showAll);
     menuEl.classList.remove('hidden');
+    positionMenu();
   };
 
   inputEl.addEventListener('focus', () => {
@@ -353,12 +374,7 @@ export function mountMultiSelect(container, opts = {}) {
     opts.onChange?.(vals, getSelectedObjects());
   };
 
-  const positionMenu = () => {
-    const rect = controlEl.getBoundingClientRect();
-    menuEl.style.left = `${rect.left}px`;
-    menuEl.style.top = `${rect.bottom + 4}px`;
-    menuEl.style.width = `${Math.max(rect.width, 220)}px`;
-  };
+  const positionMenu = () => positionFloatingMenu(controlEl, menuEl);
 
   const close = () => {
     if (!isOpen) return;
@@ -451,9 +467,9 @@ export function mountMultiSelect(container, opts = {}) {
     }
     isOpen = true;
     activeIdx = 0;
-    positionMenu();
     renderMenu();
     menuEl.classList.remove('hidden');
+    positionMenu();
   };
 
   controlEl.addEventListener('click', () => {
@@ -465,8 +481,8 @@ export function mountMultiSelect(container, opts = {}) {
     if (!isOpen) open();
     else {
       activeIdx = 0;
-      positionMenu();
       renderMenu();
+      positionMenu();
     }
   });
   inputEl.addEventListener('keydown', (e) => {

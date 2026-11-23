@@ -70,6 +70,7 @@ const DEFAULT_SECUENCIAS = [
   { codigo: 'cobro', nombre: 'Recibos de Cobro', dominio: 'tesoreria', prefijo: 'RC', sufijo: '', padding: 8, siguiente_numero: 1, usa_punto_venta: 1, activo: 1 },
   { codigo: 'retencion', nombre: 'Certificados de Retención', dominio: 'tesoreria', prefijo: 'RET-', sufijo: '', padding: 8, siguiente_numero: 1, usa_punto_venta: 0, activo: 1 },
   { codigo: 'asiento', nombre: 'Asientos Contables', dominio: 'contabilidad', prefijo: 'ASI-', sufijo: '', padding: 6, siguiente_numero: 1, usa_punto_venta: 0, activo: 1 },
+  { codigo: 'legajo', nombre: 'Legajos de Empleados', dominio: 'rrhh', prefijo: 'LEG-', sufijo: '', padding: 3, siguiente_numero: 1, usa_punto_venta: 0, activo: 1 },
 ];
 
 const DEFAULT_IMPUESTOS = [
@@ -135,7 +136,8 @@ const DEFAULT_NOMINA_CONCEPTOS = [
   { codigo_interno: 'SINDICATO', descripcion: 'Cuota Sindical (2%)', tipo: 'descuento_retencion', codigo_afip_lsd: '810004', formula_tipo: 'porcentaje_remunerativo', valor_default: 2, aporta_sipa: 0, aporta_inssjp: 0, aporta_os: 0, aporta_fsr: 0, aporta_lrt: 0, base_sac: 0, activo: 1 },
   { codigo_interno: 'CONTRIB_SIPA', descripcion: 'Contribución Patronal SIPA / INSSJP / FNE (18%)', tipo: 'contribucion_patronal', codigo_afip_lsd: '820001', formula_tipo: 'porcentaje_remunerativo', valor_default: 18, aporta_sipa: 0, aporta_inssjp: 0, aporta_os: 0, aporta_fsr: 0, aporta_lrt: 0, base_sac: 0, activo: 1 },
   { codigo_interno: 'CONTRIB_OS', descripcion: 'Contribución Patronal Obra Social (6%)', tipo: 'contribucion_patronal', codigo_afip_lsd: '820002', formula_tipo: 'porcentaje_remunerativo', valor_default: 6, aporta_sipa: 0, aporta_inssjp: 0, aporta_os: 0, aporta_fsr: 0, aporta_lrt: 0, base_sac: 0, activo: 1 },
-  { codigo_interno: 'CONTRIB_ART', descripcion: 'ART / LRT + SCVO', tipo: 'contribucion_patronal', codigo_afip_lsd: '820003', formula_tipo: 'manual', valor_default: 0, aporta_sipa: 0, aporta_inssjp: 0, aporta_os: 0, aporta_fsr: 0, aporta_lrt: 0, base_sac: 0, activo: 1 },
+  { codigo_interno: 'CONTRIB_ART', descripcion: 'ART / LRT', tipo: 'contribucion_patronal', codigo_afip_lsd: '820003', formula_tipo: 'manual', valor_default: 0, aporta_sipa: 0, aporta_inssjp: 0, aporta_os: 0, aporta_fsr: 0, aporta_lrt: 0, base_sac: 0, activo: 1 },
+  { codigo_interno: 'CONTRIB_SCVO', descripcion: 'Seguro Colectivo de Vida Obligatorio (SCVO)', tipo: 'contribucion_patronal', codigo_afip_lsd: '820004', formula_tipo: 'manual', valor_default: 0, aporta_sipa: 0, aporta_inssjp: 0, aporta_os: 0, aporta_fsr: 0, aporta_lrt: 0, base_sac: 0, activo: 1 },
 ];
 
 function seedIfEmpty(repo, rows) {

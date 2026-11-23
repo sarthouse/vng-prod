@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { initDb, runWithDatabase, closeConnection, getDbPath } from '../src/db.js';
 import { MODELS } from '../src/db/models.js';
 import { BaseRepository } from '../src/core/BaseRepository.js';
-import * as nominaSvc from '../src/services/finanzas/nominaService.js';
+import * as nominaSvc from '../src/services/rrhh/nominaService.js';
 import { getAsientoById } from '../src/services/finanzas/asientoService.js';
 import * as contactoSvc from '../src/services/comercial/contactoService.js';
 import * as prodSvc from '../src/services/inventario/productoService.js';

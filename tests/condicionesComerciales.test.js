@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { db, initDb, runWithDatabase, closeConnection } from '../src/db.js';
+import { db, initDb, runWithDatabase, closeConnection, getDbPath } from '../src/db.js';
 import { createContacto } from '../src/services/comercial/contactoService.js';
 import { createPlantilla, getPlantillaById, updatePlantilla, listProductos } from '../src/services/inventario/productoService.js';
 import { getFlujoStockMatriz } from '../src/services/inventario/inventarioService.js';
@@ -21,7 +21,9 @@ import { createCobro } from '../src/services/finanzas/tesoreriaService.js';
 const TEST_DB = 'test_suite_condiciones_comerciales';
 
 test('Términos de pago (compra/venta), Métodos de pago, Tarifas por variante y Cuentas contables por plantilla', () => {
-  try { fs.unlinkSync(`data/${TEST_DB}.sqlite`); } catch { /* ignore */ }
+  for (const ext of ['', '-shm', '-wal']) {
+    fs.rmSync(`${getDbPath(TEST_DB)}${ext}`, { force: true });
+  }
   initDb(TEST_DB);
   try {
     runWithDatabase(TEST_DB, () => {
@@ -204,6 +206,8 @@ test('Términos de pago (compra/venta), Métodos de pago, Tarifas por variante y
     });
   } finally {
     closeConnection(TEST_DB);
-    try { fs.unlinkSync(`data/${TEST_DB}.sqlite`); } catch { /* ignore */ }
+    for (const ext of ['', '-shm', '-wal']) {
+      fs.rmSync(`${getDbPath(TEST_DB)}${ext}`, { force: true });
+    }
   }
 });

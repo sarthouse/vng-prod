@@ -99,6 +99,22 @@ export function updateEmpresaConfig(b) {
     cta_iva_debito_id: ctaField('cta_iva_debito_id'),
     cta_perc_sufridas_id: ctaField('cta_perc_sufridas_id'),
     cta_ret_depositar_id: ctaField('cta_ret_depositar_id'),
+    cta_mercaderias_id: ctaField('cta_mercaderias_id'),
+    cta_cmv_id: ctaField('cta_cmv_id'),
+    cta_valores_depositar_id: ctaField('cta_valores_depositar_id'),
+    cta_cheques_diferidos_id: ctaField('cta_cheques_diferidos_id'),
+    cta_iva_pagar_id: ctaField('cta_iva_pagar_id'),
+    cta_dif_cambio_pos_id: ctaField('cta_dif_cambio_pos_id'),
+    cta_dif_cambio_neg_id: ctaField('cta_dif_cambio_neg_id'),
+    cta_resultado_ejercicio_id: ctaField('cta_resultado_ejercicio_id'),
+    cta_bienes_uso_id: ctaField('cta_bienes_uso_id'),
+    cta_amort_acum_id: ctaField('cta_amort_acum_id'),
+    cta_amort_gasto_id: ctaField('cta_amort_gasto_id'),
+    cta_gastos_id: ctaField('cta_gastos_id'),
+    cta_sueldos_admin_id: ctaField('cta_sueldos_admin_id'),
+    cta_sueldos_pagar_id: ctaField('cta_sueldos_pagar_id'),
+    cta_cargas_pagar_id: ctaField('cta_cargas_pagar_id'),
+    cta_sindicato_pagar_id: ctaField('cta_sindicato_pagar_id'),
   });
   return getEmpresaConfig();
 }
@@ -264,6 +280,19 @@ export function listPuntosVenta() {
   return puntoVentaRepo.query().orderBy('numero', 'ASC').all();
 }
 
+export function resolveRemitoCaiPayload(data = {}) {
+  if (!data || data.cai) return data;
+  const raw = String(data.numero || '').trim();
+  const m = raw.match(/^(?:[A-Za-z]+\s+)?(\d{4,5})-(\d{6,8})$/);
+  const pvNum = m ? parseInt(m[1], 10) : 0;
+  const pv = (pvNum ? puntoVentaRepo.where('numero', pvNum).first() : null)
+    || puntoVentaRepo.where('es_default', 1).first();
+  if (pv?.cai) {
+    return { ...data, cai: pv.cai, caiVto: data.caiVto || pv.cai_vto || '' };
+  }
+  return data;
+}
+
 export function createPuntoVenta(b) {
   const numero = Math.max(1, Math.min(9999, parseInt(b.numero, 10) || 0));
   if (!numero) throw new Error('El número de punto de venta debe estar entre 1 y 9999');
@@ -372,6 +401,7 @@ export function getNextNumeroDocumento(tipo, puntoVentaNum, { advance = false } 
     orden: 'ordenes_produccion',
     operacion_stock: 'operaciones_stock',
     asiento: 'asientos',
+    legajo: 'empleados',
   };
 
   const prefijo = seq
@@ -391,7 +421,7 @@ export function getNextNumeroDocumento(tipo, puntoVentaNum, { advance = false } 
   let max = 0;
   const targetTable = tableMap[tipo];
   if (targetTable) {
-    const col = tipo === 'orden' ? 'codigo' : 'numero';
+    const col = tipo === 'orden' ? 'codigo' : tipo === 'legajo' ? 'legajo' : 'numero';
     const pvPad = usaPv ? String(pvNum).padStart(4, '0') : '';
     const targetRepo = new BaseRepository({ table: targetTable });
     const qb = targetRepo.query().select(`${col} as num`);

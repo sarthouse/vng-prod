@@ -1,4 +1,5 @@
 import * as configSvc from '../services/config/configService.js';
+import * as customFieldSvc from '../services/config/customFieldService.js';
 import * as importSvc from '../services/config/importService.js';
 import * as jsonExSvc from '../services/config/jsonExchangeService.js';
 import * as afipSvc from '../services/afip/afipService.js';
@@ -350,6 +351,38 @@ export async function handleConfigRoutes(req, res, pathname) {
       'Content-Disposition': `attachment; filename="${fname}"`,
     });
     res.end(xml);
+    return true;
+  }
+
+  // ── Campos Personalizados por Entidad ───────────────────────────────────────
+  if (pathname === '/api/custom-fields' && req.method === 'GET') {
+    const qs = new URL(req.url, 'http://localhost').searchParams;
+    try {
+      json(res, 200, customFieldSvc.listCustomFieldDefs({
+        entidad: qs.get('entidad') || null,
+        soloActivos: qs.get('activos') === '1',
+      }));
+    } catch (e) { json(res, e.status || 400, { error: e.message }); }
+    return true;
+  }
+  if (pathname === '/api/custom-fields' && req.method === 'POST') {
+    try { json(res, 201, { id: customFieldSvc.createCustomFieldDef(await parseBody(req)) }); }
+    catch (e) { json(res, e.status || 400, { error: e.message }); }
+    return true;
+  }
+  const cfMatch = pathname.match(/^\/api\/custom-fields\/(\d+)$/);
+  if (cfMatch && req.method === 'PUT') {
+    try {
+      const ok = customFieldSvc.updateCustomFieldDef(Number(cfMatch[1]), await parseBody(req));
+      if (!ok) json(res, 404, { error: 'Campo personalizado no encontrado' });
+      else json(res, 200, { ok: true });
+    } catch (e) { json(res, e.status || 400, { error: e.message }); }
+    return true;
+  }
+  if (cfMatch && req.method === 'DELETE') {
+    const ok = customFieldSvc.deleteCustomFieldDef(Number(cfMatch[1]));
+    if (!ok) json(res, 404, { error: 'Campo personalizado no encontrado' });
+    else json(res, 200, { ok: true });
     return true;
   }
 

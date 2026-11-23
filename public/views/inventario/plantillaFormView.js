@@ -4,12 +4,13 @@ import { navigate } from '../../router.js';
 import { mountCombobox, mountMultiSelect, quickCreateProveedor, quickCreateCategoria } from '../../lib/autocomplete.js';
 import { renderMetaPanel } from '../../lib/metaPanel.js';
 import { mountDetailView, renderDataTable, renderSpreadsheetTable } from '../../lib/engine/index.js';
+import { fetchCustomFieldDefs, renderCustomFieldsSection } from '../../lib/customFieldsHelper.js';
 
 export async function renderPlantillaFormView({ id } = {}) {
   const root = document.getElementById('app-view');
   const isEdit = Boolean(id);
 
-  const [config, todosImpuestos, proveedores, existing, planCuentas, tarifasCompra, listasPrecios, historialPrecios] = await Promise.all([
+  const [config, todosImpuestos, proveedores, existing, planCuentas, tarifasCompra, listasPrecios, historialPrecios, pltCfDefs] = await Promise.all([
     api('/api/config'),
     api('/api/impuestos?solo_activos=1').catch(() => []),
     api('/api/contactos?es_proveedor=1'),
@@ -18,6 +19,7 @@ export async function renderPlantillaFormView({ id } = {}) {
     isEdit ? api(`/api/producto-proveedores?plantilla_id=${id}`).catch(() => []) : Promise.resolve([]),
     isEdit ? api('/api/listas-precios?solo_activos=1').catch(() => []) : Promise.resolve([]),
     isEdit ? api(`/api/plantillas/${id}/historial-precios`).catch(() => []) : Promise.resolve([]),
+    fetchCustomFieldDefs('producto_plantillas'),
   ]);
   const cuentasImputables = (planCuentas || []).filter(c => c.activo !== 0 && c.imputable !== 0);
   const cuentasIngreso = cuentasImputables.filter(c => c.tipo === 'ingreso');
@@ -97,11 +99,11 @@ export async function renderPlantillaFormView({ id } = {}) {
       <form id="form-plantilla" class="form-grid">
         <label>
           <span>Código / Prefijo SKU</span>
-          <input type="text" name="codigo" value="${esc(pt.codigo || '')}" placeholder="Ej: MOR, CUE-VAC" />
+          <input type="text" name="codigo" value="${esc(pt.codigo || '')}" placeholder="Ej: MOD-01, INS-001" />
         </label>
         <label>
           <span>Nombre *</span>
-          <input type="text" name="nombre" required value="${esc(pt.nombre)}" placeholder="Ej: Moran / Base Ushuaia" />
+          <input type="text" name="nombre" required value="${esc(pt.nombre)}" placeholder="Ej: Producto Modelo A / Insumo Base" />
         </label>
         <label>
           <span>Tipo *</span>
@@ -208,6 +210,8 @@ export async function renderPlantillaFormView({ id } = {}) {
             <button type="button" id="btn-pt-img-clear" class="btn btn-sm ${pt.imagen_data ? '' : 'hidden'}">Quitar</button>
           </div>
         </div>
+
+        <div id="plt-custom-fields-host" class="full"></div>
 
         <div class="full modal-footer">
           <a href="/productos" data-link class="btn">Cancelar</a>
@@ -556,6 +560,12 @@ export async function renderPlantillaFormView({ id } = {}) {
         if (f) f.value = '';
       });
 
+      const getPltCustomFields = renderCustomFieldsSection(
+        root.querySelector('#plt-custom-fields-host'),
+        pltCfDefs,
+        pt.custom_fields || {},
+      );
+
       root.querySelector('#form-plantilla')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(e.target);
@@ -592,6 +602,7 @@ export async function renderPlantillaFormView({ id } = {}) {
           peso_kg: Math.max(0, Number(fd.get('peso_kg')) || 0),
           imagen_data: pt.imagen_data || '',
           atributos,
+          custom_fields: getPltCustomFields(),
         };
         if (!isEdit) {
           payload.costo = Number(fd.get('costo')) || 0;

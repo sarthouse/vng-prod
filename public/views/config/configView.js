@@ -43,24 +43,63 @@ function parseCsvText(text) {
 
 export async function renderConfigView() {
   const root = document.getElementById('app-view');
-  const [config, puntosVenta, secuencias, afip, planCuentas] = await Promise.all([
+  const [config, puntosVenta, secuencias, afip, planCuentas, customFields] = await Promise.all([
     api('/api/config'),
     api('/api/puntos-venta'),
     api('/api/secuencias').catch(() => []),
     api('/api/afip/config').catch(() => null),
     api('/api/tesoreria/plan-cuentas').catch(() => []),
+    api('/api/custom-fields').catch(() => []),
   ]);
   const empresa = config.empresa || {};
   const impuestos = config.impuestos || [];
   const cuentasImputables = (planCuentas || []).filter(c => Number(c.activo) !== 0 && Number(c.imputable) !== 0);
-  const ctaOptions = (selectedId, fallbackLabel) => [
-    `<option value="">-- Estándar (${esc(fallbackLabel)}) --</option>`,
-    ...cuentasImputables.map(c => `<option value="${c.id}" ${Number(selectedId) === Number(c.id) ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`),
-  ].join('');
+  const ctaOptions = (selectedId, fallbackCode) => {
+    const defCta = cuentasImputables.find(c => c.codigo === fallbackCode);
+    const defText = defCta ? `${defCta.codigo} · ${defCta.nombre}` : `${fallbackCode} · (automática)`;
+    return [
+      `<option value="">${esc(defText)}</option>`,
+      ...cuentasImputables.map(c => `<option value="${c.id}" ${Number(selectedId) === Number(c.id) ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.nombre)}</option>`),
+    ].join('');
+  };
+
+  const DEFAULT_CTA_FIELDS = [
+    // Comercial e Impuestos
+    { key: 'cta_clientes_id', label: 'Clientes / Deudores por Ventas', def: '1.1.03' },
+    { key: 'cta_proveedores_id', label: 'Proveedores', def: '2.1.01' },
+    { key: 'cta_ventas_id', label: 'Ventas por Defecto', def: '4.1.01' },
+    { key: 'cta_compras_id', label: 'Compras / Costo Mercadería por Defecto', def: '5.1.01' },
+    { key: 'cta_iva_credito_id', label: 'IVA Crédito Fiscal', def: '1.1.04' },
+    { key: 'cta_iva_debito_id', label: 'IVA Débito Fiscal', def: '2.1.02' },
+    { key: 'cta_iva_pagar_id', label: 'IVA a Pagar (Posición Mensual)', def: '2.1.05' },
+    { key: 'cta_perc_sufridas_id', label: 'Percepciones y Retenciones Sufridas', def: '1.1.05' },
+    { key: 'cta_ret_depositar_id', label: 'Percepciones / Retenciones a Depositar', def: '2.1.03' },
+    // Inventario, Producción y Tesorería
+    { key: 'cta_mercaderias_id', label: 'Bienes de Cambio / Mercaderías', def: '1.1.06' },
+    { key: 'cta_cmv_id', label: 'Costo de Mercadería Vendida (CMV)', def: '5.1.01' },
+    { key: 'cta_mano_obra_id', label: 'Mano de Obra / Talleres / Sueldos Prod.', def: '5.1.02' },
+    { key: 'cta_valores_depositar_id', label: 'Valores a Depositar (Cheques Terceros)', def: '1.1.07' },
+    { key: 'cta_cheques_diferidos_id', label: 'Cheques Diferidos a Pagar', def: '2.1.04' },
+    // Contabilidad y Activos Fijos
+    { key: 'cta_dif_cambio_pos_id', label: 'Diferencia de Cambio Positiva', def: '4.2.01' },
+    { key: 'cta_dif_cambio_neg_id', label: 'Diferencia de Cambio Negativa', def: '5.2.08' },
+    { key: 'cta_resultado_ejercicio_id', label: 'Resultado del Ejercicio (Cierre)', def: '3.2.01' },
+    { key: 'cta_bienes_uso_id', label: 'Bienes de Uso (Activos Fijos)', def: '1.2.01' },
+    { key: 'cta_amort_acum_id', label: 'Amortizaciones Acumuladas', def: '1.2.02' },
+    { key: 'cta_amort_gasto_id', label: 'Amortizaciones del Ejercicio', def: '5.2.09' },
+    { key: 'cta_gastos_id', label: 'Otros Gastos Operativos / Baja Activos', def: '5.2.07' },
+    // RRHH y Nómina
+    { key: 'cta_sueldos_admin_id', label: 'Sueldos y Cargas Sociales (Admin)', def: '5.2.06' },
+    { key: 'cta_sueldos_pagar_id', label: 'Sueldos y Jornales a Pagar', def: '2.1.06' },
+    { key: 'cta_cargas_pagar_id', label: 'Cargas Sociales y Retenciones a Depositar', def: '2.1.07' },
+    { key: 'cta_sindicato_pagar_id', label: 'Cuota Sindical a Depositar', def: '2.1.08' },
+  ];
 
   const tabs = [
     { id: 'empresa', label: 'Empresa y Fiscal' },
+    { id: 'secuencias', label: 'Secuencias' },
     { id: 'cuentas_contables', label: 'Cuentas Contables' },
+    { id: 'campos_personalizados', label: 'Campos Personalizados' },
     { id: 'importacion', label: 'Importación / Exportación' },
     { id: 'seguridad', label: 'Usuarios y Permisos' },
   ];
@@ -309,53 +348,30 @@ export async function renderConfigView() {
     </div>
     ` : ''}
 
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <h2>Secuencias de Numeración</h2>
-          <p class="muted text-sm">Prefijos, sufijos, relleno (padding), próximo número y dominio para cada tipo de documento.</p>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Nombre</th>
-              <th>Dominio</th>
-              <th>Prefijo</th>
-              <th>Sufijo</th>
-              <th class="w-90">Padding</th>
-              <th class="sx-1a3055">Próx. Nº</th>
-              <th>Usa PV</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${secuencias.map(seq => `
-              <tr data-seq-row="${seq.id}">
-                <td><code>${esc(seq.codigo)}</code></td>
-                <td><input type="text" class="seq-nombre input-sm" value="${esc(seq.nombre)}" /></td>
-                <td>
-                  <select class="seq-dominio input-sm">
-                    ${['general', 'compras', 'ventas', 'inventario', 'produccion', 'tesoreria'].map(d =>
-                      `<option value="${d}" ${seq.dominio === d ? 'selected' : ''}>${d}</option>`
-                    ).join('')}
-                  </select>
-                </td>
-                <td><input type="text" class="seq-prefijo input-sm w-85" value="${esc(seq.prefijo)}" /></td>
-                <td><input type="text" class="seq-sufijo input-sm sx-65e62e" value="${esc(seq.sufijo)}" /></td>
-                <td><input type="number" min="1" max="12" class="seq-padding input-sm w-70" value="${seq.padding}" /></td>
-                <td><input type="number" min="1" class="seq-next input-sm w-90" value="${seq.siguiente_numero}" /></td>
-                <td><input type="checkbox" class="seq-pv" ${seq.usa_punto_venta ? 'checked' : ''} /></td>
-                <td><button type="button" class="btn btn-sm btn-primary" data-save-seq="${seq.id}">Guardar</button></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </section>
 
+    <section class="config-tab-panel ${activeConfigTab === 'secuencias' ? 'active' : ''}" data-config-panel="secuencias">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Secuencias de Numeración</h2>
+            <span class="muted text-sm">Click en cualquier celda para editar prefijos, sufijos, relleno (padding), próximo número, dominio o punto de venta.</span>
+          </div>
+        </div>
+        <div id="secuencias-sheet"></div>
+      </div>
+    </section>
+
+    <section class="config-tab-panel ${activeConfigTab === 'campos_personalizados' ? 'active' : ''}" data-config-panel="campos_personalizados">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Campos Personalizados por Entidad</h2>
+            <span class="muted text-sm">Prototipá campos dinámicos por entidad. Completá la fila inferior para crear un nuevo campo o editá en línea. En tipo <code>select</code> separá las opciones por coma (ej: <code>A, B, C</code>).</span>
+          </div>
+        </div>
+        <div id="custom-fields-sheet"></div>
+      </div>
     </section>
 
     <section class="config-tab-panel ${activeConfigTab === 'cuentas_contables' ? 'active' : ''}" data-config-panel="cuentas_contables">
@@ -363,46 +379,16 @@ export async function renderConfigView() {
         <div class="card-header">
           <div>
             <h2>Cuentas Contables por Defecto</h2>
-            <span class="muted text-md">Cuentas utilizadas automáticamente en asientos de ventas, compras, impuestos y etapas de producción cuando no hay una cuenta específica en el ítem o diario.</span>
+            <span class="muted text-md">Cuentas utilizadas automáticamente en asientos de ventas, compras, impuestos, inventario, tesorería, activos fijos, nómina y cierres cuando no hay una cuenta específica en el ítem o diario.</span>
           </div>
         </div>
         <form id="form-cuentas-defecto" class="form-grid">
-          <label>
-            <span>Clientes / Deudores por Ventas</span>
-            <select name="cta_clientes_id">${ctaOptions(empresa.cta_clientes_id, '1.1.03')}</select>
-          </label>
-          <label>
-            <span>Proveedores</span>
-            <select name="cta_proveedores_id">${ctaOptions(empresa.cta_proveedores_id, '2.1.01')}</select>
-          </label>
-          <label>
-            <span>Ventas por Defecto</span>
-            <select name="cta_ventas_id">${ctaOptions(empresa.cta_ventas_id, '4.1.01')}</select>
-          </label>
-          <label>
-            <span>Compras / Costo Mercadería por Defecto</span>
-            <select name="cta_compras_id">${ctaOptions(empresa.cta_compras_id, '5.1.01')}</select>
-          </label>
-          <label>
-            <span>Mano de Obra / Talleres (Etapas Producción)</span>
-            <select name="cta_mano_obra_id">${ctaOptions(empresa.cta_mano_obra_id, '5.1.02')}</select>
-          </label>
-          <label>
-            <span>IVA Crédito Fiscal</span>
-            <select name="cta_iva_credito_id">${ctaOptions(empresa.cta_iva_credito_id, '1.1.04')}</select>
-          </label>
-          <label>
-            <span>IVA Débito Fiscal</span>
-            <select name="cta_iva_debito_id">${ctaOptions(empresa.cta_iva_debito_id, '2.1.02')}</select>
-          </label>
-          <label>
-            <span>Percepciones y Retenciones Sufridas</span>
-            <select name="cta_perc_sufridas_id">${ctaOptions(empresa.cta_perc_sufridas_id, '1.1.05')}</select>
-          </label>
-          <label>
-            <span>Percepciones / Retenciones a Depositar</span>
-            <select name="cta_ret_depositar_id">${ctaOptions(empresa.cta_ret_depositar_id, '2.1.03')}</select>
-          </label>
+          ${DEFAULT_CTA_FIELDS.map(f => `
+            <label>
+              <span>${esc(f.label)}</span>
+              <select name="${f.key}">${ctaOptions(empresa[f.key], f.def)}</select>
+            </label>
+          `).join('')}
           <div class="full modal-footer">
             <button type="submit" class="btn btn-primary">Guardar Cuentas por Defecto</button>
           </div>
@@ -557,21 +543,14 @@ export async function renderConfigView() {
   root.querySelector('#form-cuentas-defecto')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const numOrNull = (k) => (fd.get(k) ? Number(fd.get(k)) : null);
+    const payload = {};
+    for (const f of DEFAULT_CTA_FIELDS) {
+      payload[f.key] = fd.get(f.key) ? Number(fd.get(f.key)) : null;
+    }
     try {
       await api('/api/empresa', {
         method: 'PUT',
-        body: JSON.stringify({
-          cta_clientes_id: numOrNull('cta_clientes_id'),
-          cta_proveedores_id: numOrNull('cta_proveedores_id'),
-          cta_ventas_id: numOrNull('cta_ventas_id'),
-          cta_compras_id: numOrNull('cta_compras_id'),
-          cta_mano_obra_id: numOrNull('cta_mano_obra_id'),
-          cta_iva_credito_id: numOrNull('cta_iva_credito_id'),
-          cta_iva_debito_id: numOrNull('cta_iva_debito_id'),
-          cta_perc_sufridas_id: numOrNull('cta_perc_sufridas_id'),
-          cta_ret_depositar_id: numOrNull('cta_ret_depositar_id'),
-        }),
+        body: JSON.stringify(payload),
       });
       toast('Cuentas contables por defecto guardadas');
       await renderConfigView();
@@ -827,25 +806,149 @@ export async function renderConfigView() {
     } catch (err) { toast(err.message, true); }
   });
 
-  root.querySelectorAll('[data-save-seq]').forEach(btn => btn.addEventListener('click', async () => {
-    const row = root.querySelector(`[data-seq-row="${btn.dataset.saveSeq}"]`);
-    try {
-      await api(`/api/secuencias/${btn.dataset.saveSeq}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          nombre: row.querySelector('.seq-nombre').value.trim(),
-          dominio: row.querySelector('.seq-dominio').value,
-          prefijo: row.querySelector('.seq-prefijo').value,
-          sufijo: row.querySelector('.seq-sufijo').value,
-          padding: Number(row.querySelector('.seq-padding').value) || 8,
-          siguiente_numero: Number(row.querySelector('.seq-next').value) || 1,
-          usa_punto_venta: row.querySelector('.seq-pv').checked,
-        }),
-      });
-      toast('Secuencia actualizada');
-      await renderConfigView();
-    } catch (err) { toast(err.message, true); }
-  }));
+  const secuenciasHost = root.querySelector('#secuencias-sheet');
+  if (secuenciasHost) {
+    renderSpreadsheetTable(secuenciasHost, {
+      rows: secuencias,
+      emptyText: 'No hay secuencias configuradas.',
+      compact: true,
+      columns: [
+        { key: 'codigo', label: 'Código', readOnly: true, render: s => `<code>${esc(s.codigo)}</code>` },
+        { key: 'nombre', label: 'Nombre', type: 'text' },
+        {
+          key: 'dominio',
+          label: 'Dominio',
+          type: 'select',
+          options: ['general', 'compras', 'ventas', 'inventario', 'produccion', 'tesoreria', 'contabilidad', 'rrhh'].map(d => ({ value: d, label: d })),
+        },
+        { key: 'prefijo', label: 'Prefijo', type: 'text' },
+        { key: 'sufijo', label: 'Sufijo', type: 'text' },
+        { key: 'padding', label: 'Padding', type: 'number', align: 'right' },
+        { key: 'siguiente_numero', label: 'Próx. Nº', type: 'number', align: 'right' },
+        { key: 'usa_punto_venta', label: 'Usa PV', type: 'boolean' },
+      ],
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          const payload = {
+            [key]: (key === 'padding' || key === 'siguiente_numero')
+              ? Math.max(1, Number(value || 1))
+              : (key === 'usa_punto_venta' ? Boolean(value) : value),
+          };
+          await api(`/api/secuencias/${row.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          });
+          toast('Secuencia actualizada');
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
+    });
+  }
+
+  const cfHost = root.querySelector('#custom-fields-sheet');
+  if (cfHost) {
+    const ENTIDAD_OPTS = [
+      { value: 'contactos', label: 'contactos' },
+      { value: 'producto_plantillas', label: 'producto_plantillas' },
+      { value: 'productos', label: 'productos' },
+      { value: 'empleados', label: 'empleados' },
+      { value: 'ordenes_produccion', label: 'ordenes_produccion' },
+    ];
+    const TIPO_OPTS = ['text', 'number', 'date', 'boolean', 'select'].map(t => ({ value: t, label: t }));
+    renderSpreadsheetTable(cfHost, {
+      rows: customFields,
+      emptyText: 'No hay campos personalizados definidos.',
+      compact: true,
+      defaultNewRow: () => ({
+        entidad: 'contactos',
+        etiqueta: '',
+        nombre_tecnico: '',
+        tipo: 'text',
+        opciones_json: '[]',
+        requerido: 0,
+        visible_en_grilla: 1,
+        visible_en_pdf: 0,
+        orden: 0,
+        activo: 1,
+      }),
+      columns: [
+        { key: 'entidad', label: 'Entidad', type: 'select', options: ENTIDAD_OPTS },
+        { key: 'etiqueta', label: 'Etiqueta', type: 'text' },
+        { key: 'nombre_tecnico', label: 'Nombre Técnico', type: 'text', render: r => `<code>${esc(r.nombre_tecnico || '')}</code>` },
+        { key: 'tipo', label: 'Tipo', type: 'select', options: TIPO_OPTS },
+        {
+          key: 'opciones_json',
+          label: 'Opciones (select)',
+          type: 'text',
+          render: r => {
+            try {
+              const arr = JSON.parse(r.opciones_json || '[]');
+              return esc(Array.isArray(arr) ? arr.join(', ') : String(r.opciones_json || ''));
+            } catch {
+              return esc(String(r.opciones_json || ''));
+            }
+          },
+        },
+        { key: 'requerido', label: 'Req.', type: 'boolean' },
+        { key: 'visible_en_grilla', label: 'Grilla', type: 'boolean' },
+        { key: 'visible_en_pdf', label: 'PDF', type: 'boolean' },
+        { key: 'orden', label: 'Orden', type: 'number', align: 'right' },
+        { key: 'activo', label: 'Activo', type: 'boolean' },
+      ],
+      onCreateRow: async ({ row }) => {
+        if (!String(row.etiqueta || '').trim() || !String(row.nombre_tecnico || '').trim()) return false;
+        try {
+          await api('/api/custom-fields', {
+            method: 'POST',
+            body: JSON.stringify({
+              entidad: row.entidad,
+              etiqueta: row.etiqueta,
+              nombre_tecnico: row.nombre_tecnico,
+              tipo: row.tipo,
+              opciones_json: row.opciones_json,
+              requerido: Boolean(row.requerido),
+              visible_en_grilla: Boolean(row.visible_en_grilla),
+              visible_en_pdf: Boolean(row.visible_en_pdf),
+              orden: Number(row.orden || 0),
+              activo: Boolean(row.activo),
+            }),
+          });
+          toast('Campo personalizado creado');
+          await renderConfigView();
+          return false;
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
+      onCellChange: async ({ row, key, value }) => {
+        try {
+          const payload = {
+            [key]: ['requerido', 'visible_en_grilla', 'visible_en_pdf', 'activo'].includes(key)
+              ? Boolean(value)
+              : (key === 'orden' ? Number(value || 0) : value),
+          };
+          await api(`/api/custom-fields/${row.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          });
+          toast('Campo personalizado actualizado');
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
+      },
+      onDeleteRow: async (row) => {
+        try {
+          await api(`/api/custom-fields/${row.id}`, { method: 'DELETE' });
+          toast('Campo personalizado eliminado');
+          await renderConfigView();
+        } catch (err) { toast(err.message, true); }
+      },
+    });
+  }
 
   root.querySelector('#btn-tpl-cont').addEventListener('click', () => {
     exportRowsToCSV(

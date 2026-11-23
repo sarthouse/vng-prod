@@ -2,10 +2,12 @@ import { BaseRepository } from '../../core/BaseRepository.js';
 import { createStateMachine } from '../../core/stateMachine.js';
 import { domainBus } from '../../core/eventBus.js';
 import { MODELS } from '../../db/models.js';
-import { defaultAsientoService } from './asientoService.js';
+import { defaultAsientoService } from '../finanzas/asientoService.js';
+import { getNextNumeroDocumento } from '../config/configService.js';
 import { registerDomainSubscribers } from '../domainEvents.js';
 
 export const empleadoRepo = new BaseRepository({ model: MODELS.empleados });
+export const licenciaRepo = new BaseRepository({ model: MODELS.empleado_licencias });
 export const conceptoRepo = new BaseRepository({ model: MODELS.nomina_conceptos });
 export const liquidacionRepo = new BaseRepository({ model: MODELS.liquidaciones_sueldos });
 export const reciboRepo = new BaseRepository({ model: MODELS.liquidacion_recibos });
@@ -153,9 +155,8 @@ export function listEmpleados({ soloActivos = false } = {}) {
 }
 
 export function createEmpleado(b, user = null) {
-  const count = empleadoRepo.query().count();
   const payload = {
-    legajo: String(b.legajo || '').trim() || `LEG-${String(count + 1).padStart(3, '0')}`,
+    legajo: String(b.legajo || '').trim() || getNextNumeroDocumento('legajo', null, { advance: true }).numero,
     cuil: formatCuil(b.cuil),
     nombre: String(b.nombre || '').trim(),
     apellido: String(b.apellido || '').trim(),
@@ -174,7 +175,10 @@ export function createEmpleado(b, user = null) {
     cbu: validateCbu(b.cbu),
     sueldo_basico: Math.max(0, Number(b.sueldo_basico || 0)),
     cuenta_sueldos_id: b.cuenta_sueldos_id ? Number(b.cuenta_sueldos_id) : null,
+    observaciones: String(b.observaciones || '').trim(),
+    notas: String(b.notas || '').trim(),
     activo: b.activo === undefined ? 1 : (Number(b.activo) ? 1 : 0),
+    ...(b.custom_fields !== undefined ? { custom_fields: b.custom_fields } : {}),
   };
   empleadoRepo.validate(payload);
   return empleadoRepo.create(payload, user);
@@ -188,7 +192,7 @@ export function updateEmpleado(id, b, user = null) {
     'legajo', 'nombre', 'apellido', 'fecha_ingreso', 'fecha_egreso',
     'modalidad_contrato_afip', 'situacion_revista_afip', 'condicion_afip',
     'actividad_afip', 'obra_social_codigo', 'convenio_cct', 'categoria_laboral',
-    'puesto', 'sector',
+    'puesto', 'sector', 'observaciones', 'notas',
   ];
   for (const k of strFields) {
     if (b[k] !== undefined) patch[k] = String(b[k] || '').trim();
@@ -199,6 +203,7 @@ export function updateEmpleado(id, b, user = null) {
   if (b.sueldo_basico !== undefined) patch.sueldo_basico = Math.max(0, Number(b.sueldo_basico || 0));
   if (b.cuenta_sueldos_id !== undefined) patch.cuenta_sueldos_id = b.cuenta_sueldos_id ? Number(b.cuenta_sueldos_id) : null;
   if (b.activo !== undefined) patch.activo = Number(b.activo) ? 1 : 0;
+  if (b.custom_fields !== undefined) patch.custom_fields = b.custom_fields;
   empleadoRepo.validate(patch, { partial: true });
   return empleadoRepo.update(id, patch, user);
 }
@@ -209,6 +214,77 @@ export function deleteEmpleado(id) {
     throw new Error('El empleado tiene recibos asociados; desactivalo en lugar de eliminarlo.');
   }
   return empleadoRepo.delete(id);
+}
+
+export function getEmpleadoDetalle(id) {
+  const emp = empleadoRepo.findById(Number(id));
+  if (!emp) return null;
+  const licencias = licenciaRepo.where('empleado_id', emp.id).orderBy('fecha_desde', 'DESC').orderBy('id', 'DESC').all();
+  const recibos = reciboRepo.query('r')
+    .select('r.*', 'l.numero as liquidacion_numero', 'l.periodo', 'l.tipo_liquidacion', 'l.fecha_liquidacion', 'l.fecha_pago', 'l.estado as liquidacion_estado')
+    .innerJoin('liquidaciones_sueldos', 'l', 'l.id', 'r.liquidacion_id')
+    .where('r.empleado_id', emp.id)
+    .orderBy('l.periodo', 'DESC')
+    .orderBy('r.id', 'DESC')
+    .all();
+  return { empleado: emp, licencias, recibos };
+}
+
+export function listLicencias({ empleado_id, periodo, tipo, estado } = {}) {
+  const qb = licenciaRepo.query('lic')
+    .select('lic.*', 'e.legajo', 'e.nombre as empleado_nombre', 'e.apellido as empleado_apellido', 'e.sector')
+    .innerJoin('empleados', 'e', 'e.id', 'lic.empleado_id')
+    .orderBy('lic.fecha_desde', 'DESC')
+    .orderBy('lic.id', 'DESC');
+  if (empleado_id) qb.where('lic.empleado_id', Number(empleado_id));
+  if (periodo) qb.where('lic.periodo', String(periodo).trim());
+  if (tipo) qb.where('lic.tipo', String(tipo).trim());
+  if (estado) qb.where('lic.estado', String(estado).trim());
+  return qb.all().map(r => ({
+    ...r,
+    empleado_nombre_completo: `${r.empleado_apellido || ''} ${r.empleado_nombre || ''}`.trim(),
+  }));
+}
+
+export function createLicencia(b = {}, user = null) {
+  const empId = Number(b.empleado_id || 0);
+  if (!empId) throw new Error('Debe seleccionar un empleado');
+  const fechaDesde = String(b.fecha_desde || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const periodo = String(b.periodo || fechaDesde.slice(0, 7)).trim();
+  const payload = {
+    empleado_id: empId,
+    tipo: b.tipo || 'Vacaciones',
+    periodo,
+    fecha_desde: fechaDesde,
+    fecha_hasta: String(b.fecha_hasta || fechaDesde).slice(0, 10),
+    dias: Math.max(0, Math.round(Number(b.dias ?? 1))),
+    con_goce: b.con_goce === undefined ? (b.tipo === 'Ausencia Injustificada' ? 0 : 1) : (Number(b.con_goce) ? 1 : 0),
+    estado: b.estado || 'Aprobada',
+    observaciones: String(b.observaciones || '').trim(),
+  };
+  licenciaRepo.validate(payload);
+  return licenciaRepo.create(payload, user);
+}
+
+export function updateLicencia(id, b = {}, user = null) {
+  const ex = licenciaRepo.findById(Number(id));
+  if (!ex) return false;
+  const patch = {};
+  if (b.tipo !== undefined) patch.tipo = b.tipo;
+  if (b.fecha_desde !== undefined) patch.fecha_desde = String(b.fecha_desde || '').slice(0, 10);
+  if (b.fecha_hasta !== undefined) patch.fecha_hasta = String(b.fecha_hasta || '').slice(0, 10);
+  if (b.periodo !== undefined) patch.periodo = String(b.periodo || '').trim();
+  else if (patch.fecha_desde) patch.periodo = patch.fecha_desde.slice(0, 7);
+  if (b.dias !== undefined) patch.dias = Math.max(0, Math.round(Number(b.dias || 0)));
+  if (b.con_goce !== undefined) patch.con_goce = Number(b.con_goce) ? 1 : 0;
+  if (b.estado !== undefined) patch.estado = b.estado;
+  if (b.observaciones !== undefined) patch.observaciones = String(b.observaciones || '').trim();
+  licenciaRepo.validate(patch, { partial: true });
+  return licenciaRepo.update(Number(id), patch, user);
+}
+
+export function deleteLicencia(id) {
+  return licenciaRepo.delete(Number(id));
 }
 
 // ── Motor de Cálculo de Recibos y Topes Previsionales ─────────────────────────
@@ -340,7 +416,7 @@ function buildLineasCalculadas({ emp, diasTrabajados, conceptosByCode, manualLin
 
   const cArt = cMap.get('CONTRIB_ART');
   if (cArt && Number(cArt.activo) !== 0 && base9 > 0) {
-    const artImp = Number((((base9 * Number(params.nomina_art_pct || 0)) / 100) + Number(params.nomina_art_fija || 0) + Number(params.nomina_scvo_monto || 0)).toFixed(2));
+    const artImp = Number((((base9 * Number(params.nomina_art_pct || 0)) / 100) + Number(params.nomina_art_fija || 0)).toFixed(2));
     if (artImp > 0) {
       lineas.push({
         concepto: cArt,
@@ -352,6 +428,24 @@ function buildLineasCalculadas({ emp, diasTrabajados, conceptosByCode, manualLin
         importe_haber: 0,
         importe_descuento: 0,
         importe_contribucion: artImp,
+      });
+    }
+  }
+
+  const cScvo = cMap.get('CONTRIB_SCVO');
+  if (cScvo && Number(cScvo.activo) !== 0 && base9 > 0) {
+    const scvoImp = Number(Number(params.nomina_scvo_monto || 0).toFixed(2));
+    if (scvoImp > 0) {
+      lineas.push({
+        concepto: cScvo,
+        concepto_id: cScvo.id,
+        codigo_afip_lsd: cScvo.codigo_afip_lsd,
+        descripcion: cScvo.descripcion,
+        cantidad: 1,
+        base_calculo: scvoImp,
+        importe_haber: 0,
+        importe_descuento: 0,
+        importe_contribucion: scvoImp,
       });
     }
   }
@@ -479,6 +573,7 @@ export function createLiquidacion(b = {}, user = null) {
       numero,
       periodo,
       tipo_liquidacion: b.tipo_liquidacion || 'Mensual',
+      fecha: fechaLiq,
       fecha_liquidacion: fechaLiq,
       fecha_pago: b.fecha_pago || fechaLiq,
       banco_deposito_aportes: String(b.banco_deposito_aportes || params.nomina_ultimo_dep_banco || '').trim(),
@@ -488,7 +583,11 @@ export function createLiquidacion(b = {}, user = null) {
     liquidacionRepo.validate(payload);
     const liqId = liquidacionRepo.create(payload, user);
 
-    const activos = empleadoRepo.query().where('activo', 1).orderBy('apellido', 'ASC').orderBy('nombre', 'ASC').all();
+    let activos = empleadoRepo.query().where('activo', 1).orderBy('apellido', 'ASC').orderBy('nombre', 'ASC').all();
+    if (Array.isArray(b.empleado_ids) && b.empleado_ids.length > 0) {
+      const allowed = new Set(b.empleado_ids.map(Number).filter(Boolean));
+      activos = activos.filter(e => allowed.has(Number(e.id)));
+    }
     const novedadesPorEmp = new Map();
     if (Array.isArray(b.recibos)) {
       for (const r of b.recibos) {
@@ -496,13 +595,27 @@ export function createLiquidacion(b = {}, user = null) {
       }
     }
 
+    const licenciasPeriodo = licenciaRepo.where('periodo', periodo).where('estado', 'Aprobada').all();
+    const licPorEmp = new Map();
+    for (const lic of licenciasPeriodo) {
+      const k = Number(lic.empleado_id);
+      if (!licPorEmp.has(k)) licPorEmp.set(k, []);
+      licPorEmp.get(k).push(lic);
+    }
+
     for (const emp of activos) {
       const nov = novedadesPorEmp.get(Number(emp.id));
       if (Array.isArray(b.recibos) && !nov) continue;
 
+      const empLics = licPorEmp.get(Number(emp.id)) || [];
+      const diasSinGoce = empLics
+        .filter(l => Number(l.con_goce) === 0)
+        .reduce((s, l) => s + Number(l.dias || 0), 0);
+      const defaultDias = Math.max(0, 30 - diasSinGoce);
+
       const calc = buildLineasCalculadas({
         emp,
-        diasTrabajados: nov?.dias_trabajados ?? 30,
+        diasTrabajados: nov?.dias_trabajados ?? defaultDias,
         conceptosByCode,
         manualLineas: nov?.novedades || [],
         params,
@@ -560,7 +673,7 @@ function recalcularReciboInternal(reciboId, user = null) {
   const params = getParametrosPrevisionales();
   const conceptos = listConceptos();
   const conceptosByCode = new Map(conceptos.map(c => [c.codigo_interno, c]));
-  const autoCodes = new Set(['BASICO', 'JUBILACION', 'PAMI', 'OBRA_SOCIAL', 'SINDICATO', 'CONTRIB_SIPA', 'CONTRIB_OS', 'CONTRIB_ART']);
+  const autoCodes = new Set(['BASICO', 'JUBILACION', 'PAMI', 'OBRA_SOCIAL', 'SINDICATO', 'CONTRIB_SIPA', 'CONTRIB_OS', 'CONTRIB_ART', 'CONTRIB_SCVO']);
 
   const existingLineas = reciboLineaRepo.query('l')
     .select('l.*', 'c.codigo_interno')
@@ -633,6 +746,17 @@ export function updateRecibo(reciboId, patch = {}, user = null) {
   });
 }
 
+function calcAntiguedadAnios(fechaIngreso, fechaRef) {
+  if (!fechaIngreso) return 0;
+  const d1 = new Date(`${String(fechaIngreso).slice(0, 10)}T00:00:00`);
+  const d2 = fechaRef ? new Date(`${String(fechaRef).slice(0, 10)}T00:00:00`) : new Date();
+  if (Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime()) || d2 < d1) return 0;
+  let years = d2.getFullYear() - d1.getFullYear();
+  const mDiff = d2.getMonth() - d1.getMonth();
+  if (mDiff < 0 || (mDiff === 0 && d2.getDate() < d1.getDate())) years--;
+  return Math.max(0, years);
+}
+
 export function addReciboNovedad(reciboId, novedad = {}, user = null) {
   const rec = reciboRepo.findById(reciboId);
   if (!rec) throw new Error('Recibo no encontrado');
@@ -640,7 +764,28 @@ export function addReciboNovedad(reciboId, novedad = {}, user = null) {
   if (!liq || liq.estado !== 'Borrador') {
     throw new Error('Solo se pueden agregar novedades en estado Borrador.');
   }
+  const emp = empleadoRepo.findById(rec.empleado_id);
   const conc = novedad.concepto_id ? conceptoRepo.findById(Number(novedad.concepto_id)) : null;
+
+  let cantidad = Number(novedad.cantidad ?? 1);
+  let baseCalculo = Number(novedad.base_calculo ?? 0);
+  let importeHaber = Math.max(0, Number(novedad.importe_haber || 0));
+  const importeDescuento = Math.max(0, Number(novedad.importe_descuento || 0));
+
+  if (conc && importeHaber === 0 && importeDescuento === 0 && conc.formula_tipo === 'porcentaje_basico') {
+    const basicoProp = Number(((Number(emp?.sueldo_basico || 0) * Number(rec.dias_trabajados ?? 30)) / 30).toFixed(2));
+    baseCalculo = basicoProp;
+    if (conc.codigo_interno === 'ANTIGUEDAD') {
+      const anios = calcAntiguedadAnios(emp?.fecha_ingreso, liq.fecha_liquidacion);
+      const cantAnios = cantidad > 1 ? cantidad : Math.max(1, anios);
+      cantidad = cantAnios;
+      importeHaber = Number(((basicoProp * Number(conc.valor_default || 1) * cantAnios) / 100).toFixed(2));
+    } else {
+      const pct = Number(conc.valor_default || 0);
+      cantidad = pct;
+      importeHaber = Number(((basicoProp * pct) / 100).toFixed(2));
+    }
+  }
 
   return reciboRepo.transaction(() => {
     reciboLineaRepo.create({
@@ -648,13 +793,41 @@ export function addReciboNovedad(reciboId, novedad = {}, user = null) {
       concepto_id: conc?.id || null,
       codigo_afip_lsd: novedad.codigo_afip_lsd || conc?.codigo_afip_lsd || '110000',
       descripcion: String(novedad.descripcion || conc?.descripcion || 'Novedad').trim(),
-      cantidad: Number(novedad.cantidad ?? 1),
-      base_calculo: Number(novedad.base_calculo ?? 0),
-      importe_haber: Math.max(0, Number(novedad.importe_haber || 0)),
-      importe_descuento: Math.max(0, Number(novedad.importe_descuento || 0)),
+      cantidad,
+      base_calculo: baseCalculo,
+      importe_haber: importeHaber,
+      importe_descuento: importeDescuento,
       importe_contribucion: Math.max(0, Number(novedad.importe_contribucion || 0)),
     });
     recalcularReciboInternal(reciboId, user);
+    return true;
+  });
+}
+
+export function updateReciboLinea(lineaId, patch = {}, user = null) {
+  const linea = reciboLineaRepo.findById(lineaId);
+  if (!linea) return false;
+  const rec = reciboRepo.findById(linea.recibo_id);
+  const liq = rec ? liquidacionRepo.findById(rec.liquidacion_id) : null;
+  if (!liq || liq.estado !== 'Borrador') {
+    throw new Error('Solo se pueden editar líneas en estado Borrador.');
+  }
+  const updates = {};
+  if (patch.concepto_id !== undefined) {
+    const conc = patch.concepto_id ? conceptoRepo.findById(Number(patch.concepto_id)) : null;
+    updates.concepto_id = conc?.id || null;
+    if (conc && patch.codigo_afip_lsd === undefined) updates.codigo_afip_lsd = conc.codigo_afip_lsd;
+    if (conc && patch.descripcion === undefined) updates.descripcion = conc.descripcion;
+  }
+  if (patch.descripcion !== undefined) updates.descripcion = String(patch.descripcion || '').trim() || linea.descripcion;
+  if (patch.cantidad !== undefined) updates.cantidad = Number(patch.cantidad || 0);
+  if (patch.importe_haber !== undefined) updates.importe_haber = Math.max(0, Number(patch.importe_haber || 0));
+  if (patch.importe_descuento !== undefined) updates.importe_descuento = Math.max(0, Number(patch.importe_descuento || 0));
+  if (Object.keys(updates).length === 0) return true;
+
+  return reciboRepo.transaction(() => {
+    reciboLineaRepo.update(Number(lineaId), updates);
+    recalcularReciboInternal(rec.id, user);
     return true;
   });
 }
@@ -677,31 +850,16 @@ export function deleteReciboLinea(lineaId, user = null) {
 // ── Contabilidad, StateMachine y EventBus ─────────────────────────────────────
 
 export function generarAsientoNomina({ liquidacion, recibos }, user = null) {
-  const ctaSueldosProd = ensureCuenta('5.1.02', {
-    nombre: 'Gastos de Producción y Taller',
-    tipo: 'egreso',
-    naturaleza: 'deudora',
-  });
-  const ctaSueldosAdmin = ensureCuenta('5.2.06', {
-    nombre: 'Sueldos y Cargas Sociales',
-    tipo: 'egreso',
-    naturaleza: 'deudora',
-  });
-  const ctaSueldosPagar = ensureCuenta('2.1.06', {
-    nombre: 'Sueldos y Jornales a Pagar',
-    tipo: 'pasivo',
-    naturaleza: 'acreedora',
-  });
-  const ctaCargasPagar = ensureCuenta('2.1.07', {
-    nombre: 'Cargas Sociales y Retenciones a Depositar',
-    tipo: 'pasivo',
-    naturaleza: 'acreedora',
-  });
-  const ctaSindicatoPagar = ensureCuenta('2.1.08', {
-    nombre: 'Cuota Sindical a Depositar',
-    tipo: 'pasivo',
-    naturaleza: 'acreedora',
-  });
+  const ctaSueldosProd = defaultAsientoService.resolveDefaultCuenta('cta_mano_obra_id', '5.1.02')
+    || ensureCuenta('5.1.02', { nombre: 'Gastos de Producción y Taller', tipo: 'egreso', naturaleza: 'deudora' });
+  const ctaSueldosAdmin = defaultAsientoService.resolveDefaultCuenta('cta_sueldos_admin_id', '5.2.06')
+    || ensureCuenta('5.2.06', { nombre: 'Sueldos y Cargas Sociales', tipo: 'egreso', naturaleza: 'deudora' });
+  const ctaSueldosPagar = defaultAsientoService.resolveDefaultCuenta('cta_sueldos_pagar_id', '2.1.06')
+    || ensureCuenta('2.1.06', { nombre: 'Sueldos y Jornales a Pagar', tipo: 'pasivo', naturaleza: 'acreedora' });
+  const ctaCargasPagar = defaultAsientoService.resolveDefaultCuenta('cta_cargas_pagar_id', '2.1.07')
+    || ensureCuenta('2.1.07', { nombre: 'Cargas Sociales y Retenciones a Depositar', tipo: 'pasivo', naturaleza: 'acreedora' });
+  const ctaSindicatoPagar = defaultAsientoService.resolveDefaultCuenta('cta_sindicato_pagar_id', '2.1.08')
+    || ensureCuenta('2.1.08', { nombre: 'Cuota Sindical a Depositar', tipo: 'pasivo', naturaleza: 'acreedora' });
 
   const debePorCuenta = new Map();
   let totalNeto = 0;

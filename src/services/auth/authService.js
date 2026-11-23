@@ -48,6 +48,8 @@ export const ALL_PERMISSIONS = [
   { key: 'tesoreria.editar', label: 'Tesorería · Pagos / Cobros' },
   { key: 'contabilidad.ver', label: 'Contabilidad · Ver (Diario, Mayor, Balance)' },
   { key: 'contabilidad.editar', label: 'Contabilidad · Asientos y Plan de Cuentas' },
+  { key: 'rrhh.ver', label: 'RRHH / Nómina · Ver' },
+  { key: 'rrhh.editar', label: 'RRHH / Nómina · Editar y Liquidar' },
   { key: 'sistema.config', label: 'Sistema · Configuración' },
   { key: 'sistema.usuarios', label: 'Sistema · Usuarios y Grupos' },
 ];

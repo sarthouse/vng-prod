@@ -1,3 +1,5 @@
+import { parseCustomFields } from './customFields.js';
+
 const SAFE_IDENT = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
 const ALLOWED_OPS = new Set(['=', '!=', '<>', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'IS', 'IS NOT']);
 const SYSTEM_COLS = new Set(['id', 'created_at', 'updated_at', 'autor_id', 'autor_nombre', 'actualizado_por_id', 'actualizado_por_nombre']);
@@ -112,6 +114,35 @@ export class QueryBuilder {
     return this;
   }
 
+  whereJson(jsonCol, key, opOrVal, maybeVal) {
+    const c = this._safeCol(jsonCol);
+    const k = String(key || '').trim();
+    if (!/^[a-z][a-z0-9_]*$/.test(k)) {
+      throw new Error(`Clave JSON inválida en QueryBuilder: "${k}"`);
+    }
+    const path = `$.${k}`;
+    if (maybeVal === undefined) {
+      if (opOrVal === null) {
+        this._wheres.push(`json_extract(${c}, ?) IS NULL`);
+        this._params.push(path);
+      } else {
+        this._wheres.push(`json_extract(${c}, ?) = ?`);
+        this._params.push(path, opOrVal);
+      }
+      return this;
+    }
+    const op = String(opOrVal).toUpperCase().trim();
+    if (!ALLOWED_OPS.has(op)) throw new Error(`Operador SQL no permitido: ${op}`);
+    if (maybeVal === null && (op === 'IS' || op === 'IS NOT')) {
+      this._wheres.push(`json_extract(${c}, ?) ${op} NULL`);
+      this._params.push(path);
+    } else {
+      this._wheres.push(`json_extract(${c}, ?) ${op} ?`);
+      this._params.push(path, maybeVal);
+    }
+    return this;
+  }
+
   whereIn(col, values = []) {
     const c = this._safeCol(col);
     if (!Array.isArray(values) || values.length === 0) {
@@ -175,14 +206,23 @@ export class QueryBuilder {
     return { sql: parts.join(' '), params: [...this._params] };
   }
 
+  _hydrate(row) {
+    if (row && row.custom_fields_json !== undefined && row.custom_fields === undefined) {
+      row.custom_fields = parseCustomFields(row.custom_fields_json);
+    }
+    return row;
+  }
+
   all() {
     const { sql, params } = this.toSelectSql();
-    return this.db.prepare(sql).all(...params);
+    const rows = this.db.prepare(sql).all(...params);
+    return rows.map(r => this._hydrate(r));
   }
 
   get() {
     const { sql, params } = this.toSelectSql();
-    return this.db.prepare(sql).get(...params) ?? null;
+    const row = this.db.prepare(sql).get(...params) ?? null;
+    return this._hydrate(row);
   }
 
   first() {

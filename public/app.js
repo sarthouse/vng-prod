@@ -58,7 +58,9 @@ import {
   renderCierresYMonedasView,
 } from './views/finanzas/contabilidadAvanzadaView.js';
 import { renderActivosFijosView } from './views/finanzas/activosFijosView.js';
-import { renderNominaView } from './views/finanzas/nominaView.js';
+import { renderNominaView } from './views/rrhh/nominaView.js';
+import { renderEmpleadoDetalleView } from './views/rrhh/empleadoDetalleView.js';
+import { renderLiquidacionDetalleView } from './views/rrhh/liquidacionDetalleView.js';
 
 import { renderConfigView } from './views/config/configView.js';
 import { renderDashboardView } from './views/dashboard/dashboardView.js';
@@ -109,7 +111,14 @@ addRoute('/contabilidad/impuestos', () => renderImpuestosView(), 'contabilidad.v
 addRoute('/contabilidad/libros-fiscales', () => renderLibrosFiscalesView(), 'contabilidad.ver');
 addRoute('/contabilidad/posicion-iva', () => renderPosicionIvaView(), 'contabilidad.ver');
 addRoute('/contabilidad/activos-fijos', () => renderActivosFijosView(), 'contabilidad.ver');
-addRoute('/contabilidad/nomina', () => renderNominaView(), 'contabilidad.ver');
+addRoute('/contabilidad/nomina', () => renderNominaView(), 'rrhh.ver');
+addRoute('/rrhh/liquidaciones', () => renderNominaView({ defaultTab: 'liquidaciones' }), 'rrhh.ver');
+addRoute('/rrhh/liquidaciones/nueva', () => renderLiquidacionDetalleView({ isNew: true }), 'rrhh.editar');
+addRoute('/rrhh/liquidaciones/:id', (_c, params) => renderLiquidacionDetalleView(params), 'rrhh.ver');
+addRoute('/rrhh/empleados', () => renderNominaView({ defaultTab: 'empleados' }), 'rrhh.ver');
+addRoute('/rrhh/empleados/:id', (_c, params) => renderEmpleadoDetalleView(params), 'rrhh.ver');
+addRoute('/rrhh/licencias', () => renderNominaView({ defaultTab: 'licencias' }), 'rrhh.ver');
+addRoute('/rrhh/conceptos', () => renderNominaView({ defaultTab: 'conceptos' }), 'rrhh.ver');
 addRoute('/contabilidad/cierres', () => renderCierresYMonedasView(), 'contabilidad.ver');
 addRoute('/tesoreria/conciliacion', () => renderConciliacionBancariaView(), 'tesoreria.ver');
 
@@ -147,6 +156,8 @@ window.__currentUser = null;
 const LEGACY_PERM_ALIASES = {
   'comercial.ver': ['compras.ver', 'ventas.ver'],
   'comercial.editar': ['compras.editar', 'ventas.editar'],
+  'rrhh.ver': ['contabilidad.ver'],
+  'rrhh.editar': ['contabilidad.editar'],
 };
 window.__hasPerm = (perm) => {
   const u = window.__currentUser;

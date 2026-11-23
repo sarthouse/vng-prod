@@ -308,6 +308,7 @@ export function createPlantilla(b) {
       peso_kg: Math.max(0, Number(b.peso_kg) || 0),
       imagen_data: b.imagen_data !== undefined ? String(b.imagen_data || '') : '',
       atributos_json: JSON.stringify(atributos),
+      ...(b.custom_fields !== undefined ? { custom_fields: b.custom_fields } : {}),
     });
 
     syncPlantillaImpuestosJoin(id, impVentaIds, impCompraIds);
@@ -369,6 +370,7 @@ export function updatePlantilla(id, b) {
     peso_kg: b.peso_kg !== undefined ? Math.max(0, Number(b.peso_kg) || 0) : (existing.peso_kg || 0),
     imagen_data: b.imagen_data !== undefined ? String(b.imagen_data || '') : (existing.imagen_data || ''),
     atributos_json: b.atributos !== undefined ? JSON.stringify(b.atributos) : existing.atributos_json,
+    ...(b.custom_fields !== undefined ? { custom_fields: b.custom_fields } : {}),
   };
 
   return plantillaRepo.transaction(() => {
@@ -480,6 +482,7 @@ export function updateProducto(id, b, meta = {}) {
     precio: nextPrecio,
     minimo_compra: b.minimo_compra !== undefined ? Number(b.minimo_compra) : existing.minimo_compra,
     stock_minimo: b.stock_minimo !== undefined ? Number(b.stock_minimo) : existing.stock_minimo,
+    ...(b.custom_fields !== undefined ? { custom_fields: b.custom_fields } : {}),
   });
   registrarHistorialCostoPrecio({
     producto_id: existing.id,

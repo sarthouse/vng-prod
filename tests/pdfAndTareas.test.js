@@ -11,6 +11,7 @@ import { generateNominaPdf } from '../src/services/print/nominaPdfService.js';
 import { generateTesoreriaPdf } from '../src/services/print/tesoreriaPdfService.js';
 import { generateRecibosSueldoPdf } from '../src/services/print/reciboSueldoPdfService.js';
 import { generateRemitoPdf } from '../src/services/print/remitoPdfService.js';
+import { resolveRemitoCaiPayload } from '../src/services/config/configService.js';
 import { encodeQrMatrix } from '../src/services/print/qrEncoder.js';
 import { MODELS } from '../src/db/models.js';
 import { BaseRepository } from '../src/core/BaseRepository.js';
@@ -118,12 +119,12 @@ test('Remito PDF resuelve CAI y vencimiento automáticamente desde puntos_venta 
     if (pv1) pvRepo.update(pv1.id, { cai: '74999888777666', cai_vto: '2027-06-30' });
     else pvRepo.create({ numero: 1, nombre: 'PV 0001', cai: '74999888777666', cai_vto: '2027-06-30', activo: 1 });
 
-    const buf = generateRemitoPdf({
+    const buf = generateRemitoPdf(resolveRemitoCaiPayload({
       numero: '0001-00000123',
       fecha: '2026-11-20',
       contraparteNombre: 'Cliente CAI DB',
       lineas: [{ nombre: 'Zapato Negro', cantidad: 3, udm: 'pares' }],
-    }, { razon_social: 'Vanguard SA', cuit: '30-71234567-9' });
+    }), { razon_social: 'Vanguard SA', cuit: '30-71234567-9' });
 
     assertValidPdf(buf, 'RemitoCaiDesdeDb');
     const str = buf.toString('latin1');

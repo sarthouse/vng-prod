@@ -4,6 +4,7 @@ import { navigate } from '../../router.js';
 import { renderKpiStrip, renderFilterBar, renderDataTable } from '../../lib/engine/index.js';
 import { printCuentaCorriente, buildCuentaCorrienteMovimientos } from '../../lib/print/index.js';
 import { showConfirmModal } from '../../lib/engine/index.js';
+import { fetchCustomFieldDefs, renderCustomFieldsSection } from '../../lib/customFieldsHelper.js';
 
 export async function renderContactosView() {
   const root = document.getElementById('app-view');
@@ -180,11 +181,12 @@ export async function renderContactosView() {
 export async function renderContactoFormView({ id } = {}) {
   const root = document.getElementById('app-view');
   const isEdit = Boolean(id);
-  const [existing, terminosPago, metodosPago, listasPrecios] = await Promise.all([
+  const [existing, terminosPago, metodosPago, listasPrecios, contactoCfDefs] = await Promise.all([
     isEdit ? api(`/api/contactos/${id}`) : Promise.resolve(null),
     api('/api/terminos-pago?solo_activos=1').catch(() => []),
     api('/api/metodos-pago?solo_activos=1').catch(() => []),
     api('/api/listas-precios?solo_activos=1').catch(() => []),
+    fetchCustomFieldDefs('contactos'),
   ]);
   const c = existing?.contacto || {
     nombre: '', razon_social: '', tipo_documento: 'CUIT', cuit: '', condicion_iva: 'Consumidor Final',
@@ -293,6 +295,7 @@ export async function renderContactoFormView({ id } = {}) {
             <input type="checkbox" name="exento_retenciones" ${c.exento_retenciones ? 'checked' : ''} />
             <span>Exento de Retenciones</span>
           </label>
+          <div id="contacto-custom-fields-host" class="full"></div>
           <label class="full"><span>Observaciones</span><input type="text" name="observaciones" value="${esc(c.observaciones || '')}" /></label>
         </div>
         <div class="modal-footer">
@@ -484,6 +487,11 @@ export async function renderContactoFormView({ id } = {}) {
 
   const formContacto = root.querySelector('#form-contacto');
   bindDocumentoInput(formContacto?.querySelector('input[name="cuit"]'), formContacto?.querySelector('select[name="tipo_documento"]'));
+  const getContactoCustomFields = renderCustomFieldsSection(
+    root.querySelector('#contacto-custom-fields-host'),
+    contactoCfDefs,
+    c.custom_fields || {},
+  );
 
   formContacto.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -518,6 +526,7 @@ export async function renderContactoFormView({ id } = {}) {
       es_proveedor: fd.get('es_proveedor') === 'on',
       es_taller: fd.get('es_taller') === 'on',
       es_cliente: fd.get('es_cliente') === 'on',
+      custom_fields: getContactoCustomFields(),
     };
     try {
       if (isEdit) {

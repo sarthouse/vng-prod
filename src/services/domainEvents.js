@@ -16,7 +16,7 @@ import {
   anularEfectosCompra,
   syncUltimoCostoProductos,
 } from './comercial/compraEfectosHelper.js';
-import { generarAsientoNomina } from './finanzas/nominaService.js';
+import { generarAsientoNomina } from './rrhh/nominaService.js';
 import { getCurrentDbName, runWithDatabase } from '../db.js';
 import { syncStockProductosPostCommit } from './comercial/wooService.js';
 

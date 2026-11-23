@@ -29,11 +29,48 @@ export async function renderActivosFijosView() {
     const totalAcum = vigentes.reduce((s, a) => s + Number(a.amortizacion_acumulada || 0), 0);
     const totalNeto = vigentes.reduce((s, a) => s + Number(a.valor_neto_contable || 0), 0);
 
+    const openRunAmortModal = () => {
+      const defaultPeriodo = new Date().toISOString().slice(0, 7);
+      const hoy = new Date().toISOString().slice(0, 10);
+      showFormModal({
+        title: 'Ejecutar Amortización del Período',
+        submitText: 'Confirmar y Contabilizar',
+        initialState: { periodo: defaultPeriodo, fecha: hoy },
+        fields: [
+          { name: 'periodo', label: 'Período (YYYY-MM) *', type: 'text', required: true, placeholder: '2026-11' },
+          { name: 'fecha', label: 'Fecha del Asiento *', type: 'date', required: true },
+        ],
+        onSubmit: async (data) => {
+          const ok = await showConfirmModal(
+            `¿Ejecutar la amortización mensual del período ${data.periodo} para todos los bienes en estado Activo? Se generará un asiento contable consolidado.`,
+          );
+          if (!ok) return false;
+          try {
+            const res = await api('/api/activos/amortizar', {
+              method: 'POST',
+              body: JSON.stringify({ periodo: data.periodo, fecha: data.fecha }),
+            });
+            toast(`Amortizados ${res.amortizados} bienes por ${fmtMoney(res.total_monto)}`);
+            await draw();
+            return true;
+          } catch (err) {
+            toast(err.message, true);
+            throw err;
+          }
+        },
+      });
+    };
+
     mountPageView(root, {
       title: 'Activos Fijos (Bienes de Uso)',
       subtitle: 'Control patrimonial, cálculo de cuotas de amortización mensual y bajas contables.',
-      actionsHtml: '<button type="button" class="btn btn-primary" id="btn-run-amort">Ejecutar Amortización del Período</button>',
-      kpisHtml: '<div id="af-kpis"></div>',
+      actions: [{ label: 'Ejecutar Amortización del Período', primary: true, onClick: openRunAmortModal }],
+      kpis: [
+        { label: 'Bienes Vigentes', value: String(vigentes.length), tone: 'success' },
+        { label: 'Valor de Origen', value: fmtMoney(totalOrigen) },
+        { label: 'Amort. Acumulada', value: fmtMoney(totalAcum) },
+        { label: 'Valor Neto Contable', value: fmtMoney(totalNeto), tone: 'accent' },
+      ],
       tabs: [
         {
           id: 'bienes',
@@ -66,13 +103,6 @@ export async function renderActivosFijosView() {
         },
       ],
       onAfterMount: () => {
-        renderKpiStrip(root.querySelector('#af-kpis'), [
-          { label: 'Bienes Vigentes', value: String(vigentes.length), tone: 'success' },
-          { label: 'Valor de Origen', value: fmtMoney(totalOrigen) },
-          { label: 'Amort. Acumulada', value: fmtMoney(totalAcum) },
-          { label: 'Valor Neto Contable', value: fmtMoney(totalNeto), tone: 'accent' },
-        ]);
-
         renderSpreadsheetTable(root.querySelector('#af-sheet-host'), {
           rows: activos,
           emptyText: 'No hay activos fijos registrados.',
@@ -250,42 +280,6 @@ export async function renderActivosFijosView() {
                 : '<span class="muted">-</span>'),
             },
           ],
-        });
-
-        root.querySelector('#btn-run-amort')?.addEventListener('click', () => {
-          const defaultPeriodo = new Date().toISOString().slice(0, 7);
-          const hoy = new Date().toISOString().slice(0, 10);
-          showFormModal({
-            title: 'Ejecutar Amortización del Período',
-            submitText: 'Confirmar y Contabilizar',
-            initialState: { periodo: defaultPeriodo, fecha: hoy },
-            fields: [
-              { name: 'periodo', label: 'Período (YYYY-MM) *', type: 'text', required: true, placeholder: '2026-11' },
-              { name: 'fecha', label: 'Fecha del Asiento *', type: 'date', required: true },
-            ],
-            onSubmit: async (data) => {
-              const ok = await showConfirmModal(
-                `¿Ejecutar la amortización mensual del período ${data.periodo} para todos los bienes en estado Activo? Se generará un asiento contable consolidado.`,
-              );
-              if (!ok) return false;
-              try {
-                const res = await api('/api/activos/amortizar', {
-                  method: 'POST',
-                  body: JSON.stringify({ periodo: data.periodo, fecha: data.fecha }),
-                });
-                if (res.amortizados === 0) {
-                  toast(`Sin activos pendientes para amortizar en ${res.periodo}`);
-                } else {
-                  toast(`Amortización ${res.periodo}: ${res.amortizados} bien(es) — ${fmtMoney(res.total_monto)} (Asiento #${res.asiento_id})`);
-                }
-                await draw();
-                return true;
-              } catch (err) {
-                toast(err.message, true);
-                throw err;
-              }
-            },
-          });
         });
 
         root.querySelectorAll('[data-baja-activo]').forEach(btn => {
